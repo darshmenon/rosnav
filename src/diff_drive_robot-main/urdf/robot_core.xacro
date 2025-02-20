@@ -3,8 +3,10 @@
 
   <xacro:include filename="inertial_macros.xacro" />
 
+  <!-- Base Link -->
   <link name="base_link"/>
 
+  <!-- Chassis -->
   <joint name="chassis_joint" type="fixed">
     <parent link="base_link"/>
     <child link="chassis"/>
@@ -13,22 +15,22 @@
 
   <link name="chassis">
     <visual>
-      <origin xyz="0.25 0 0.075"/>
+      <origin xyz="0.275 0 0.075"/>
       <geometry>
-        <box size="0.5 0.3 0.15"/>
+        <box size="0.55 0.4 0.15"/>
       </geometry>
       <material name="chassis_material">
         <color rgba="0.40 0.23 0.72 1.0"/>
       </material>
     </visual>
     <collision>
-      <origin xyz="0.25 0 0.075"/>
+      <origin xyz="0.275 0 0.075"/>
       <geometry>
-        <box size="0.5 0.3 0.15"/>
+        <box size="0.55 0.34 0.15"/>
       </geometry>
     </collision>
-      <xacro:inertial_box mass="0.5" x="0.3" y="0.3" z="0.15">
-            <origin xyz="0.15 0 0.075" rpy="0 0 0"/>
+      <xacro:inertial_box mass="0.5" x="0.55" y="0.4" z="0.15">
+            <origin xyz="0.275 0 0.075" rpy="0 0 0"/>
          </xacro:inertial_box>
   </link>
 
@@ -36,7 +38,7 @@
   <joint name="left_wheel_joint" type="continuous">
     <parent link="base_link"/>
     <child link="left_wheel"/>
-    <origin xyz="0.1 0.175 0" rpy="-1.57 0 0"/>
+    <origin xyz="-0.1 0.225 0" rpy="-1.57 0 0"/>
     <axis xyz="0 0 1"/>
   </joint>
 
@@ -62,7 +64,7 @@
   <joint name="right_wheel_joint" type="continuous">
     <parent link="base_link"/>
     <child link="right_wheel"/>
-    <origin xyz="0.1 -0.175 0" rpy="1.57 0 0"/>
+    <origin xyz="-0.1 -0.225 0" rpy="1.57 0 0"/>
     <axis xyz="0 0 -1"/>
   </joint>
 
@@ -89,7 +91,7 @@
   <joint name="left_front_wheel_joint" type="fixed">
     <parent link="base_link"/>
     <child link="left_front_wheel"/>
-    <origin xyz="0.4 0.175 0" rpy="-1.57 0 0"/>
+    <origin xyz="0.3 0.225 0" rpy="-1.57 0 0"/>
     <axis xyz="0 0 1"/>
   </joint>
 
@@ -115,7 +117,7 @@
   <joint name="right_front_wheel_joint" type="fixed">
     <parent link="base_link"/>
     <child link="right_front_wheel"/>
-    <origin xyz="0.4 -0.175 0" rpy="1.57 0 0"/>
+    <origin xyz="0.3 -0.225 0" rpy="1.57 0 0"/>
     <axis xyz="0 0 -1"/>
   </joint>
 
