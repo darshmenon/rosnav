@@ -36,12 +36,12 @@ def generate_launch_description():
         ]), launch_arguments={'use_sim_time': 'true', 'urdf': urdf_path}.items()
     )
 
-    initial_velocity_publisher = Node(
-        package='diff_drive_robot',
-    executable='cmd_vel_publisher.py',
-    name='cmd_vel_publisher',
-    output='screen'
-)
+#     initial_velocity_publisher = Node(
+#         package='diff_drive_robot',
+#     executable='cmd_vel_publisher.py',
+#     name='cmd_vel_publisher',
+#     output='screen'
+# )
 
     # Launch the Gazebo server to initialize the simulation
     gazebo_server = IncludeLaunchDescription(
@@ -65,7 +65,7 @@ def generate_launch_description():
             '-name', 'diff_bot',
             '-x', '0.0',
             '-y', '0.0',
-            '-z', '0.2',
+            '-z', '0.3',
       
         ],
         output='screen'
@@ -99,7 +99,7 @@ def generate_launch_description():
     navigation_node = Node(
         package='diff_drive_robot',
         executable='navigation.py',  # Ensure this matches your script's filename
-        name='obstacle_avoidance_navigator',  # Change to match the new functionality
+        name='obstacle_avoidance_navigator',  
         output='screen'
     )
     
@@ -123,7 +123,6 @@ def generate_launch_description():
         gazebo_client,
         ros_gz_bridge,
         spawn_robot,
-        navigation_node,
-        initial_velocity_publisher
+        navigation_node
                         # path_planning_node
     ])
