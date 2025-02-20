@@ -13,7 +13,7 @@ class ReliableObstacleNavigator(Node):
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.scan_sub = self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
         self.odom_sub = self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
-        self.goal = [5.0, 8.0]  
+        self.goal = [5.0, 4.0]  
         self.obstacle_threshold = 1.0
         self.clearance_required = 2.0
         self.move_distance = 2.5
@@ -36,6 +36,9 @@ class ReliableObstacleNavigator(Node):
         self.robot_pos[1] = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
         self.robot_pos[2] = math.atan2(2*(q.w*q.z + q.x*q.y), 1 - 2*(q.y**2 + q.z**2))
+        
+        # Log robot's position and orientation
+        self.get_logger().info(f"Robot Position -> X: {self.robot_pos[0]:.2f}, Y: {self.robot_pos[1]:.2f}, Yaw: {math.degrees(self.robot_pos[2]):.2f}°")
 
     def scan_callback(self, msg):
         self.laser_ranges = msg.ranges
@@ -78,11 +81,14 @@ class ReliableObstacleNavigator(Node):
         twist = Twist()
         goal_dist = math.hypot(self.goal[0]-self.robot_pos[0], self.goal[1]-self.robot_pos[1])
         obstacle_dist = self.get_front_obstacle_distance()
+        
         if goal_dist < self.goal_tolerance:
             twist.linear.x = 0.0
             twist.angular.z = 0.0
             self.cmd_vel_pub.publish(twist)
+            self.get_logger().info("Goal Reached!")
             return
+        
         if self.state == "GOAL_SEEK":
             front_dist = self.get_front_obstacle_distance()
             if front_dist < self.obstacle_threshold:
@@ -94,6 +100,7 @@ class ReliableObstacleNavigator(Node):
                 yaw_error = math.atan2(math.sin(yaw_error), math.cos(yaw_error))
                 twist.linear.x = self.base_speed * (1 - abs(yaw_error/math.pi))
                 twist.angular.z = 2.0 * yaw_error
+
         elif self.state == "FIND_CLEAR":
             found_clear, self.target_yaw = self.find_clear_direction()
             yaw_error = self.target_yaw - self.robot_pos[2]
@@ -104,6 +111,7 @@ class ReliableObstacleNavigator(Node):
             else:
                 twist.angular.z = self.turn_speed * np.clip(yaw_error, -1, 1)
                 twist.linear.x = 0.0
+
         elif self.state == "MOVE_CLEAR":
             if self.distance_moved() >= self.move_distance:
                 self.state = "REALIGN"
@@ -116,6 +124,7 @@ class ReliableObstacleNavigator(Node):
                     yaw_error = self.target_yaw - self.robot_pos[2]
                     yaw_error = math.atan2(math.sin(yaw_error), math.cos(yaw_error))
                     twist.angular.z = 1.0 * yaw_error
+
         elif self.state == "REALIGN":
             target_yaw = math.atan2(self.goal[1]-self.robot_pos[1], self.goal[0]-self.robot_pos[0])
             yaw_error = target_yaw - self.robot_pos[2]
@@ -124,10 +133,13 @@ class ReliableObstacleNavigator(Node):
                 self.state = "GOAL_SEEK"
             else:
                 twist.angular.z = self.turn_speed * np.clip(yaw_error, -1, 1)
+
         twist.linear.x = np.clip(twist.linear.x, -self.base_speed, self.base_speed)
         twist.angular.z = np.clip(twist.angular.z, -2.0, 2.0)
+
         if any(math.isnan(v) for v in [twist.linear.x, twist.angular.z]):
             twist = Twist()
+
         self.cmd_vel_pub.publish(twist)
 
 def main(args=None):
@@ -139,3 +151,4 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
