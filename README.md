@@ -38,12 +38,14 @@ Make sure to install the following **ROS 2 Jazzy** packages:
 sudo apt-get update
 
 sudo apt install -y                         \
-   ros-jazzy-ros-gz                        \
-   ros-jazzy-ros-gz-bridge                 \
-   ros-jazzy-joint-state-publisher         \
-   ros-jazzy-xacro                         \
-   ros-jazzy-teleop-twist-keyboard         \
-   ros-jazzy-teleop-twist-joy
+   ros-jazzy-ros-gz \
+   ros-jazzy-ros-gz-bridge \
+   ros-jazzy-joint-state-publisher \
+   ros-jazzy-xacro \
+   ros-jazzy-teleop-twist-keyboard \
+   ros-jazzy-teleop-twist-joy \
+   ros-jazzy-nav2-bringup \
+   ros-jazzy-slam-toolbox
 ```
 
 ## Installation
