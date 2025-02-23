@@ -9,7 +9,7 @@ This repository contains a simulation package for an autonomous car-like robot u
 ## Features
 
 - **Goal Setting:**  
-  Set your target destination directly in the navigation code. For example, to set the goal to `x = 5.0` and `y = 8.0`, modify:
+  Set your target destination directly in the navigation script `navigation.py`. For example, to set the goal to `x = 5.0` and `y = 8.0`, modify:
   ```python
   self.goal = [5.0, 8.0]
   ```
@@ -81,7 +81,7 @@ sudo apt install -y                         \
 
 ## Setting the Navigation Goal
 
-The navigation goal is defined in the navigation node. You can set your desired target by editing the goal variable. For example:
+The navigation goal is defined in the `navigation.py` script. You can set your desired target by editing the goal variable. For example:
 
 ```python
 self.goal = [5.0, 8.0]
