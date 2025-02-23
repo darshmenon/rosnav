@@ -87,7 +87,6 @@ def generate_launch_description():
         )]
     )
     
-    # Navigation node
     navigation_node = Node(
         package='diff_drive_robot',
         executable='navigation.py',
@@ -102,23 +101,26 @@ def generate_launch_description():
         output='screen'
     )
 
-
-    # Additional navigation node from the first script
+    nav2_launch = IncludeLaunchDescription(
+    PythonLaunchDescriptionSource([
+        os.path.join(get_package_share_directory('nav2_bringup'), 'launch', 'navigation_launch.py')
+    ]),
+    launch_arguments={'use_sim_time': 'true'}.items()
+)
     nav2_node = Node(
         package='diff_drive_robot',  # Replace with your actual package name
         executable='nav2.py',
         output='screen'
     )
-    # slam_launch = IncludeLaunchDescription(
-    #     PythonLaunchDescriptionSource([
-    #         os.path.join(get_package_share_directory('slam_toolbox'), 'launch', 'online_async_launch.py')
-    #     ]),
-    #     launch_arguments={
-    #         'slam_params_file': os.path.join(get_package_share_directory(package_name), 'config', 'mapper_params_online_async.yaml'),
-    #         'use_sim_time': 'true'
-    #     }.items(),
-    # )
-    # Launch all nodes
+    slam_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            os.path.join(get_package_share_directory('slam_toolbox'), 'launch', 'online_async_launch.py')
+        ]),
+        launch_arguments={
+            'slam_params_file': os.path.join(get_package_share_directory(package_name), 'config', 'mapper_params_online_async.yaml'),
+            'use_sim_time': 'true'
+        }.items(),
+    )
     return LaunchDescription([
         declare_rviz,
         declare_world,
@@ -129,6 +131,7 @@ def generate_launch_description():
         ros_gz_bridge,
         spawn_robot,
         navigation_node,
-        nav2_node  
+        nav2_node,    
+        nav2_launch
         # slam_launch
     ])
