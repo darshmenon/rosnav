@@ -1,4 +1,3 @@
-
 # ROSNavCar: Autonomous Car Simulation with Obstacle Avoidance
 
 This repository contains a simulation package for an autonomous car-like robot using **ROS 2 Jazzy** and **Gazebo Harmonic**. The robot navigates toward a user-defined goal while avoiding obstacles along its path.
@@ -100,8 +99,15 @@ ros2 launch diff_drive_robot robot.launch.py
 
 This command starts **Gazebo Harmonic** with the simulated robot and launches the navigation node, which directs the robot to the set goal while avoiding obstacles.
 
+## Running SLAM and Generating a Map
+
+To run SLAM and generate a map, execute the following command **after launching the robot**:
+
+```bash
+ros2 launch diff_drive_robot slam.launch.py
+```
+
 ## Contributing
 
 Contributions, issues, and feature requests are welcome! Please open an issue or submit a pull request on GitHub.
-```
 

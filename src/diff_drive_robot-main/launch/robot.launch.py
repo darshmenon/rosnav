@@ -1,6 +1,6 @@
 import os
-from launch_ros.actions import Node
 from launch import LaunchDescription
+from launch_ros.actions import Node
 from launch.conditions import IfCondition
 from ament_index_python.packages import get_package_share_directory
 from launch.substitutions import LaunchConfiguration
@@ -36,13 +36,6 @@ def generate_launch_description():
         ]), launch_arguments={'use_sim_time': 'true', 'urdf': urdf_path}.items()
     )
 
-#     initial_velocity_publisher = Node(
-#         package='diff_drive_robot',
-#     executable='cmd_vel_publisher.py',
-#     name='cmd_vel_publisher',
-#     output='screen'
-# )
-
     # Launch the Gazebo server to initialize the simulation
     gazebo_server = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
@@ -66,7 +59,6 @@ def generate_launch_description():
             '-x', '0.0',
             '-y', '0.0',
             '-z', '0.3',
-      
         ],
         output='screen'
     )
@@ -95,10 +87,10 @@ def generate_launch_description():
         )]
     )
     
-    # Navigation node (update as needed)
+    # Navigation node
     navigation_node = Node(
         package='diff_drive_robot',
-        executable='navigation.py',  # Ensure this matches your script's filename
+        executable='navigation.py',
         name='obstacle_avoidance_navigator',  
         output='screen'
     )
@@ -110,18 +102,33 @@ def generate_launch_description():
         output='screen'
     )
 
+
+    # Additional navigation node from the first script
+    nav2_node = Node(
+        package='diff_drive_robot',  # Replace with your actual package name
+        executable='nav2.py',
+        output='screen'
+    )
+    # slam_launch = IncludeLaunchDescription(
+    #     PythonLaunchDescriptionSource([
+    #         os.path.join(get_package_share_directory('slam_toolbox'), 'launch', 'online_async_launch.py')
+    #     ]),
+    #     launch_arguments={
+    #         'slam_params_file': os.path.join(get_package_share_directory(package_name), 'config', 'mapper_params_online_async.yaml'),
+    #         'use_sim_time': 'true'
+    #     }.items(),
+    # )
+    # Launch all nodes
     return LaunchDescription([
-        # Declare launch arguments
         declare_rviz,
         declare_world,
-
-        # Launch the nodes
         rviz2,
         rsp,
         gazebo_server,
         gazebo_client,
         ros_gz_bridge,
         spawn_robot,
-        navigation_node
-                        # path_planning_node
+        navigation_node,
+        nav2_node  
+        # slam_launch
     ])

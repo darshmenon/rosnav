@@ -11,7 +11,7 @@ find_package(ament_cmake REQUIRED)
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)
 install(
-  PROGRAMS scripts/navigation.py scripts/cmd_vel_publisher.py
+  PROGRAMS scripts/navigation.py scripts/cmd_vel_publisher.py scripts/nav2.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(
