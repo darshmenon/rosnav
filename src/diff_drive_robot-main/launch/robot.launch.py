@@ -105,13 +105,18 @@ def generate_launch_description():
     PythonLaunchDescriptionSource([
         os.path.join(get_package_share_directory('nav2_bringup'), 'launch', 'navigation_launch.py')
     ]),
-    launch_arguments={'use_sim_time': 'true'}.items()
+    launch_arguments={
+        'use_sim_time': 'true',
+        'params_file': '/home/darsh/ros2/src/diff_drive_robot-main/config/nav2_params.yaml'
+    }.items()
 )
-    nav2_node = Node(
-        package='diff_drive_robot',  # Replace with your actual package name
-        executable='nav2.py',
-        output='screen'
-    )
+
+
+    # nav2_node = Node(
+    #     package='diff_drive_robot',  
+    #     executable='nav2.py',
+    #     output='screen'
+    # )
     slam_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             os.path.join(get_package_share_directory('slam_toolbox'), 'launch', 'online_async_launch.py')
@@ -130,8 +135,8 @@ def generate_launch_description():
         gazebo_client,
         ros_gz_bridge,
         spawn_robot,
-        navigation_node,
-        nav2_node,    
+        # navigation_node,
+        # nav2_node,    
         nav2_launch
         # slam_launch
     ])

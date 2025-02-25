@@ -1,0 +1,65 @@
+[0.047s] Invoking command in '/home/darsh/ros2/build/diff_drive_robot': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake /home/darsh/ros2/src/diff_drive_robot-main -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/home/darsh/ros2/install/diff_drive_robot
+[0.459s] -- The C compiler identification is GNU 13.3.0
+[0.892s] -- The CXX compiler identification is GNU 13.3.0
+[0.954s] -- Detecting C compiler ABI info
+[1.243s] -- Detecting C compiler ABI info - done
+[1.258s] -- Check for working C compiler: /usr/bin/cc - skipped
+[1.258s] -- Detecting C compile features
+[1.260s] -- Detecting C compile features - done
+[1.287s] -- Detecting CXX compiler ABI info
+[1.469s] -- Detecting CXX compiler ABI info - done
+[1.491s] -- Check for working CXX compiler: /usr/bin/c++ - skipped
+[1.492s] -- Detecting CXX compile features
+[1.492s] -- Detecting CXX compile features - done
+[1.521s] -- Found ament_cmake: 2.5.3 (/opt/ros/jazzy/share/ament_cmake/cmake)
+[1.939s] -- Found Python3: /usr/bin/python3 (found version "3.12.3") found components: Interpreter 
+[2.182s] -- Override CMake install command with custom implementation using symlinks instead of copying resources
+[2.415s] -- Found ament_lint_auto: 0.17.1 (/opt/ros/jazzy/share/ament_lint_auto/cmake)
+[2.833s] -- Added test 'flake8' to check Python code syntax and style conventions
+[2.833s] -- Configured 'flake8' exclude dirs and/or files: 
+[2.833s] -- Added test 'lint_cmake' to check CMake code style
+[2.834s] -- Added test 'pep257' to check Python code against some of the docstring style conventions in PEP 257
+[2.834s] -- Added test 'xmllint' to check XML markup files
+[2.834s] -- Configuring done (2.7s)
+[2.834s] -- Generating done (0.0s)
+[2.834s] -- Build files have been written to: /home/darsh/ros2/build/diff_drive_robot
+[2.861s] Invoked command in '/home/darsh/ros2/build/diff_drive_robot' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake /home/darsh/ros2/src/diff_drive_robot-main -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/home/darsh/ros2/install/diff_drive_robot
+[2.862s] Invoking command in '/home/darsh/ros2/build/diff_drive_robot': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/darsh/ros2/build/diff_drive_robot -- -j12 -l12
+[2.949s] Invoked command in '/home/darsh/ros2/build/diff_drive_robot' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/darsh/ros2/build/diff_drive_robot -- -j12 -l12
+[2.966s] Invoking command in '/home/darsh/ros2/build/diff_drive_robot': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/darsh/ros2/build/diff_drive_robot
+[2.982s] -- Install configuration: ""
+[2.983s] -- Execute custom install script
+[2.984s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/lib/diff_drive_robot/navigation.py
+[3.004s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/lib/diff_drive_robot/cmd_vel_publisher.py
+[3.021s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/launch/robot.launch.py
+[3.034s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/launch/rsp.launch.py
+[3.050s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/urdf/gazebo_control.xacro
+[3.076s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/urdf/inertial_macros.xacro
+[3.094s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/urdf/lidar.xacro
+[3.114s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/urdf/robot.urdf.xacro
+[3.128s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/urdf/robot_core.xacro
+[3.145s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/config/costmap.yaml
+[3.224s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/config/gz_bridge.yaml
+[3.257s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/config/nav2_params.yaml
+[3.281s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/worlds/empty.world
+[3.319s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/worlds/obstacles.world
+[3.333s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/rviz/bot.rviz
+[3.345s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/lib/diff_drive_robot/navigation.py
+[3.348s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/lib/diff_drive_robot/path_planning.py
+[3.362s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/lib/diff_drive_robot/cmd_vel_publisher.py
+[3.362s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/ament_index/resource_index/package_run_dependencies/diff_drive_robot
+[3.374s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/ament_index/resource_index/parent_prefix_path/diff_drive_robot
+[3.384s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/environment/ament_prefix_path.sh
+[3.399s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/environment/ament_prefix_path.dsv
+[3.423s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/environment/path.sh
+[3.463s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/environment/path.dsv
+[3.484s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/local_setup.bash
+[3.497s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/local_setup.sh
+[3.517s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/local_setup.zsh
+[3.535s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/local_setup.dsv
+[3.568s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/package.dsv
+[3.584s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/ament_index/resource_index/packages/diff_drive_robot
+[3.600s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/cmake/diff_drive_robotConfig.cmake
+[3.619s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/cmake/diff_drive_robotConfig-version.cmake
+[3.661s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/package.xml
+[3.681s] Invoked command in '/home/darsh/ros2/build/diff_drive_robot' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/darsh/ros2/build/diff_drive_robot

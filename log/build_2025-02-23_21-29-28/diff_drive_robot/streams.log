@@ -1,0 +1,56 @@
+[0.016s] Invoking command in '/home/darsh/ros2/build/diff_drive_robot': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/darsh/ros2/build/diff_drive_robot -- -j12 -l12
+[0.154s] Invoked command in '/home/darsh/ros2/build/diff_drive_robot' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/darsh/ros2/build/diff_drive_robot -- -j12 -l12
+[0.170s] Invoking command in '/home/darsh/ros2/build/diff_drive_robot': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/darsh/ros2/build/diff_drive_robot
+[0.212s] -- Install configuration: ""
+[0.212s] -- Execute custom install script
+[0.212s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/lib/diff_drive_robot/navigation.py
+[0.213s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/lib/diff_drive_robot/cmd_vel_publisher.py
+[0.213s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/lib/diff_drive_robot/nav2.py
+[0.213s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/launch/bringup_launch.py
+[0.213s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/launch/localization_launch.py
+[0.214s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/launch/navigation_launch.py
+[0.214s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/launch/robot.launch.py
+[0.214s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/launch/rsp.launch.py
+[0.219s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/launch/rviz_launch.py
+[0.219s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/launch/slam.launch.py
+[0.219s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/urdf/gazebo_control.xacro
+[0.219s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/urdf/inertial_macros.xacro
+[0.219s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/urdf/lidar.xacro
+[0.220s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/urdf/robot.urdf.xacro
+[0.220s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/urdf/robot_core.xacro
+[0.220s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/config/costmap.yaml
+[0.220s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/config/gz_bridge.yaml
+[0.220s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/config/mapper_params_lifelong.yaml
+[0.220s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/config/mapper_params_localization.yaml
+[0.220s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/config/mapper_params_offline.yaml
+[0.220s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/config/mapper_params_online_async.yaml
+[0.220s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/config/mapper_params_online_sync.yaml
+[0.220s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/config/nav2_multirobot_params_1.yaml
+[0.220s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/config/nav2_multirobot_params_2.yaml
+[0.220s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/config/nav2_multirobot_params_all.yaml
+[0.220s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/config/nav2_params copy.yaml
+[0.220s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/config/nav2_params.yaml
+[0.220s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/config/slam_params.yaml
+[0.220s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/config/slam_toolbox_default.rviz
+[0.220s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/worlds/empty.world
+[0.220s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/worlds/obstacles.world
+[0.220s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/rviz/bot.rviz
+[0.221s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/lib/diff_drive_robot/navigation.py
+[0.221s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/lib/diff_drive_robot/path_planning.py
+[0.221s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/lib/diff_drive_robot/cmd_vel_publisher.py
+[0.221s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/ament_index/resource_index/package_run_dependencies/diff_drive_robot
+[0.225s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/ament_index/resource_index/parent_prefix_path/diff_drive_robot
+[0.226s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/environment/ament_prefix_path.sh
+[0.226s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/environment/ament_prefix_path.dsv
+[0.226s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/environment/path.sh
+[0.227s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/environment/path.dsv
+[0.228s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/local_setup.bash
+[0.228s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/local_setup.sh
+[0.228s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/local_setup.zsh
+[0.228s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/local_setup.dsv
+[0.228s] -- Symlinking: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/package.dsv
+[0.264s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/ament_index/resource_index/packages/diff_drive_robot
+[0.265s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/cmake/diff_drive_robotConfig.cmake
+[0.265s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/cmake/diff_drive_robotConfig-version.cmake
+[0.265s] -- Up-to-date symlink: /home/darsh/ros2/install/diff_drive_robot/share/diff_drive_robot/package.xml
+[0.275s] Invoked command in '/home/darsh/ros2/build/diff_drive_robot' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/darsh/ros2/build/diff_drive_robot
