@@ -5,6 +5,27 @@
 
   <!-- Base Link -->
   <link name="base_link"/>
+  <link name="base_footprint">
+    <collision>
+      <geometry>
+        <box size="0.55 0.4 0.01"/>
+      </geometry>
+    </collision>
+    <visual>
+      <geometry>
+        <box size="0.55 0.4 0.01"/>
+      </geometry>
+      <material name="footprint_material">
+        <color rgba="0.0 0.0 1.0 0.5"/>
+      </material>
+    </visual>
+  </link>
+
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="base_footprint"/>
+    <origin xyz="0 0 -0.05"/>
+  </joint>
 
   <!-- Chassis -->
   <joint name="chassis_joint" type="fixed">
