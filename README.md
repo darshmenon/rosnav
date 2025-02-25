@@ -72,7 +72,7 @@ To start SLAM and generate a map:
 ```bash
 ros2 launch diff_drive_robot slam.launch.py
 ```
-
+(SLAM must be running for Nav2 to work)
 
 ## Manual Robot Control
 If you prefer manual control, use the keyboard teleoperation tool:
