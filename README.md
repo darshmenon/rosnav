@@ -63,7 +63,7 @@ source ~/roscar/install/setup.bash
 ### Start Navigation with Nav2
 To launch the navigation stack:
 ```bash
-ros2 launch diff_drive_robot nav2.launch.py
+ros2 launch diff_drive_robot robot.launch.py
 ```
 Once Nav2 is running, set the navigation goal pose in **RViz**.
 
@@ -72,7 +72,7 @@ To start SLAM and generate a map:
 ```bash
 ros2 launch diff_drive_robot slam.launch.py
 ```
-Alternatively, you can modify `robot.launch.py` to comment out the navigation node and manually set navigation goals.
+
 
 ## Manual Robot Control
 If you prefer manual control, use the keyboard teleoperation tool:
@@ -81,10 +81,11 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 ```
 This allows you to control the robot using the arrow keys.
 
-## Goal Setting(alternatively)
+## Goal Setting(alternative method)
+Alternatively, you can modify `robot.launch.py` to comment out the navigation node and manually set navigation goals.
 Set your target destination directly in the navigation script `navigation.py`. For example, to set the goal at `x = 5.0` and `y = 8.0`, modify the script:
 ```python
-self.nav_to_pose(x=5.0, y=8.0)
+   self.goal = [5.0, 4.0]  
 ```
 
 ## Contributing
