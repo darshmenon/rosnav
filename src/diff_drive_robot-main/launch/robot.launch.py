@@ -105,10 +105,12 @@ def generate_launch_description():
     PythonLaunchDescriptionSource([
         os.path.join(get_package_share_directory('nav2_bringup'), 'launch', 'navigation_launch.py')
     ]),
-    launch_arguments={
-        'use_sim_time': 'true',
-        'params_file': '/home/darsh/ros2/src/diff_drive_robot-main/config/nav2_params.yaml'
-    }.items()
+       launch_arguments={
+            'use_sim_time': 'true',
+            'params_file': os.path.join(
+                get_package_share_directory('diff_drive_robot'), 'config', 'nav2_params.yaml'
+            )
+        }.items()
 )
 
 
