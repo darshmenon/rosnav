@@ -10,7 +10,6 @@ This project utilizes **Nav2** and **SLAM Toolbox** for robot navigation and obs
 - **Simulation Environment**: Uses **Gazebo Harmonic** for high-fidelity simulations.
 - **Visualization**: RViz support for real-time sensor data and path visualization.
 
-
 ## Requirements
 
 ### Operating System:
@@ -41,7 +40,8 @@ sudo apt install -y \
    ros-jazzy-teleop-twist-keyboard \  
    ros-jazzy-teleop-twist-joy \  
    ros-jazzy-nav2-bringup \  
-   ros-jazzy-slam-toolbox
+   ros-jazzy-slam-toolbox \
+   ros-jazzy-navigation2
 ```
 
 ### Create a ROS 2 Workspace (if you don’t already have one)
@@ -76,8 +76,8 @@ source ~/roscar/install/setup.bash
 
 ## Running Navigation and SLAM
 
-### Start Navigation with Nav2
-## Important Configuration Step
+
+### Important Configuration Step
 
 Before running Nav2 and SLAM, update the `mapper_params_online_async.yaml` file with the correct path to your map file. Replace the existing `map_file_name` entry with the path to your map location. For example:
 
@@ -87,6 +87,7 @@ map_file_name: /home/darsh/ros2/my_map_serial
 
 This change should be made in `src/diff_drive_robot-main/config/mapper_params_online_async.yaml`.
 
+### Start Navigation with Nav2
 
 To launch the navigation stack:
 
@@ -128,4 +129,3 @@ Set your target destination directly in the navigation script `navigation.py`. F
 ## Contributing
 
 Feel free to contribute to this project by submitting issues or pull requests.
-
