@@ -1,0 +1,16 @@
+slam_toolbox:
+  ros__parameters:
+    odom_frame: "odom"
+    base_frame: "base_link"
+    map_frame: "map"
+    scan_topic: "/scan"
+    use_sim_time: true
+    mode: "mapping"
+    resolution: 0.05
+    map_save_interval: 5
+    publish_map: true
+    map_topic: "/map"
+    transform_tolerance: 0.2
+    map_update_interval: 2.0
+    minimum_time_interval: 0.5
+    minimum_travel_distance: 0.5

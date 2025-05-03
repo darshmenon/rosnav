@@ -3,7 +3,9 @@
 ## Overview
 
 This project utilizes **Nav2** and **SLAM Toolbox** for robot navigation and obstacle avoidance in a simulated environment. The robot autonomously detects obstacles and adjusts its path to avoid collisions while leveraging **Gazebo Harmonic** for realistic simulations and **ROS 2 Jazzy** for communication and control.
-
+ 
+![alt text](images/map_demo.png)
+![alt text](images/image.png)
 ## Features
 
 * **Obstacle Avoidance**: The robot automatically detects obstacles and adjusts its trajectory to avoid collisions.
