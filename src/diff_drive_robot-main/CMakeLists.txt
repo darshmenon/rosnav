@@ -11,7 +11,7 @@ find_package(ament_cmake REQUIRED)
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)
 install(
-  PROGRAMS scripts/navigation.py scripts/cmd_vel_publisher.py scripts/nav2.py
+  PROGRAMS scripts/navigation.py  
   DESTINATION lib/${PROJECT_NAME}
 )
 install(
@@ -19,7 +19,7 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 install(
-  PROGRAMS scripts/navigation.py scripts/path_planning.py  scripts/cmd_vel_publisher.py# Added path_planning.py
+  PROGRAMS scripts/navigation.py scripts/path_planning.py  # Added path_planning.py
   DESTINATION lib/${PROJECT_NAME}
 )
 if(BUILD_TESTING)

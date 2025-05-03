@@ -6,25 +6,42 @@ This project utilizes **Nav2** and **SLAM Toolbox** for robot navigation and obs
 
 ## Features
 
-- **Obstacle Avoidance**: The robot automatically detects obstacles and adjusts its trajectory to avoid collisions.
-- **Simulation Environment**: Uses **Gazebo Harmonic** for high-fidelity simulations.
-- **Visualization**: RViz support for real-time sensor data and path visualization.
+* **Obstacle Avoidance**: The robot automatically detects obstacles and adjusts its trajectory to avoid collisions.
+* **Simulation Environment**: Uses **Gazebo Harmonic** for high-fidelity simulations.
+* **Visualization**: RViz support for real-time sensor data and path visualization.
 
 ## Requirements
 
 ### Operating System:
 
-- **Ubuntu 24.04** (Recommended)
+* **Ubuntu 24.04** (Recommended)
 
 ### ROS Distribution:
 
-- **ROS 2 Jazzy**
+* **ROS 2 Jazzy**
 
 ### Simulator:
 
-- **Gazebo Harmonic**
+* **Gazebo Harmonic**
 
 ## Installation
+
+### Add ROS 2 Jazzy Repository (if not already added)
+
+If the ROS 2 Jazzy packages are not found, you might need to add the ROS 2 repository. Use the following commands:
+
+```bash
+sudo apt update
+sudo apt install curl gnupg2 lsb-release
+curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key | sudo apt-key add -
+sudo sh -c 'echo "deb [arch=amd64] http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" > /etc/apt/sources.list.d/ros2-latest.list'
+```
+
+Afterward, update your package lists:
+
+```bash
+sudo apt update
+```
 
 ### Install Required ROS 2 Packages
 
@@ -74,8 +91,16 @@ colcon build --symlink-install
 source ~/roscar/install/setup.bash
 ```
 
-## Running Navigation and SLAM
+### Verify ROS 2 Packages Installation
 
+Ensure that the ROS 2 packages are available and installed correctly. Use the following command to list installed packages:
+
+```bash
+ros2 pkg list | grep ros-gz
+ros2 pkg list | grep teleop
+```
+
+## Running Navigation and SLAM
 
 ### Important Configuration Step
 
@@ -126,6 +151,14 @@ Set your target destination directly in the navigation script `navigation.py`. F
    self.goal = [5.0, 4.0]  
 ```
 
+## Troubleshooting
+
+If you encounter issues with missing ROS 2 packages like `ros-jazzy-ros-gz`, it’s possible the packages are not available through the default apt repository. In such cases:
+
+1. Ensure the ROS 2 Jazzy repositories are properly added to your system.
+2. If packages are missing, build from source by cloning the relevant repositories into your workspace.
+
 ## Contributing
 
 Feel free to contribute to this project by submitting issues or pull requests.
+
