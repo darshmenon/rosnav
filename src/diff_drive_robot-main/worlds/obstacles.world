@@ -28,7 +28,7 @@
         filename="ignition-gazebo-contact-system"
         name="ignition::gazebo::systems::Contact">
     </plugin>
-
+    
     <model name='ground_plane'>
       <static>true</static>
       <link name='link'>
@@ -79,39 +79,52 @@
       <self_collide>false</self_collide>
     </model>
 
-    <!-- Replace obstacles with Construction Barrels -->
-    <include>
-      <uri>model://construction_barrel</uri>
+  <include>
+      <uri>
+      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Construction Barrel
+      </uri>
       <name>Construction Barrel_0</name>
       <pose>2 1 -0 0 -0 -0</pose>  <!-- First obstacle position -->
     </include>
     <include>
-      <uri>model://construction_barrel</uri>
+      <uri>
+      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Construction Barrel
+      </uri>
       <name>Construction Barrel_1</name>
       <pose>1 -1 -0 0 -0 -0</pose>  <!-- Second obstacle position -->
     </include>
     <include>
-      <uri>model://construction_barrel</uri>
+      <uri>
+      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Construction Barrel
+      </uri>
       <name>Construction Barrel_2</name>
       <pose>4 -1 -0 0 -0 -0</pose>  <!-- Third obstacle position -->
     </include>
     <include>
-      <uri>model://construction_barrel</uri>
+      <uri>
+      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Construction Barrel
+      </uri>
       <name>Construction Barrel_3</name>
       <pose>5 -3 -0 0 -0 -0</pose>  <!-- Fourth obstacle position -->
     </include>
     <include>
-      <uri>model://construction_barrel</uri>
+      <uri>
+      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Construction Barrel
+      </uri>
       <name>Construction Barrel_4</name>
       <pose>2 -2 -0 0 -0 -0</pose>  <!-- Fifth obstacle position -->
     </include>
     <include>
-      <uri>model://construction_barrel</uri>
+      <uri>
+      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Construction Barrel
+      </uri>
       <name>Construction Barrel_5</name>
       <pose>4 3 -0 0 -0 -0</pose>  <!-- Sixth obstacle position -->
     </include>
     <include>
-      <uri>model://construction_barrel</uri>
+      <uri>
+      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Construction Barrel
+      </uri>
       <name>Construction Barrel_6</name>
       <pose>5 1 -0 0 -0 -0</pose>  <!-- Seventh obstacle position -->
     </include>
