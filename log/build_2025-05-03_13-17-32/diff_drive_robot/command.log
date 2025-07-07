@@ -1,4 +1,0 @@
-Invoking command in '/home/darsh/rosnav/build/diff_drive_robot': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy /usr/bin/cmake --build /home/darsh/rosnav/build/diff_drive_robot -- -j4 -l4
-Invoked command in '/home/darsh/rosnav/build/diff_drive_robot' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy /usr/bin/cmake --build /home/darsh/rosnav/build/diff_drive_robot -- -j4 -l4
-Invoking command in '/home/darsh/rosnav/build/diff_drive_robot': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy /usr/bin/cmake --install /home/darsh/rosnav/build/diff_drive_robot
-Invoked command in '/home/darsh/rosnav/build/diff_drive_robot' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy /usr/bin/cmake --install /home/darsh/rosnav/build/diff_drive_robot
