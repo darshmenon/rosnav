@@ -1,6 +1,23 @@
 # ROS 2 Navigation and SLAM with Nav2 and Gazebo Harmonic
 
+📖 **Related Blog Post**: For a detailed walkthrough, check out the companion article on Medium:
+👉 [*Mastering ROS 2 Navigation: From SLAM Mapping to Autonomous Obstacle Avoidance*](https://medium.com/@darshmenon02/mastering-ros-2-navigation-from-slam-mapping-to-autonomous-obstacle-avoidance-7446e4ff049a)
+
+This blog post explains the architecture, challenges, and step-by-step setup for this project — ideal if you're new to Nav2, SLAM Toolbox, or working with Gazebo Harmonic!
+
 ## Overview
+
+This project utilizes **Nav2** and **SLAM Toolbox** for robot navigation and obstacle avoidance in a simulated environment. The robot autonomously detects obstacles and adjusts its path to avoid collisions while leveraging **Gazebo Harmonic** for realistic simulations and **ROS 2 Jazzy** for communication and control.
+
+![alt text](images/nav2spedup-ezgif.com-video-to-gif-converter.gif)
+![alt text](images/map_demo.png)
+![alt text](images/image.png)
+
+---
+
+(And then continue with your existing sections.)
+
+Would you like me to update the rest of the README with improvements for formatting, readability, or writing style?
 
 This project utilizes **Nav2** and **SLAM Toolbox** for robot navigation and obstacle avoidance in a simulated environment. The robot autonomously detects obstacles and adjusts its path to avoid collisions while leveraging **Gazebo Harmonic** for realistic simulations and **ROS 2 Jazzy** for communication and control.
  ![alt text](images/nav2spedup-ezgif.com-video-to-gif-converter.gif)
