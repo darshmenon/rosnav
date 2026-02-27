@@ -18,6 +18,8 @@ install(
     scripts/frontier_explorer.py
     scripts/check_odometry.py
     scripts/reset_pose.py
+    scripts/multi_teleop.py
+    scripts/fleet_manager.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(
