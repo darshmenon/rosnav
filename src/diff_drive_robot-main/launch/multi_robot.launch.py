@@ -10,7 +10,7 @@ Usage:
   ros2 launch diff_drive_robot multi_robot.launch.py
 
 Optional args:
-  map:=<path>   Override default map yaml (default: ~/rosnav/my_map.yaml)
+  map:=<path>   Override default map yaml (default: <package_share>/maps/map_<world_name>.yaml)
   rviz:=False   Disable RViz
 """
 
@@ -30,25 +30,38 @@ from ament_index_python.packages import get_package_share_directory
 # Robot spawn poses
 # ---------------------------------------------------------------------------
 ROBOTS = [
-    {'name': 'robot1', 'x': '0.0',  'y': '0.0',  'z': '0.3', 'yaw': '0.0'},
-    {'name': 'robot2', 'x': '1.5',  'y': '0.0',  'z': '0.3', 'yaw': '0.0'},
+    {'name': 'robot1', 'x': '-2.0', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
+    {'name': 'robot2', 'x': '-0.8', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
 ]
 
 
-def _resolve_map_file(map_arg: str, world_path: str, home: str) -> str:
+def _resolve_map_file(map_arg: str, world_path: str, home: str, pkg_share: str) -> str:
     if map_arg:
         return map_arg
-    world_name = os.path.splitext(os.path.basename(world_path))[0]
-    world_map = os.path.join(home, 'rosnav', f'{world_name}_map.yaml')
-    default_map = os.path.join(home, 'rosnav', 'my_map.yaml')
-    return world_map if os.path.exists(world_map) else default_map
+    world_name = os.path.splitext(os.path.basename(world_path))[0].replace('.world', '')
+    maps_dir = os.path.join(pkg_share, 'maps')
+    legacy_maps_dir = os.path.join(home, 'rosnav', 'maps')
+    candidates = [
+        os.path.join(maps_dir, f'{world_name}_map.yaml'),
+        os.path.join(maps_dir, f'map_{world_name}.yaml'),
+        os.path.join(legacy_maps_dir, f'{world_name}_map.yaml'),
+        os.path.join(home, 'rosnav', f'{world_name}_map.yaml'),
+        os.path.join(maps_dir, 'my_map.yaml'),
+        os.path.join(legacy_maps_dir, 'my_map.yaml'),
+        os.path.join(home, 'rosnav', 'my_map.yaml'),
+    ]
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+    return candidates[0]
 
 
-def _build_map_server_actions(context, map_file, world_lc, home: str):
+def _build_map_server_actions(context, map_file, world_lc, home: str, pkg_share: str):
     resolved_map = _resolve_map_file(
         map_file.perform(context).strip(),
         world_lc.perform(context),
         home,
+        pkg_share,
     )
 
     map_server = Node(
@@ -92,7 +105,7 @@ def generate_launch_description():
     declare_map = DeclareLaunchArgument(
         'map',
         default_value='',
-        description='Shared map yaml file. If empty, auto-use ~/rosnav/<world_name>_map.yaml then fallback to ~/rosnav/my_map.yaml')
+        description='Shared map yaml file. If empty, auto-use <package_share>/maps/map_<world_name>.yaml (legacy fallbacks supported)')
 
     declare_rviz = DeclareLaunchArgument(
         'rviz', default_value='True', description='Launch RViz')
@@ -122,7 +135,7 @@ def generate_launch_description():
 
     map_server_group = OpaqueFunction(
         function=_build_map_server_actions,
-        args=[map_file, world_lc, home],
+        args=[map_file, world_lc, home, pkg_share],
     )
 
     # -----------------------------------------------------------------------

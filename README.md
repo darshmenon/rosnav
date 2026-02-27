@@ -66,41 +66,110 @@ source ~/rosnav/install/setup.bash
 
 ## Running
 
-### Mode 1 — Saved map + AMCL localisation
+All maps are automatically saved to and loaded from `src/diff_drive_robot-main/maps/` based on the world name.
+
+### Mode 1 — Autonomous frontier exploration (Auto-maps)
+Run SLAM, Gazebo, RViz, and the Frontier Explorer all in a **single command**. The robot will explore the maze and progressively save the map (`map_maze.yaml`) every 15 seconds.
 ```bash
-ros2 launch diff_drive_robot robot.launch.py
-# If map:= is omitted, launch auto-picks:
-#   ~/rosnav/<world_name>_map.yaml (if present), else ~/rosnav/my_map.yaml
-# Example:
-#   ros2 launch diff_drive_robot robot.launch.py world:=.../maze.world
-#   -> tries ~/rosnav/maze_map.yaml first
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze explore:=true
 ```
 
-### Mode 2 — SLAM live mapping + Nav2 (no map needed)
+### Mode 2 — SLAM live mapping + Nav2 (Manual Control)
+If you want to manually drive and build the map yourself:
 ```bash
-ros2 launch diff_drive_robot slam_nav.launch.py
-# Gazebo (maze world) + SLAM Toolbox + Nav2 + RViz — all-in-one
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze
+```
+*(You can manually run `ros2 run diff_drive_robot frontier_explorer.py` later if desired)*
+
+### Maze world quick launch (recommended)
+```bash
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze rviz:=True
+```
+Notes:
+- Default robot entity name is `diff_drive`.
+- Default maze spawn is set to a safer visible area.
+- If you still do not see the robot, run with explicit spawn:
+```bash
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze \
+  spawn_x:=1.5 spawn_y:=1.0 spawn_z:=0.3 spawn_yaw:=0.0
 ```
 
-### Mode 3 — Autonomous frontier exploration
+### Mode 3 — Saved map + AMCL localisation
+Once the map is saved into the `maps/` directory, you can load the environment in localisation-only mode (no SLAM). It will automatically find `map_maze.yaml` if you use `world_name:=maze`:
 ```bash
-# Terminal 1
-ros2 launch diff_drive_robot slam_nav.launch.py
-
-# Terminal 2 (after ~10s)
-ros2 run diff_drive_robot frontier_explorer.py
-
-# Save map when complete (world-aware names)
-ros2 run nav2_map_server map_saver_cli -f ~/rosnav/maze_map
-# or
-ros2 run nav2_map_server map_saver_cli -f ~/rosnav/obstacles_map
+ros2 launch diff_drive_robot robot.launch.py world:=/full/path/to/maze.world
 ```
 
-### Custom world
+### Mode 4 — Multi-Robot Navigation
+Launch two robots in the same environment, sharing the same map but running their own separate Nav2 instances in different namespaces (`/robot1` and `/robot2`):
 ```bash
-ros2 launch diff_drive_robot slam_nav.launch.py world:=/full/path/to/world.world
-# Optional explicit map save prefix:
-ros2 launch diff_drive_robot slam_nav.launch.py world:=/full/path/to/world.world map_prefix:=~/rosnav/custom_map
+ros2 launch diff_drive_robot multi_robot.launch.py world:=/home/asimov/rosnav/src/diff_drive_robot-main/worlds/obstacles.world
+```
+
+### 3D LiDAR Setup
+The robot URDF supports both 2D and 3D LiDARs. To use the 3D LiDAR:
+1. Edit `urdf/robot.urdf.xacro` and change `<xacro:include filename="lidar.xacro" />` to `<xacro:include filename="lidar3d.xacro" />`.
+2. Since Nav2 expects 2D `LaserScan` messages on `/scan`, but the 3D LiDAR outputs `PointCloud2` on `/points`, you must run the `pointcloud_to_laserscan` node converter alongside your launch files:
+```bash
+sudo apt install ros-$ROS_DISTRO-pointcloud-to-laserscan
+ros2 run pointcloud_to_laserscan pointcloud_to_laserscan_node \
+    --ros-args -r cloud_in:=/points -r scan:=/scan \
+    -p min_height:=0.1 -p max_height:=1.0 -p angle_min:=-1.57 -p angle_max:=1.57
+```
+
+### Custom maps
+To force load a custom map file:
+```bash
+ros2 launch diff_drive_robot robot.launch.py map:=/full/path/to/my_custom_map.yaml
+```
+To use a custom world file and optionally specify a map save prefix:
+```bash
+ros2 launch diff_drive_robot slam_nav.launch.py world:=/full/path/to/world.world map_prefix:=/tmp/custom_map
+```
+
+### Mode 4 — Multi-robot (shared map, separate namespaces)
+```bash
+ros2 launch diff_drive_robot multi_robot.launch.py rviz:=False world:=/full/path/to/maze.world
+```
+
+What to verify:
+```bash
+# Both robots spawned
+ros2 topic list | grep -E "/robot1|/robot2"
+
+# Shared map server (single publisher on /map)
+ros2 topic info /map -v
+```
+Expected: `Publisher count: 1` (`/map_server`) and namespaced robot topics like `/robot1/cmd_vel`, `/robot2/cmd_vel`.
+
+Send goals to each robot independently:
+```bash
+ros2 action send_goal /robot1/navigate_to_pose nav2_msgs/action/NavigateToPose \
+  "{pose: {header: {frame_id: map}, pose: {position: {x: -1.5, y: -0.5}, orientation: {w: 1.0}}}}"
+
+ros2 action send_goal /robot2/navigate_to_pose nav2_msgs/action/NavigateToPose \
+  "{pose: {header: {frame_id: map}, pose: {position: {x: 0.0, y: -0.5}, orientation: {w: 1.0}}}}"
+```
+
+### 3D LiDAR test (PointCloud2 + Nav2 compatibility)
+This project publishes 3D LiDAR on `/points` (PointCloud2). Nav2 needs `/scan` (LaserScan), so run conversion:
+```bash
+ros2 run pointcloud_to_laserscan pointcloud_to_laserscan_node \
+  --ros-args -r cloud_in:=/points -r scan:=/scan \
+  -p target_frame:=base_link -p min_height:=0.0 -p max_height:=1.0
+```
+Useful tuning params from `pointcloud_to_laserscan`: `angle_min`, `angle_max`, `angle_increment`, `range_min`, `range_max`, `transform_tolerance`.
+
+Smoke test commands:
+```bash
+# Check point cloud stream exists
+ros2 topic hz /points
+
+# Inspect one point cloud message
+ros2 topic echo /points --once
+
+# After conversion, confirm scan exists for Nav2/SLAM
+ros2 topic hz /scan
 ```
 
 ---
@@ -118,7 +187,8 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 | Symptom | Fix |
 |---|---|
 | `FATAL: plugin X does not exist` | Wrong distro params — check `$ROS_DISTRO` is sourced correctly |
-| Map not publishing | Check `map` arg path in launch, or config in `mapper_params_online_async.yaml` |
+| Map not saving correctly | Ensure `explore:=true` is set. Maps save to `~/rosnav/src/diff_drive_robot-main/maps/` |
+| Frontier says `No frontiers` repeatedly | Check SLAM logs for `TF_OLD_DATA` / dropped scans and kill stale Gazebo/ROS processes before relaunch |
 | Robot not moving | Run `ros2 topic hz /cmd_vel` — if 0, Nav2 lifecycle failed; check node list |
 | RViz GLSL errors | Cosmetic only, can be ignored |
 

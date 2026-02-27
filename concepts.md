@@ -46,12 +46,13 @@ The **gz_bridge** translates Gazebo topics to ROS 2 topics and back:
 The output is a `/map` topic (OccupancyGrid) used by Nav2.
 
 ```
-Run to build a map:
-  ros2 launch diff_drive_robot slam.launch.py
+Run to build the map:
+  ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze
 
-Save the map after exploring (name it after the world):
-  ros2 run nav2_map_server map_saver_cli -f ~/rosnav/map_maze
-  # or: ros2 run nav2_map_server map_saver_cli -f ~/rosnav/map_obstacles
+Run to auto-explore and progressively save the map:
+  ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze explore:=true
+
+Maps will automatically be saved to `src/diff_drive_robot-main/maps/map_maze` or `map_obstacles`.
 ```
 
 ---
@@ -151,11 +152,8 @@ Edit `WAYPOINTS` at the top of the script to change the route.
 6. Repeat until no frontiers remain.
 
 ```bash
-# Terminal 1 — SLAM + Nav2 (all-in-one)
-ros2 launch diff_drive_robot slam_nav.launch.py
-
-# Terminal 2 — frontier explorer
-ros2 run diff_drive_robot frontier_explorer.py
+# Single command — SLAM + Nav2 + frontier explorer + auto-save
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze explore:=true
 ```
 
 Recent reliability fixes in `frontier_explorer.py`:
@@ -163,6 +161,7 @@ Recent reliability fixes in `frontier_explorer.py`:
 - Added configurable `base_frame` and `goal_frame` TF lookup (`map -> base_link` by default).
 - Added `min_goal_distance` filter so very near centroids are skipped (prevents no-op goals).
 - If TF is not ready yet, the node waits instead of using a fake `(0, 0)` position.
+- Added `map_save_path` parameter so completed exploration auto-saves map via `map_saver_cli`.
 
 ---
 
@@ -248,7 +247,7 @@ For this repo, a cleaner layout helps debugging and repeatability:
 
 - Keep ROS package source under `src/diff_drive_robot-main/` only.
 - Move generated/runtime artifacts out of root into:
-  - `maps/` for `*.yaml`, `*.pgm`, `*.data`, `*.posegraph`
+  - `src/diff_drive_robot-main/maps/` for generated `map_*.yaml` and `map_*.pgm`
   - `logs/` for launch or benchmark logs
 - Add `scripts/` at repo root only for workflow wrappers (build/test/run), not ROS nodes.
 - Keep docs in `docs/` (`README.md` for quickstart, `concepts.md` for deep reference).
@@ -270,7 +269,7 @@ Standalone global planner using the **A\* algorithm**:
 | Launch file | What it does | Key args |
 |---|---|---|
 | `robot.launch.py` | Gazebo + robot + Nav2 full bringup with saved map | `map`, `world`, `robot_name`, `spawn_x/y/z/yaw`, `rviz`, `use_sim_time` |
-| `slam_nav.launch.py` | Gazebo + robot + SLAM Toolbox + Nav2 + RViz — **no map needed** | `world`, `map_prefix`, `rviz`, `robot_name`, `spawn_x/y/z/yaw` |
+| `slam_nav.launch.py` | Gazebo + robot + SLAM Toolbox + Nav2 (+ optional auto frontier) | `world_name`, `world`, `explore`, `map_prefix`, `rviz`, `robot_name`, `spawn_x/y/z/yaw` |
 | `slam.launch.py` | Gazebo + robot + SLAM Toolbox mapping mode | `use_sim_time` |
 | `multi_robot.launch.py` | Two robots + shared map server + Nav2 per robot | `map`, `world`, `rviz` |
 | `nav2.launch.py` | Nav2 only (attach to running Gazebo) | `map`, `world`, `use_sim_time` |
@@ -282,7 +281,7 @@ Standalone global planner using the **A\* algorithm**:
 | `navigation.py` | Custom obstacle-avoidance FSM (no Nav2 needed) | `goal_x`, `goal_y`, `base_speed`, `obstacle_threshold` |
 | `path_planning.py` | Standalone A* path planner | `grid_size_x/y`, `resolution`, `safety_margin` |
 | `waypoint_nav.py` | Navigate through a sequence of waypoints via Nav2 | `waypoints_file`, `frame_id` |
-| `frontier_explorer.py` | Autonomous map exploration via frontier detection | `min_frontier_size`, `revisit_radius`, `poll_period` |
+| `frontier_explorer.py` | Autonomous map exploration via frontier detection + optional auto-save | `min_frontier_size`, `revisit_radius`, `poll_period`, `map_save_path` |
 | `check_odometry.py` | Debug odometry data | — |
 | `reset_pose.py` | Reset robot pose in simulation | `world_name`, `robot_name`, `reset_x/y/z/yaw` |
 
@@ -302,8 +301,8 @@ colcon build --symlink-install --packages-select diff_drive_robot
 
 Map selection behavior:
 - If `map:=` is provided, that exact map is used.
-- If `map:=` is empty, launch tries `~/rosnav/<world_name>_map.yaml` first.
-- If that file does not exist, it falls back to `~/rosnav/my_map.yaml`.
+- If `map:=` is empty, launch tries `<package_share>/maps/map_<world_name>.yaml` first.
+- Legacy fallbacks still work (`~/rosnav/maps` and old root-level map files).
 
 ---
 
@@ -343,8 +342,8 @@ ros2 node list | grep -E "amcl|planner|controller|bt_navigator"
 ros2 topic hz /cmd_vel
 
 # Save map after SLAM mapping (world-aware naming)
-ros2 run nav2_map_server map_saver_cli -f ~/rosnav/maze_map
-ros2 run nav2_map_server map_saver_cli -f ~/rosnav/obstacles_map
+ros2 run nav2_map_server map_saver_cli -f src/diff_drive_robot-main/maps/map_maze
+ros2 run nav2_map_server map_saver_cli -f src/diff_drive_robot-main/maps/map_obstacles
 
 # Load custom waypoints
 ros2 run diff_drive_robot waypoint_nav.py --ros-args \
@@ -355,5 +354,5 @@ ros2 run diff_drive_robot frontier_explorer.py
 
 # Reset robot to origin
 ros2 run diff_drive_robot reset_pose.py --ros-args \
-    -p world_name:=obstacles -p robot_name:=diff_bot
+    -p world_name:=obstacles -p robot_name:=diff_drive
 ```

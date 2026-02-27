@@ -9,20 +9,32 @@ ROS_DISTRO = os.environ.get('ROS_DISTRO', 'humble')
 _NAV2_PARAMS = 'nav2_params_jazzy.yaml' if ROS_DISTRO == 'jazzy' else 'nav2_params.yaml'
 
 
-def _resolve_map_file(map_arg: str, world_path: str, home: str) -> str:
+def _resolve_map_file(map_arg: str, world_path: str, home: str, pkg_share: str) -> str:
     if map_arg:
         return map_arg
-    world_name = os.path.splitext(os.path.basename(world_path))[0]
-    world_map = os.path.join(home, 'rosnav', f'{world_name}_map.yaml')
-    default_map = os.path.join(home, 'rosnav', 'my_map.yaml')
-    return world_map if os.path.exists(world_map) else default_map
+    world_name = os.path.splitext(os.path.basename(world_path))[0].replace('.world', '')
+    maps_dir = os.path.join(pkg_share, 'maps')
+    legacy_maps_dir = os.path.join(home, 'rosnav', 'maps')
+    candidates = [
+        os.path.join(maps_dir, f'{world_name}_map.yaml'),
+        os.path.join(maps_dir, f'map_{world_name}.yaml'),
+        os.path.join(legacy_maps_dir, f'{world_name}_map.yaml'),
+        os.path.join(home, 'rosnav', f'{world_name}_map.yaml'),
+        os.path.join(maps_dir, 'my_map.yaml'),
+        os.path.join(legacy_maps_dir, 'my_map.yaml'),
+        os.path.join(home, 'rosnav', 'my_map.yaml'),
+    ]
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+    return candidates[0]
 
 
 def _build_nav2_action(context, pkg_share: str, home: str):
     world_path = LaunchConfiguration('world').perform(context)
     map_arg = LaunchConfiguration('map').perform(context).strip()
     use_sim_time = LaunchConfiguration('use_sim_time').perform(context)
-    map_file = _resolve_map_file(map_arg, world_path, home)
+    map_file = _resolve_map_file(map_arg, world_path, home, pkg_share)
     params_file = os.path.join(pkg_share, 'config', _NAV2_PARAMS)
 
     return [
@@ -48,7 +60,7 @@ def generate_launch_description():
     declare_map = DeclareLaunchArgument(
         name='map',
         default_value='',
-        description='Map yaml path. If empty, auto-use ~/rosnav/<world_name>_map.yaml then fallback to ~/rosnav/my_map.yaml')
+        description='Map yaml path. If empty, auto-use <package_share>/maps/map_<world_name>.yaml (legacy fallbacks still supported)')
 
     declare_world = DeclareLaunchArgument(
         name='world',

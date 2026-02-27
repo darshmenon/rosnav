@@ -21,7 +21,7 @@ install(
   DESTINATION lib/${PROJECT_NAME}
 )
 install(
-  DIRECTORY launch urdf config worlds rviz
+  DIRECTORY launch urdf config worlds rviz maps
   DESTINATION share/${PROJECT_NAME}
 )
 if(BUILD_TESTING)

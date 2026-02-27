@@ -3,6 +3,8 @@ build/
 install/
 log/
 .ros_log/
+.slam_nav_pid
+*.runtime.log
 
 # Python
 __pycache__/

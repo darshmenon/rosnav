@@ -25,6 +25,10 @@ from action_msgs.msg import GoalStatus
 import numpy as np
 import math
 from collections import deque
+import subprocess
+import time
+import subprocess
+import os
 
 
 class FrontierExplorer(Node):
@@ -42,12 +46,14 @@ class FrontierExplorer(Node):
         self.declare_parameter('goal_frame',        'map')
         self.declare_parameter('base_frame',        'base_link')
         self.declare_parameter('min_goal_distance', 0.35)
+        self.declare_parameter('map_save_path',     '')
 
         self._min_size      = self.get_parameter('min_frontier_size').value
         self._revisit_r     = self.get_parameter('revisit_radius').value
         self._goal_frame    = self.get_parameter('goal_frame').value
         self._base_frame    = self.get_parameter('base_frame').value
         self._min_goal_dist = self.get_parameter('min_goal_distance').value
+        self._map_save_path = self.get_parameter('map_save_path').value.strip()
         map_topic           = self.get_parameter('map_topic').value
         action_name         = self.get_parameter('action_name').value
         poll_period         = self.get_parameter('poll_period').value
@@ -64,6 +70,8 @@ class FrontierExplorer(Node):
         self._map: OccupancyGrid | None = None
         self._navigating = False
         self._visited: list[tuple[float, float]] = []
+        self._iteration = 0
+        self._map_saved = False
 
         # ------------------------------------------------------------------
         # ROS interfaces
@@ -94,17 +102,47 @@ class FrontierExplorer(Node):
         frontiers = self._find_frontiers()
         if not frontiers:
             self.get_logger().info('No frontiers — exploration complete.')
+            self._save_map_once()
             return
 
         goal = self._best_frontier(frontiers)
         if goal is None:
-            self.get_logger().info('All frontiers already visited.')
+            self.get_logger().info('All frontiers already visited. Exploration complete!')
+            self._finish_exploration()
             return
+
+        self._iteration += 1
+        if self._map_save_path and self._iteration % 10 == 0:
+            self.get_logger().info(f'Progressively auto-saving map to {self._map_save_path} ...')
+            subprocess.Popen(
+                ['ros2', 'run', 'nav2_map_server', 'map_saver_cli', '-f', self._map_save_path],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
 
         self.get_logger().info(
             f'Navigating to frontier ({goal[0]:.2f}, {goal[1]:.2f})')
         self._visited.append(goal)
         self._send_goal(*goal)
+
+    # ------------------------------------------------------------------
+    # Map saving and shutdown
+    # ------------------------------------------------------------------
+    def _finish_exploration(self):
+        if self._map_save_path:
+            self.get_logger().info(f'Final map save to {self._map_save_path} ...')
+            try:
+                subprocess.run(
+                    ['ros2', 'run', 'nav2_map_server', 'map_saver_cli', '-f', self._map_save_path],
+                    check=True
+                )
+                self.get_logger().info('Map saved successfully.')
+            except subprocess.CalledProcessError as e:
+                self.get_logger().error(f'Failed to save map: {e}')
+        else:
+            self.get_logger().info('No map_save_path provided. Skipping auto-save.')
+            
+        self.get_logger().info('Shutting down explorer.')
+        raise SystemExit(0)
 
     # ------------------------------------------------------------------
     # Frontier detection
@@ -216,6 +254,26 @@ class FrontierExplorer(Node):
         future = self._nav_client.send_goal_async(goal_msg)
         future.add_done_callback(self._goal_response_cb)
 
+    def _save_map_once(self):
+        if self._map_saved or not self._map_save_path:
+            return
+
+        save_prefix = os.path.expanduser(self._map_save_path)
+        save_dir = os.path.dirname(save_prefix)
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+
+        self.get_logger().info(f'Auto-saving map to: {save_prefix}')
+        try:
+            subprocess.run(
+                ['ros2', 'run', 'nav2_map_server', 'map_saver_cli', '-f', save_prefix],
+                check=True,
+            )
+            self._map_saved = True
+            self.get_logger().info('Map saved successfully.')
+        except Exception as exc:
+            self.get_logger().error(f'Failed to save map: {exc}')
+
     def _goal_response_cb(self, future):
         handle = future.result()
         if not handle.accepted:
@@ -236,9 +294,15 @@ class FrontierExplorer(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = FrontierExplorer()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node)
+    except SystemExit:
+        pass
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':
