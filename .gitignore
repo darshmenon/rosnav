@@ -6,6 +6,12 @@ log/
 .slam_nav_pid
 *.runtime.log
 
+# Generated maps (keep folder + README only)
+src/diff_drive_robot-main/maps/*.pgm
+src/diff_drive_robot-main/maps/*.yaml
+src/diff_drive_robot-main/maps/*.data
+src/diff_drive_robot-main/maps/*.posegraph
+
 # Python
 __pycache__/
 *.py[cod]
