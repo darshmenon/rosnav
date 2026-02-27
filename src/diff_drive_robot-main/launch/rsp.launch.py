@@ -12,10 +12,11 @@ def generate_launch_description():
 
     # Default robot description if none is specified
     urdf_path = PathJoinSubstitution([package_name, "urdf", "robot.urdf.xacro"])
-    
+
     # Launch configurations
     urdf = LaunchConfiguration('urdf')
     use_sim_time = LaunchConfiguration('use_sim_time')
+    frame_prefix = LaunchConfiguration('frame_prefix')
 
     # Declare launch arguments
     declare_use_sim_time = DeclareLaunchArgument(
@@ -26,17 +27,26 @@ def generate_launch_description():
             name='urdf', default_value=urdf_path,
             description='Path to the robot description file')
 
-    # Create a robot state publisher 
+    declare_frame_prefix = DeclareLaunchArgument(
+            name='frame_prefix', default_value='',
+            description='TF frame prefix for multi-robot setups (e.g. "robot1/")')
+
+    # Create a robot state publisher
     robot_state_publisher = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
         output='screen',
-        parameters=[{'use_sim_time': use_sim_time,'robot_description': Command(['xacro ', urdf])}]
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'robot_description': Command(['xacro ', urdf]),
+            'frame_prefix': frame_prefix,
+        }]
     )
 
     # Launch!
     return LaunchDescription([
         declare_urdf,
         declare_use_sim_time,
+        declare_frame_prefix,
         robot_state_publisher
     ])

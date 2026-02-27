@@ -1,152 +1,205 @@
 #!/usr/bin/env python3
 """
-Multi-robot navigation with shared map.
+multi_robot.launch.py  —  Scalable multi-robot navigation in Gazebo.
 
-Spawns two diff-drive robots (robot1, robot2) in Gazebo, each with its own
-namespaced Nav2 stack. A single map_server publishes the pre-built map so
-both robots share the same global map frame.
+Architecture
+────────────
+• ROBOTS list is the single source of truth.  Add/remove dicts to change the
+  fleet size; the rest of the launch adapts automatically.
 
-Usage:
+• When explore:=true (default):
+    - A single SLAM Toolbox instance (driven by robot1) builds the shared /map.
+    - robot1 uses SLAM for localisation (no AMCL needed).
+    - All other robots localise on that map via their own AMCL node.
+    - Each robot runs an independent frontier-explorer node.
+    - Map is auto-saved when exploration finishes.
+
+• When explore:=false:
+    - A static map_server publishes a pre-built map.
+    - Every robot runs its own AMCL for localisation.
+
+• Nav2 params use a single template file (nav2_multirobot_params.yaml).
+  The placeholder ROBOT_NS is substituted at launch — no per-robot YAML files.
+
+Usage
+─────
+  # SLAM + frontier exploration in maze (default)
   ros2 launch diff_drive_robot multi_robot.launch.py
 
-Optional args:
-  map:=<path>   Override default map yaml (default: <package_share>/maps/map_<world_name>.yaml)
-  rviz:=False   Disable RViz
+  # Pre-built map mode
+  ros2 launch diff_drive_robot multi_robot.launch.py explore:=false
+
+  # Different world
+  ros2 launch diff_drive_robot multi_robot.launch.py world:=obstacles
+
+  # Send a nav goal to a specific robot
+  ros2 action send_goal /robot1/navigate_to_pose nav2_msgs/action/NavigateToPose \\
+    "{pose: {header: {frame_id: map}, pose: {position: {x: 3.0, y: 1.0}}}}"
+
+  # Add robot3: just append to ROBOTS list below — no other changes needed.
 """
 
 import os
+import tempfile
+
+from ament_index_python.packages import get_package_share_directory
+
+ROS_DISTRO = os.environ.get('ROS_DISTRO', 'humble')
+# Behaviour plugin format differs between distros (/ vs ::)
+_MR_PARAMS = (
+    'nav2_multirobot_params_jazzy.yaml'
+    if ROS_DISTRO == 'jazzy'
+    else 'nav2_multirobot_params.yaml'
+)
 from launch import LaunchDescription
 from launch.actions import (
-    DeclareLaunchArgument, GroupAction, IncludeLaunchDescription, LogInfo, OpaqueFunction, TimerAction
+    DeclareLaunchArgument, GroupAction, IncludeLaunchDescription,
+    LogInfo, OpaqueFunction, TimerAction,
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node, PushRosNamespace
-from ament_index_python.packages import get_package_share_directory
 
 
-# ---------------------------------------------------------------------------
-# Robot spawn poses
-# ---------------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# Fleet configuration — ONLY thing you need to edit to add more robots.
+# ──────────────────────────────────────────────────────────────────────────────
 ROBOTS = [
     {'name': 'robot1', 'x': '-2.0', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
     {'name': 'robot2', 'x': '-0.8', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
+    # Add more robots here — zero other file changes required:
+    # {'name': 'robot3', 'x':  '0.5', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
 ]
 
 
-def _resolve_map_file(map_arg: str, world_path: str, home: str, pkg_share: str) -> str:
+# ──────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────────────────────────────────────
+def _make_robot_params(template_path: str, robot_ns: str) -> str:
+    """Substitute ROBOT_NS in the template YAML and return a temp-file path."""
+    with open(template_path) as f:
+        content = f.read()
+    content = content.replace('ROBOT_NS', robot_ns)
+    tmp = tempfile.NamedTemporaryFile(
+        mode='w', suffix=f'_{robot_ns}.yaml', delete=False, prefix='nav2_mr_')
+    tmp.write(content)
+    tmp.close()
+    return tmp.name
+
+
+def _resolve_map_file(map_arg: str, world_path: str, pkg_share: str) -> str:
     if map_arg:
         return map_arg
-    world_name = os.path.splitext(os.path.basename(world_path))[0].replace('.world', '')
-    maps_dir = os.path.join(pkg_share, 'maps')
-    legacy_maps_dir = os.path.join(home, 'rosnav', 'maps')
+    world_name = os.path.splitext(os.path.basename(world_path))[0]
+    home = os.path.expanduser('~')
     candidates = [
-        os.path.join(maps_dir, f'{world_name}_map.yaml'),
-        os.path.join(maps_dir, f'map_{world_name}.yaml'),
-        os.path.join(legacy_maps_dir, f'{world_name}_map.yaml'),
-        os.path.join(home, 'rosnav', f'{world_name}_map.yaml'),
-        os.path.join(maps_dir, 'my_map.yaml'),
-        os.path.join(legacy_maps_dir, 'my_map.yaml'),
-        os.path.join(home, 'rosnav', 'my_map.yaml'),
+        os.path.join(pkg_share, 'maps', f'map_{world_name}.yaml'),
+        os.path.join(pkg_share, 'maps', f'{world_name}_map.yaml'),
+        os.path.join(home, 'rosnav', 'maps', f'map_{world_name}.yaml'),
+        os.path.join(pkg_share, 'maps', 'my_map.yaml'),
     ]
-    for candidate in candidates:
-        if os.path.exists(candidate):
-            return candidate
+    for c in candidates:
+        if os.path.exists(c):
+            return c
     return candidates[0]
 
 
-def _build_map_server_actions(context, map_file, world_lc, home: str, pkg_share: str):
-    resolved_map = _resolve_map_file(
-        map_file.perform(context).strip(),
-        world_lc.perform(context),
-        home,
-        pkg_share,
-    )
+# ──────────────────────────────────────────────────────────────────────────────
+# Main launch builder
+# ──────────────────────────────────────────────────────────────────────────────
+def _build_all(context, pkg_share: str):
+    map_arg      = LaunchConfiguration('map').perform(context).strip()
+    world_arg    = LaunchConfiguration('world').perform(context).strip()
+    explore      = LaunchConfiguration('explore').perform(context).strip().lower() in ('true', '1', 'yes')
 
-    map_server = Node(
-        package='nav2_map_server',
-        executable='map_server',
-        name='map_server',
-        output='screen',
-        parameters=[{
-            'use_sim_time': True,
-            'yaml_filename': resolved_map,
-        }])
+    nav2_bringup = get_package_share_directory('nav2_bringup')
+    slam_pkg     = get_package_share_directory('slam_toolbox')
+    ros_gz       = get_package_share_directory('ros_gz_sim')
 
-    map_server_lifecycle = Node(
-        package='nav2_lifecycle_manager',
-        executable='lifecycle_manager',
-        name='lifecycle_manager_map',
-        output='screen',
-        parameters=[{
-            'use_sim_time': True,
-            'autostart': True,
-            'node_names': ['map_server'],
-        }])
+    # Resolve world file
+    if os.path.isabs(world_arg) and os.path.isfile(world_arg):
+        world_path = world_arg
+    else:
+        world_name = world_arg or 'maze'
+        # Allow bare name ("maze") or filename ("maze.world")
+        world_name = os.path.splitext(os.path.basename(world_name))[0]
+        world_path = os.path.join(pkg_share, 'worlds', f'{world_name}.world')
 
-    return [
-        LogInfo(msg=f'[multi_robot.launch] using shared map={resolved_map}'),
-        map_server,
-        map_server_lifecycle,
+    world_stem   = os.path.splitext(os.path.basename(world_path))[0]
+    map_prefix   = os.path.join(pkg_share, 'maps', f'map_{world_stem}')
+    template_yaml = os.path.join(pkg_share, 'config', _MR_PARAMS)
+
+    actions = [
+        LogInfo(msg=f'[multi_robot] world = {world_path}'),
+        LogInfo(msg=f'[multi_robot] fleet = {[r["name"] for r in ROBOTS]}'),
+        LogInfo(msg=f'[multi_robot] explore = {explore}'),
     ]
 
+    # ── Gazebo server + GUI ───────────────────────────────────────────────────
+    actions += [
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(ros_gz, 'launch', 'gz_sim.launch.py')),
+            launch_arguments={
+                'gz_args': f'-r -s -v1 {world_path}',
+                'on_exit_shutdown': 'true',
+            }.items()),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(ros_gz, 'launch', 'gz_sim.launch.py')),
+            launch_arguments={'gz_args': '-g'}.items()),
+    ]
 
-def generate_launch_description():
-    pkg = 'diff_drive_robot'
-    pkg_share = get_package_share_directory(pkg)
-    home = os.path.expanduser('~')
-    nav2_bringup = get_package_share_directory('nav2_bringup')
+    # ── Shared map source ─────────────────────────────────────────────────────
+    if explore:
+        # SLAM Toolbox (robot1's 2D lidar → shared /map)
+        actions += [
+            LogInfo(msg=f'[multi_robot] SLAM mode — map will be auto-saved to {map_prefix}'),
+            TimerAction(
+                period=6.0,
+                actions=[IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource(
+                        os.path.join(slam_pkg, 'launch', 'online_async_launch.py')),
+                    launch_arguments={
+                        'slam_params_file': os.path.join(
+                            pkg_share, 'config', 'mapper_params_multirobot.yaml'),
+                        'use_sim_time': 'true',
+                    }.items())]),
+        ]
+    else:
+        # Static map_server
+        resolved_map = _resolve_map_file(map_arg, world_path, pkg_share)
+        actions += [
+            LogInfo(msg=f'[multi_robot] static map = {resolved_map}'),
+            Node(
+                package='nav2_map_server',
+                executable='map_server',
+                name='map_server',
+                output='screen',
+                parameters=[{'use_sim_time': True, 'yaml_filename': resolved_map}]),
+            Node(
+                package='nav2_lifecycle_manager',
+                executable='lifecycle_manager',
+                name='lifecycle_manager_map',
+                output='screen',
+                parameters=[{
+                    'use_sim_time': True,
+                    'autostart': True,
+                    'node_names': ['map_server'],
+                }]),
+        ]
 
-    map_file    = LaunchConfiguration('map')
-    rviz_flag   = LaunchConfiguration('rviz')
-    world_lc    = LaunchConfiguration('world')
-
-    declare_map = DeclareLaunchArgument(
-        'map',
-        default_value='',
-        description='Shared map yaml file. If empty, auto-use <package_share>/maps/map_<world_name>.yaml (legacy fallbacks supported)')
-
-    declare_rviz = DeclareLaunchArgument(
-        'rviz', default_value='True', description='Launch RViz')
-
-    declare_world = DeclareLaunchArgument(
-        'world',
-        default_value=os.path.join(pkg_share, 'worlds', 'obstacles.world'),
-        description='Gazebo world file')
-
-    # -----------------------------------------------------------------------
-    # Gazebo
-    # -----------------------------------------------------------------------
-    gz_server = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(get_package_share_directory('ros_gz_sim'),
-                         'launch', 'gz_sim.launch.py')),
-        launch_arguments={
-            'gz_args': ['-r -s -v1 ', world_lc],
-            'on_exit_shutdown': 'true',
-        }.items())
-
-    gz_client = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(get_package_share_directory('ros_gz_sim'),
-                         'launch', 'gz_sim.launch.py')),
-        launch_arguments={'gz_args': '-g'}.items())
-
-    map_server_group = OpaqueFunction(
-        function=_build_map_server_actions,
-        args=[map_file, world_lc, home, pkg_share],
-    )
-
-    # -----------------------------------------------------------------------
-    # Per-robot groups
-    # -----------------------------------------------------------------------
-    robot_groups = []
-    for robot in ROBOTS:
-        ns = robot['name']
+    # ── Per-robot groups ──────────────────────────────────────────────────────
+    for idx, robot in enumerate(ROBOTS):
+        ns  = robot['name']
         x, y, z, yaw = robot['x'], robot['y'], robot['z'], robot['yaw']
+        is_slam_robot = (explore and idx == 0)  # robot1 localises via SLAM
 
-        # Robot State Publisher (namespaced)
+        # Template → per-robot YAML (ROBOT_NS substituted)
+        robot_params = _make_robot_params(template_yaml, ns)
+
+        # Robot State Publisher — frame_prefix makes TF frames unique per robot
         rsp = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(pkg_share, 'launch', 'rsp.launch.py')),
@@ -156,7 +209,7 @@ def generate_launch_description():
                 'frame_prefix': f'{ns}/',
             }.items())
 
-        # Spawn robot in Gazebo
+        # Spawn in Gazebo
         spawn = Node(
             package='ros_gz_sim',
             executable='create',
@@ -167,13 +220,13 @@ def generate_launch_description():
             ],
             output='screen')
 
-        # Gazebo <-> ROS bridge (namespaced topics)
+        # Gazebo ↔ ROS bridge (2D lidar, odom, cmd_vel, TF)
         bridge = Node(
             package='ros_gz_bridge',
             executable='parameter_bridge',
             namespace=ns,
             arguments=[
-                f'/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
+                '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
                 f'/{ns}/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist',
                 f'/{ns}/odom@nav_msgs/msg/Odometry[gz.msgs.Odometry',
                 f'/{ns}/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
@@ -181,46 +234,101 @@ def generate_launch_description():
             ],
             output='screen')
 
-        # Nav2 per-robot (navigation_launch = planner + controller, no map_server)
-        # AMCL uses the shared /map topic
+        # AMCL — localises against /map (shared).
+        # Skipped for robot1 in SLAM mode (SLAM provides the map→odom TF).
+        amcl_node = Node(
+            package='nav2_amcl',
+            executable='amcl',
+            name='amcl',
+            namespace=ns,
+            output='screen',
+            parameters=[robot_params],
+            remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')])
+
+        amcl_lc = Node(
+            package='nav2_lifecycle_manager',
+            executable='lifecycle_manager',
+            name='lifecycle_manager_localization',
+            namespace=ns,
+            output='screen',
+            parameters=[{
+                'use_sim_time': True,
+                'autostart': True,
+                'node_names': ['amcl'],
+            }])
+
+        # Nav2 navigation stack (planner, controller, bt_navigator, …)
         nav2 = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(nav2_bringup, 'launch', 'navigation_launch.py')),
             launch_arguments={
                 'use_sim_time': 'true',
-                'namespace': ns,          # use_namespace removed in Jazzy
-                'params_file': os.path.join(
-                    pkg_share, 'config',
-                    f'nav2_multirobot_params_{ns[-1]}.yaml'),
+                'namespace': ns,
+                'params_file': robot_params,
             }.items())
 
-        group = GroupAction([
-            PushRosNamespace(ns),
-            rsp,
-            spawn,
-            bridge,
-            TimerAction(period=3.0, actions=[nav2]),   # wait for robot to spawn
-        ])
-        robot_groups.append(group)
+        # Frontier explorer — independent per robot.
+        # Only robot1 triggers the final map save.
+        explorer = Node(
+            package='diff_drive_robot',
+            executable='frontier_explorer.py',
+            name='frontier_explorer',
+            namespace=ns,
+            output='screen',
+            parameters=[{
+                'base_frame': f'{ns}/base_link',
+                'map_save_path': map_prefix if idx == 0 else '',
+            }])
 
-    # -----------------------------------------------------------------------
-    # RViz (single instance showing both robots)
-    # -----------------------------------------------------------------------
-    rviz = GroupAction(
-        condition=IfCondition(rviz_flag),
+        # Assemble per-robot actions
+        per_robot = [rsp, spawn, bridge]
+
+        if is_slam_robot:
+            # robot1 in explore mode: SLAM handles localisation
+            per_robot += [
+                TimerAction(period=10.0, actions=[nav2]),
+                TimerAction(period=18.0, actions=[explorer]),
+            ]
+        elif explore:
+            # Other robots in explore mode: need AMCL to localise on SLAM map
+            per_robot += [
+                TimerAction(period=10.0, actions=[amcl_node, amcl_lc, nav2]),
+                TimerAction(period=18.0, actions=[explorer]),
+            ]
+        else:
+            # Pre-built map mode: all robots use AMCL
+            per_robot += [
+                TimerAction(period=5.0, actions=[amcl_node, amcl_lc, nav2]),
+            ]
+
+        actions.append(GroupAction([PushRosNamespace(ns), *per_robot]))
+
+    # ── RViz ─────────────────────────────────────────────────────────────────
+    actions.append(GroupAction(
+        condition=IfCondition(LaunchConfiguration('rviz')),
         actions=[Node(
             package='rviz2',
             executable='rviz2',
             arguments=['-d', os.path.join(pkg_share, 'rviz', 'bot.rviz')],
-            output='screen')])
+            output='screen')]))
 
+    return actions
+
+
+def generate_launch_description():
+    pkg_share = get_package_share_directory('diff_drive_robot')
     return LaunchDescription([
-        declare_map,
-        declare_rviz,
-        declare_world,
-        gz_server,
-        gz_client,
-        map_server_group,
-        rviz,
-        *robot_groups,
+        DeclareLaunchArgument(
+            'world', default_value='maze',
+            description='World name (maze, obstacles) or full path to .world file'),
+        DeclareLaunchArgument(
+            'map', default_value='',
+            description='Pre-built map yaml path. Ignored when explore:=true'),
+        DeclareLaunchArgument(
+            'rviz', default_value='True', description='Launch RViz'),
+        DeclareLaunchArgument(
+            'explore', default_value='true',
+            description='true = SLAM + frontier exploration (default). '
+                        'false = use saved map yaml'),
+        OpaqueFunction(function=_build_all, args=[pkg_share]),
     ])

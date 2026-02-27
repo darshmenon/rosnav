@@ -1,3 +1,12 @@
+# nav2_multirobot_params.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# Template for scalable multi-robot navigation.
+# The placeholder  ROBOT_NS  is replaced at launch time with the actual robot
+# namespace (e.g. robot1, robot2, robot42).  To add a new robot, only the
+# ROBOTS list in multi_robot.launch.py needs to be updated — this file stays
+# unchanged regardless of how many robots you run.
+# ─────────────────────────────────────────────────────────────────────────────
+
 amcl:
   ros__parameters:
     alpha1: 0.2
@@ -5,12 +14,13 @@ amcl:
     alpha3: 0.2
     alpha4: 0.2
     alpha5: 0.2
-    base_frame_id: "robot2/base_link"       # namespaced TF frame
+    base_frame_id: "ROBOT_NS/base_link"   # substituted at launch
+    global_frame_id: "map"
+    odom_frame_id: "ROBOT_NS/odom"        # substituted at launch
     beam_skip_distance: 0.5
     beam_skip_error_threshold: 0.9
     beam_skip_threshold: 0.3
     do_beamskip: false
-    global_frame_id: "map"
     lambda_short: 0.1
     laser_likelihood_max_dist: 2.0
     laser_max_range: 100.0
@@ -19,7 +29,6 @@ amcl:
     max_beams: 60
     max_particles: 2000
     min_particles: 500
-    odom_frame_id: "robot2/odom"            # namespaced TF frame
     pf_err: 0.05
     pf_z: 0.99
     recovery_alpha_fast: 0.0
@@ -36,13 +45,13 @@ amcl:
     z_max: 0.05
     z_rand: 0.5
     z_short: 0.05
-    scan_topic: scan                        # relative → resolves to /robot2/scan
+    scan_topic: scan                      # relative → /ROBOT_NS/scan
 
 bt_navigator:
   ros__parameters:
     global_frame: map
-    robot_base_frame: robot2/base_link      # namespaced TF frame
-    odom_topic: /robot2/odom               # absolute topic
+    robot_base_frame: "ROBOT_NS/base_link"
+    odom_topic: "/ROBOT_NS/odom"          # absolute topic (substituted)
     bt_loop_duration: 10
     default_server_timeout: 20
     wait_for_service_timeout: 1000
@@ -115,7 +124,7 @@ controller_server:
 local_costmap:
   local_costmap:
     ros__parameters:
-      global_frame: robot2/odom             # namespaced TF frame
+      global_frame: "ROBOT_NS/odom"       # namespaced TF frame (substituted)
       rolling_window: true
       width: 3
       height: 3
@@ -131,7 +140,7 @@ local_costmap:
         enabled: True
         observation_sources: scan
         scan:
-          topic: scan                        # relative → /robot2/scan
+          topic: scan                      # relative → /ROBOT_NS/scan
           max_obstacle_height: 2.0
           clearing: True
           marking: True
@@ -152,7 +161,7 @@ global_costmap:
         enabled: True
         observation_sources: scan
         scan:
-          topic: scan                        # relative → /robot2/scan
+          topic: scan                      # relative → /ROBOT_NS/scan
           max_obstacle_height: 2.0
           clearing: True
           marking: True
@@ -180,7 +189,7 @@ planner_server:
     planner_plugins: ["GridBased"]
     costmap_update_timeout: 1.0
     GridBased:
-      plugin: "nav2_navfn_planner/NavfnPlanner"
+      plugin: "nav2_navfn_planner::NavfnPlanner"   # Jazzy format (:: not /)
       tolerance: 0.5
       use_astar: false
       allow_unknown: true
@@ -192,15 +201,15 @@ behavior_server:
     cycle_frequency: 10.0
     behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"]
     spin:
-      plugin: "nav2_behaviors/Spin"
+      plugin: "nav2_behaviors::Spin"         # Jazzy format (:: not /)
     backup:
-      plugin: "nav2_behaviors/BackUp"
+      plugin: "nav2_behaviors::BackUp"
     drive_on_heading:
-      plugin: "nav2_behaviors/DriveOnHeading"
+      plugin: "nav2_behaviors::DriveOnHeading"
     wait:
-      plugin: "nav2_behaviors/Wait"
-    global_frame: robot2/odom              # namespaced TF frame
-    robot_base_frame: robot2/base_link     # namespaced TF frame
+      plugin: "nav2_behaviors::Wait"
+    global_frame: "ROBOT_NS/odom"         # namespaced TF frame (substituted)
+    robot_base_frame: "ROBOT_NS/base_link"
     transform_tolerance: 0.1
     simulate_ahead_time: 2.0
     max_rotational_vel: 1.0
@@ -220,8 +229,8 @@ waypoint_follower:
 
 collision_monitor:
   ros__parameters:
-    base_frame_id: "robot2/base_link"      # namespaced TF frame
-    odom_frame_id: "robot2/odom"           # namespaced TF frame
+    base_frame_id: "ROBOT_NS/base_link"   # namespaced TF frame (substituted)
+    odom_frame_id: "ROBOT_NS/odom"        # namespaced TF frame (substituted)
     cmd_vel_in_topic: "cmd_vel_smoothed"
     cmd_vel_out_topic: "cmd_vel"
     state_topic: "collision_monitor_state"
@@ -242,7 +251,7 @@ collision_monitor:
     observation_sources: ["scan"]
     scan:
       type: "scan"
-      topic: "scan"                        # relative → /robot2/scan
+      topic: "scan"                        # relative → /ROBOT_NS/scan
       min_height: 0.15
       max_height: 2.0
       enabled: True

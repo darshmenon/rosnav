@@ -167,26 +167,62 @@ Recent reliability fixes in `frontier_explorer.py`:
 
 ## 10. Multi-Robot Navigation + Map Sharing
 
-`launch/multi_robot.launch.py` runs two robots simultaneously:
+`launch/multi_robot.launch.py` runs N robots simultaneously with a **scalable** design.
 
-### Architecture
+### Architecture — SLAM + Frontier mode (`explore:=true`, default)
 ```
-/map  ←── map_server (shared, one instance)
-            │
-     ┌──────┴──────┐
-  robot1/        robot2/
-  amcl           amcl
-  planner        planner
-  controller     controller
+SLAM Toolbox ─── /robot1/scan ──► /map (shared, progressive)
+                                     │
+                  ┌──────────────────┴────────────────┐
+               robot1/                             robot2/
+               (SLAM provides map→odom TF)         amcl (localises on /map)
+               planner / controller / bt_nav       planner / controller / bt_nav
+               frontier_explorer                   frontier_explorer
 ```
 
-- Each robot has its own **namespace** (`robot1/`, `robot2/`) so topics don't collide.
-- A **single map_server** publishes `/map` — both robots localise against the same map.
-- Each robot's AMCL independently estimates its own pose on that shared map.
-- Each robot gets its own Nav2 stack with separate costmaps.
+### Architecture — Pre-built map mode (`explore:=false`)
+```
+map_server ──► /map (shared, static)
+                │
+     ┌──────────┴──────────┐
+  robot1/               robot2/
+  amcl                  amcl
+  planner               planner
+  controller            controller
+```
+
+### Scalability — adding more robots
+The fleet is driven by the **ROBOTS list** at the top of `multi_robot.launch.py`.
+Nav2 params use a single **template file** (`nav2_multirobot_params.yaml`) — the
+placeholder `ROBOT_NS` is substituted at launch time. No per-robot YAML files needed.
+
+```python
+# multi_robot.launch.py — add one line per robot
+ROBOTS = [
+    {'name': 'robot1', 'x': '-2.0', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
+    {'name': 'robot2', 'x': '-0.8', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
+    {'name': 'robot3', 'x':  '0.5', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
+    # ... up to N robots
+]
+```
+
+### TF frame naming (critical for multi-robot)
+Each robot uses `frame_prefix: <ns>/` in its RSP, so TF frames are unique:
+- `robot1/base_link`, `robot1/odom`, `robot1/laser_frame`
+- `robot2/base_link`, `robot2/odom`, `robot2/laser_frame`
+
+Nav2 params (`amcl.base_frame_id`, `bt_navigator.robot_base_frame`, etc.) must
+match these prefixed names. The template file handles this automatically.
 
 ```bash
+# SLAM + frontier exploration in maze (default)
 ros2 launch diff_drive_robot multi_robot.launch.py
+
+# Pre-built map mode
+ros2 launch diff_drive_robot multi_robot.launch.py explore:=false
+
+# Different world
+ros2 launch diff_drive_robot multi_robot.launch.py world:=obstacles explore:=false
 
 # Send goal to robot1
 ros2 action send_goal /robot1/navigate_to_pose nav2_msgs/action/NavigateToPose \
@@ -197,8 +233,18 @@ ros2 action send_goal /robot2/navigate_to_pose nav2_msgs/action/NavigateToPose \
   "{pose: {header: {frame_id: map}, pose: {position: {x: -1.0, y: 2.0}}}}"
 ```
 
-> **Nav2 Jazzy note:** `use_namespace` was removed — only `namespace` is needed now.
-> Topics are now relative paths (`scan` not `/scan`) within each namespace.
+### Key files
+| File | Role |
+|---|---|
+| `launch/multi_robot.launch.py` | Main launch — edit ROBOTS list to scale fleet |
+| `config/nav2_multirobot_params.yaml` | Template params (ROBOT_NS placeholder) |
+| `config/mapper_params_multirobot.yaml` | SLAM params for robot1 in explore mode |
+
+### Bugs fixed
+- `rsp.launch.py` now declares and passes `frame_prefix` to RSP → TF frames are correctly namespaced per robot (was causing robot not visible in Gazebo)
+- Costmap local layer changed from `voxel_layer` (3D only) to `obstacle_layer` for 2D LaserScan
+- AMCL per-robot added (was missing from `navigation_launch.py` which does not include AMCL)
+- All frame IDs prefixed with robot namespace (was causing TF conflicts between robots)
 
 ---
 

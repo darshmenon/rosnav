@@ -31,8 +31,9 @@ Nav2 plugin naming differs between distros. **The launch files detect `$ROS_DIST
 - **SLAM live mapping** — SLAM Toolbox builds map while navigating
 - **Frontier exploration** — robot autonomously explores unknown areas
 - **Nav2 full stack** — planner, controller, recovery, behaviours
-- **Multi-robot** — two robots sharing one map
+- **Multi-robot (scalable)** — N robots sharing one SLAM-built map with per-robot frontier exploration
 - **Waypoint following** — navigate a sequence of poses
+- **2D LiDAR** — native LaserScan, no conversion needed for Nav2/SLAM
 - **Complex worlds** — obstacles world and maze world included
 
 ---
@@ -100,10 +101,27 @@ Once the map is saved into the `maps/` directory, you can load the environment i
 ros2 launch diff_drive_robot robot.launch.py world:=/full/path/to/maze.world
 ```
 
-### Mode 4 — Multi-Robot Navigation
-Launch two robots in the same environment, sharing the same map but running their own separate Nav2 instances in different namespaces (`/robot1` and `/robot2`):
+### Mode 4 — Multi-Robot Navigation (Scalable)
+Launch N robots in the maze, sharing a SLAM-built map. Each robot runs its own
+frontier explorer independently. Default is SLAM + exploration in the maze world:
 ```bash
-ros2 launch diff_drive_robot multi_robot.launch.py world:=/home/asimov/rosnav/src/diff_drive_robot-main/worlds/obstacles.world
+# SLAM + frontier exploration (default — no pre-built map needed)
+ros2 launch diff_drive_robot multi_robot.launch.py
+
+# Pre-built map mode
+ros2 launch diff_drive_robot multi_robot.launch.py explore:=false
+
+# Different world with pre-built map
+ros2 launch diff_drive_robot multi_robot.launch.py world:=obstacles explore:=false
+```
+
+To add more robots, edit the `ROBOTS` list in `multi_robot.launch.py` — no other files change:
+```python
+ROBOTS = [
+    {'name': 'robot1', 'x': '-2.0', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
+    {'name': 'robot2', 'x': '-0.8', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
+    {'name': 'robot3', 'x':  '0.5', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
+]
 ```
 
 ### 3D LiDAR Setup
@@ -127,23 +145,15 @@ To use a custom world file and optionally specify a map save prefix:
 ros2 launch diff_drive_robot slam_nav.launch.py world:=/full/path/to/world.world map_prefix:=/tmp/custom_map
 ```
 
-### Mode 4 — Multi-robot (shared map, separate namespaces)
-```bash
-ros2 launch diff_drive_robot multi_robot.launch.py rviz:=False world:=/full/path/to/maze.world
-```
-
-What to verify:
+### Verify multi-robot
 ```bash
 # Both robots spawned
 ros2 topic list | grep -E "/robot1|/robot2"
 
-# Shared map server (single publisher on /map)
-ros2 topic info /map -v
-```
-Expected: `Publisher count: 1` (`/map_server`) and namespaced robot topics like `/robot1/cmd_vel`, `/robot2/cmd_vel`.
+# Shared map (SLAM or map_server)
+ros2 topic hz /map
 
-Send goals to each robot independently:
-```bash
+# Send goals to individual robots
 ros2 action send_goal /robot1/navigate_to_pose nav2_msgs/action/NavigateToPose \
   "{pose: {header: {frame_id: map}, pose: {position: {x: -1.5, y: -0.5}, orientation: {w: 1.0}}}}"
 
@@ -187,9 +197,11 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 | Symptom | Fix |
 |---|---|
 | `FATAL: plugin X does not exist` | Wrong distro params — check `$ROS_DISTRO` is sourced correctly |
-| Map not saving correctly | Ensure `explore:=true` is set. Maps save to `~/rosnav/src/diff_drive_robot-main/maps/` |
+| Map not saving correctly | Ensure `explore:=true` is set. Maps save to `src/diff_drive_robot-main/maps/` |
 | Frontier says `No frontiers` repeatedly | Check SLAM logs for `TF_OLD_DATA` / dropped scans and kill stale Gazebo/ROS processes before relaunch |
 | Robot not moving | Run `ros2 topic hz /cmd_vel` — if 0, Nav2 lifecycle failed; check node list |
+| Multi-robot robots not visible in Gazebo | Ensure you have sourced and rebuilt after the latest fixes (`colcon build --symlink-install`) |
+| Multi-robot TF errors | Confirm RSP `frame_prefix` fix is applied (`rsp.launch.py`). Run `ros2 run tf2_tools view_frames` to inspect the tree |
 | RViz GLSL errors | Cosmetic only, can be ignored |
 
 ---
