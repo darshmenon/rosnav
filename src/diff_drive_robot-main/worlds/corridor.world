@@ -1,0 +1,144 @@
+<?xml version="1.0" ?>
+<!--
+  corridor.world — Narrow corridor environment for testing navigation in
+  tight spaces. Good for testing costmap inflation, MPPI, and AMCL in
+  long straight passages with junctions.
+
+  Layout (top view):
+    ┌─────────────────────────────────────────┐
+    │                                         │
+    │  ┌────────────┐   ┌────────────┐        │
+    │  │ room A     │   │ room B     │        │
+    │  └─────┬──────┘   └──────┬─────┘        │
+    │        │  main corridor  │              │
+    │  ┌─────┴──────┐   ┌──────┴─────┐        │
+    │  │ room C     │   │ room D     │        │
+    │  └────────────┘   └────────────┘        │
+    └─────────────────────────────────────────┘
+
+  Launch:
+    ros2 launch diff_drive_robot multi_robot.launch.py world:=corridor
+-->
+<sdf version='1.8'>
+  <world name='corridor'>
+
+    <physics name='1ms' type='ignored'>
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system"
+            name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system"
+            name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system"
+            name="ignition::gazebo::systems::SceneBroadcaster"/>
+    <plugin filename="ignition-gazebo-sensors-system"
+            name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="ignition-gazebo-contact-system"
+            name="ignition::gazebo::systems::Contact"/>
+
+    <light name='sun' type='directional'>
+      <pose>0 0 15 0 0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>-0.4 0.2 -0.9</direction>
+      <diffuse>0.9 0.9 0.9 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+    </light>
+
+    <!-- Ground -->
+    <model name='ground_plane'>
+      <static>true</static>
+      <link name='link'>
+        <collision name='c'><geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry></collision>
+        <visual name='v'><geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+          <material><ambient>0.75 0.75 0.75 1</ambient><diffuse>0.75 0.75 0.75 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Helper macro: each wall segment is a 0.2-thick box -->
+
+    <!-- ── Outer boundary ────────────────────────────────────── -->
+    <model name='outer_N'><static>true</static><pose>0 9 1 0 0 0</pose>
+      <link name='l'><collision name='c'><geometry><box><size>20 0.2 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>20 0.2 2</size></box></geometry>
+        <material><ambient>0.5 0.5 0.6 1</ambient><diffuse>0.5 0.5 0.6 1</diffuse></material></visual></link></model>
+
+    <model name='outer_S'><static>true</static><pose>0 -9 1 0 0 0</pose>
+      <link name='l'><collision name='c'><geometry><box><size>20 0.2 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>20 0.2 2</size></box></geometry>
+        <material><ambient>0.5 0.5 0.6 1</ambient><diffuse>0.5 0.5 0.6 1</diffuse></material></visual></link></model>
+
+    <model name='outer_E'><static>true</static><pose>10 0 1 0 0 0</pose>
+      <link name='l'><collision name='c'><geometry><box><size>0.2 18 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.2 18 2</size></box></geometry>
+        <material><ambient>0.5 0.5 0.6 1</ambient><diffuse>0.5 0.5 0.6 1</diffuse></material></visual></link></model>
+
+    <model name='outer_W'><static>true</static><pose>-10 0 1 0 0 0</pose>
+      <link name='l'><collision name='c'><geometry><box><size>0.2 18 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.2 18 2</size></box></geometry>
+        <material><ambient>0.5 0.5 0.6 1</ambient><diffuse>0.5 0.5 0.6 1</diffuse></material></visual></link></model>
+
+    <!-- ── Main horizontal corridor walls (y = ±1) ───────────── -->
+    <model name='corr_N'><static>true</static><pose>0 1 1 0 0 0</pose>
+      <link name='l'><collision name='c'><geometry><box><size>20 0.2 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>20 0.2 2</size></box></geometry>
+        <material><ambient>0.8 0.8 0.7 1</ambient><diffuse>0.8 0.8 0.7 1</diffuse></material></visual></link></model>
+
+    <model name='corr_S'><static>true</static><pose>0 -1 1 0 0 0</pose>
+      <link name='l'><collision name='c'><geometry><box><size>20 0.2 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>20 0.2 2</size></box></geometry>
+        <material><ambient>0.8 0.8 0.7 1</ambient><diffuse>0.8 0.8 0.7 1</diffuse></material></visual></link></model>
+
+    <!-- ── Room A — top-left (x: -8 to -2, y: 1 to 8) ────────── -->
+    <!-- West inner wall with doorway gap at y=5 -->
+    <model name='roomA_W1'><static>true</static><pose>-2 5.5 1 0 0 0</pose>
+      <link name='l'><collision name='c'><geometry><box><size>0.2 5 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.2 5 2</size></box></geometry>
+        <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>0.6 0.6 0.6 1</diffuse></material></visual></link></model>
+
+    <!-- ── Room B — top-right (x: 2 to 8, y: 1 to 8) ─────────── -->
+    <model name='roomB_W1'><static>true</static><pose>2 5.5 1 0 0 0</pose>
+      <link name='l'><collision name='c'><geometry><box><size>0.2 5 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.2 5 2</size></box></geometry>
+        <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>0.6 0.6 0.6 1</diffuse></material></visual></link></model>
+
+    <!-- ── Room C — bottom-left (x: -8 to -2, y: -8 to -1) ───── -->
+    <model name='roomC_W1'><static>true</static><pose>-2 -5.5 1 0 0 0</pose>
+      <link name='l'><collision name='c'><geometry><box><size>0.2 5 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.2 5 2</size></box></geometry>
+        <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>0.6 0.6 0.6 1</diffuse></material></visual></link></model>
+
+    <!-- ── Room D — bottom-right (x: 2 to 8, y: -8 to -1) ────── -->
+    <model name='roomD_W1'><static>true</static><pose>2 -5.5 1 0 0 0</pose>
+      <link name='l'><collision name='c'><geometry><box><size>0.2 5 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.2 5 2</size></box></geometry>
+        <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>0.6 0.6 0.6 1</diffuse></material></visual></link></model>
+
+    <!-- ── Scatter a few boxes in the rooms ─────────────────────── -->
+    <model name='box1'><static>true</static><pose>-6 6 0.3 0 0 0.5</pose>
+      <link name='l'><collision name='c'><geometry><box><size>0.6 0.6 0.6</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.6 0.6 0.6</size></box></geometry>
+        <material><ambient>0.8 0.4 0.1 1</ambient><diffuse>0.8 0.4 0.1 1</diffuse></material></visual></link></model>
+
+    <model name='box2'><static>true</static><pose>5 6.5 0.3 0 0 1.0</pose>
+      <link name='l'><collision name='c'><geometry><box><size>0.6 0.6 0.6</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.6 0.6 0.6</size></box></geometry>
+        <material><ambient>0.2 0.6 0.3 1</ambient><diffuse>0.2 0.6 0.3 1</diffuse></material></visual></link></model>
+
+    <model name='box3'><static>true</static><pose>-5 -6 0.3 0 0 0.3</pose>
+      <link name='l'><collision name='c'><geometry><box><size>0.6 0.6 0.6</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.6 0.6 0.6</size></box></geometry>
+        <material><ambient>0.2 0.4 0.8 1</ambient><diffuse>0.2 0.4 0.8 1</diffuse></material></visual></link></model>
+
+    <model name='box4'><static>true</static><pose>5 -6.5 0.3 0 0 0.8</pose>
+      <link name='l'><collision name='c'><geometry><box><size>0.6 0.6 0.6</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.6 0.6 0.6</size></box></geometry>
+        <material><ambient>0.8 0.2 0.5 1</ambient><diffuse>0.8 0.2 0.5 1</diffuse></material></visual></link></model>
+
+  </world>
+</sdf>

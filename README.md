@@ -30,11 +30,14 @@ Nav2 plugin naming differs between distros. **The launch files detect `$ROS_DIST
 
 - **SLAM live mapping** — SLAM Toolbox builds map while navigating
 - **Frontier exploration** — robot autonomously explores unknown areas
-- **Nav2 full stack** — planner, controller, recovery, behaviours
-- **Multi-robot (scalable)** — N robots sharing one SLAM-built map with per-robot frontier exploration
+- **Nav2 full stack** — MPPI controller, planner, recovery, behaviours
+- **Multi-robot (scalable)** — N robots sharing one SLAM-built map; add robots by editing one list
 - **Waypoint following** — navigate a sequence of poses
-- **2D LiDAR** — native LaserScan, no conversion needed for Nav2/SLAM
-- **Complex worlds** — obstacles world and maze world included
+- **2D LiDAR** — native LaserScan (`gpu_lidar`), no conversion needed for Nav2/SLAM
+- **Fleet GUI** — Tkinter dashboard: click-to-navigate on map, teleop sliders, spawn/save
+- **Fleet CLI** — `fleet_manager.py`: list, status, add, teleop, goto, explore, savemap
+- **Multi-robot teleop** — `multi_teleop.py`: WASD keyboard control with robot switcher
+- **Multiple worlds** — maze, obstacles, warehouse, corridor (all self-contained SDF)
 
 ---
 
@@ -144,6 +147,38 @@ To use a custom world file and optionally specify a map save prefix:
 ```bash
 ros2 launch diff_drive_robot slam_nav.launch.py world:=/full/path/to/world.world map_prefix:=/tmp/custom_map
 ```
+
+### Mode 5 — Fleet GUI (click-to-navigate)
+```bash
+ros2 run diff_drive_robot fleet_gui.py
+```
+Features: live robot list, click on map to send goals, velocity sliders for teleop,
+spawn new robots, save SLAM map — all in a graphical window.
+
+### Mode 6 — Fleet CLI (terminal)
+```bash
+ros2 run diff_drive_robot fleet_manager.py list          # list robots
+ros2 run diff_drive_robot fleet_manager.py status        # SLAM/Nav2/map status
+ros2 run diff_drive_robot fleet_manager.py add robot3 1.0 2.0   # spawn robot
+ros2 run diff_drive_robot fleet_manager.py teleop robot1 # keyboard drive
+ros2 run diff_drive_robot fleet_manager.py goto robot2 3.0 -1.0 # send goal
+ros2 run diff_drive_robot fleet_manager.py explore robot2        # frontier nav
+ros2 run diff_drive_robot fleet_manager.py savemap src/diff_drive_robot-main/maps/map_maze
+```
+
+### Mode 7 — Multi-robot keyboard teleop
+```bash
+ros2 run diff_drive_robot multi_teleop.py
+# → interactive menu: select robot, WASD to drive, R to switch, N to spawn new
+```
+
+### Available worlds
+| World | Description | Launch arg |
+|---|---|---|
+| `maze` | Enclosed maze for exploration | `world:=maze` |
+| `obstacles` | Open field with barrels | `world:=obstacles` |
+| `warehouse` | 16×14m warehouse with shelf aisles | `world:=warehouse` |
+| `corridor` | Narrow corridor with rooms | `world:=corridor` |
 
 ### Verify multi-robot
 ```bash

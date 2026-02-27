@@ -273,7 +273,88 @@ ros2 run pointcloud_to_laserscan pointcloud_to_laserscan_node \
 
 ---
 
-## 12. Custom Obstacle Avoidance (`navigation.py`)
+## 12. Adding a Camera Sensor (RGB / Depth)
+
+Cameras are added as a URDF xacro file, similar to `lidar.xacro`.
+
+### RGB camera (`camera.xacro`) — example snippet
+```xml
+<gazebo reference="camera_link">
+  <sensor name="camera" type="camera">
+    <always_on>true</always_on>
+    <update_rate>30</update_rate>
+    <topic>image_raw</topic>
+    <gz_frame_id>camera_link</gz_frame_id>
+    <camera>
+      <horizontal_fov>1.047</horizontal_fov>
+      <image>
+        <width>640</width>
+        <height>480</height>
+        <format>R8G8B8</format>
+      </image>
+      <clip><near>0.1</near><far>100</far></clip>
+    </camera>
+  </sensor>
+</gazebo>
+```
+
+Include it in `robot.urdf.xacro`:
+```xml
+<xacro:include filename="camera.xacro" />
+```
+
+Bridge to ROS 2 (add to `gz_bridge.yaml`):
+```yaml
+- ros_topic_name: "/image_raw"
+  gz_topic_name: "/image_raw"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+- ros_topic_name: "/camera_info"
+  gz_topic_name: "/camera_info"
+  ros_type_name: "sensor_msgs/msg/CameraInfo"
+  gz_type_name: "gz.msgs.CameraInfo"
+  direction: GZ_TO_ROS
+```
+
+### Depth camera (RGBD)
+Use `sensor type="depth_camera"` in Gazebo and bridge `sensor_msgs/msg/PointCloud2` or `sensor_msgs/msg/Image` (depth). Can replace or supplement 2D LiDAR for richer obstacle data.
+
+### Mobile robot / arched camera mount
+Mount the camera link at any offset from `chassis`:
+```xml
+<joint name="camera_joint" type="fixed">
+  <parent link="chassis"/>
+  <child link="camera_link"/>
+  <origin xyz="0.15 0 0.20" rpy="0 0 0"/>  <!-- front, raised -->
+</joint>
+```
+
+---
+
+## 13. New Tool Scripts
+
+### `fleet_manager.py` — Product-like fleet CLI
+```bash
+ros2 run diff_drive_robot fleet_manager.py list          # list active robots
+ros2 run diff_drive_robot fleet_manager.py status        # map/SLAM/Nav2 status
+ros2 run diff_drive_robot fleet_manager.py add robot3 1.0 2.0   # dynamic spawn
+ros2 run diff_drive_robot fleet_manager.py teleop robot1 # keyboard control
+ros2 run diff_drive_robot fleet_manager.py goto robot2 3.0 -1.0 # nav goal
+ros2 run diff_drive_robot fleet_manager.py explore robot2        # frontier
+ros2 run diff_drive_robot fleet_manager.py savemap /tmp/my_map   # save SLAM map
+ros2 run diff_drive_robot fleet_manager.py stop robot1           # cancel nav
+```
+
+### `multi_teleop.py` — Interactive multi-robot keyboard teleop
+```bash
+ros2 run diff_drive_robot multi_teleop.py
+# → shows robot list, select one, drive it, switch with R, spawn new with N
+```
+
+---
+
+## 14. Custom Obstacle Avoidance (`navigation.py`)
 
 A simpler alternative to Nav2 — a 4-state finite state machine:
 

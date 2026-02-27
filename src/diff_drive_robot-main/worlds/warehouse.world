@@ -1,0 +1,169 @@
+<?xml version="1.0" ?>
+<!--
+  warehouse.world — A simple warehouse environment for multi-robot testing.
+  - 16 m × 14 m rectangular floor
+  - Three aisles separated by box-stack shelves
+  - No Fuel model downloads — all primitives, loads instantly
+
+  Spawn robots in the open area (x: -6 to -3, y: -5 to 5)
+  Goal areas are in the aisles (x: 2 to 7)
+
+  Launch:
+    ros2 launch diff_drive_robot multi_robot.launch.py world:=warehouse
+-->
+<sdf version='1.8'>
+  <world name='warehouse'>
+
+    <physics name='1ms' type='ignored'>
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system"
+            name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system"
+            name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system"
+            name="ignition::gazebo::systems::SceneBroadcaster"/>
+    <plugin filename="ignition-gazebo-sensors-system"
+            name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="ignition-gazebo-contact-system"
+            name="ignition::gazebo::systems::Contact"/>
+
+    <light name='sun' type='directional'>
+      <pose>0 0 15 0 0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>-0.5 0.1 -0.9</direction>
+      <diffuse>0.9 0.9 0.9 1</diffuse>
+      <specular>0.3 0.3 0.3 1</specular>
+    </light>
+
+    <!-- ── Ground plane ──────────────────────────────────────── -->
+    <model name='ground_plane'>
+      <static>true</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+        </collision>
+        <visual name='visual'>
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+            <diffuse>0.7 0.7 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ── Outer walls (16 m × 14 m) ────────────────────────── -->
+
+    <!-- North wall -->
+    <model name='wall_north'>
+      <static>true</static>
+      <pose>0 7 1 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>16 0.2 2</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>16 0.2 2</size></box></geometry>
+          <material><ambient>0.6 0.5 0.4 1</ambient><diffuse>0.6 0.5 0.4 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- South wall -->
+    <model name='wall_south'>
+      <static>true</static>
+      <pose>0 -7 1 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>16 0.2 2</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>16 0.2 2</size></box></geometry>
+          <material><ambient>0.6 0.5 0.4 1</ambient><diffuse>0.6 0.5 0.4 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- East wall -->
+    <model name='wall_east'>
+      <static>true</static>
+      <pose>8 0 1 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>0.2 14 2</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>0.2 14 2</size></box></geometry>
+          <material><ambient>0.6 0.5 0.4 1</ambient><diffuse>0.6 0.5 0.4 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- West wall -->
+    <model name='wall_west'>
+      <static>true</static>
+      <pose>-8 0 1 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>0.2 14 2</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>0.2 14 2</size></box></geometry>
+          <material><ambient>0.6 0.5 0.4 1</ambient><diffuse>0.6 0.5 0.4 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ── Shelf rows (3 aisles) ─────────────────────────────── -->
+
+    <!-- Shelf row A — left side, from x=0 to x=6, at y=+4.5 -->
+    <model name='shelf_A1'>
+      <static>true</static><pose>2 4.5 0.6 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>4 0.4 1.2</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>4 0.4 1.2</size></box></geometry>
+          <material><ambient>0.4 0.3 0.2 1</ambient><diffuse>0.4 0.3 0.2 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Shelf row A — right side, at y=+1.5 -->
+    <model name='shelf_A2'>
+      <static>true</static><pose>2 1.5 0.6 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>4 0.4 1.2</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>4 0.4 1.2</size></box></geometry>
+          <material><ambient>0.4 0.3 0.2 1</ambient><diffuse>0.4 0.3 0.2 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Shelf row B — at y=-1.5 -->
+    <model name='shelf_B1'>
+      <static>true</static><pose>2 -1.5 0.6 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>4 0.4 1.2</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>4 0.4 1.2</size></box></geometry>
+          <material><ambient>0.3 0.4 0.2 1</ambient><diffuse>0.3 0.4 0.2 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Shelf row B — at y=-4.5 -->
+    <model name='shelf_B2'>
+      <static>true</static><pose>2 -4.5 0.6 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>4 0.4 1.2</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>4 0.4 1.2</size></box></geometry>
+          <material><ambient>0.3 0.4 0.2 1</ambient><diffuse>0.3 0.4 0.2 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ── Divider wall (separates loading from storage) ─────── -->
+    <model name='divider'>
+      <static>true</static><pose>0 0 0.75 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>0.2 4 1.5</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>0.2 4 1.5</size></box></geometry>
+          <material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>

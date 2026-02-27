@@ -20,6 +20,7 @@ install(
     scripts/reset_pose.py
     scripts/multi_teleop.py
     scripts/fleet_manager.py
+    scripts/fleet_gui.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(
