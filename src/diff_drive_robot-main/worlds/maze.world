@@ -1,0 +1,163 @@
+<?xml version="1.0" ?>
+<sdf version='1.8'>
+  <world name='maze'>
+
+    <physics name='1ms' type='ignored'>
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system"
+            name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system"
+            name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system"
+            name="ignition::gazebo::systems::SceneBroadcaster"/>
+    <plugin filename="ignition-gazebo-sensors-system"
+            name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="ignition-gazebo-contact-system"
+            name="ignition::gazebo::systems::Contact"/>
+
+    <light name='sun' type='directional'>
+      <pose>0 0 10 0 0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>-0.5 0.1 -0.9</direction>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+    </light>
+
+    <!-- Ground plane -->
+    <model name='ground_plane'>
+      <static>true</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+        </collision>
+        <visual name='visual'>
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+            <diffuse>0.7 0.7 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ===== OUTER BOUNDARY WALLS (20x20m arena) ===== -->
+    <!-- North wall -->
+    <model name='wall_north'><static>true</static><link name='link'>
+      <pose>0 10 1 0 0 0</pose>
+      <collision name='c'><geometry><box><size>20 0.2 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>20 0.2 2</size></box></geometry>
+        <material><ambient>0.4 0.4 0.6 1</ambient><diffuse>0.4 0.4 0.6 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- South wall -->
+    <model name='wall_south'><static>true</static><link name='link'>
+      <pose>0 -10 1 0 0 0</pose>
+      <collision name='c'><geometry><box><size>20 0.2 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>20 0.2 2</size></box></geometry>
+        <material><ambient>0.4 0.4 0.6 1</ambient><diffuse>0.4 0.4 0.6 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- East wall -->
+    <model name='wall_east'><static>true</static><link name='link'>
+      <pose>10 0 1 0 0 0</pose>
+      <collision name='c'><geometry><box><size>0.2 20 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.2 20 2</size></box></geometry>
+        <material><ambient>0.4 0.4 0.6 1</ambient><diffuse>0.4 0.4 0.6 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- West wall -->
+    <model name='wall_west'><static>true</static><link name='link'>
+      <pose>-10 0 1 0 0 0</pose>
+      <collision name='c'><geometry><box><size>0.2 20 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.2 20 2</size></box></geometry>
+        <material><ambient>0.4 0.4 0.6 1</ambient><diffuse>0.4 0.4 0.6 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- ===== INTERIOR WALLS — ROOM DIVIDERS ===== -->
+
+    <!-- Horizontal divider: splits arena into top/bottom halves, gap on right -->
+    <model name='h_div_left'><static>true</static><link name='link'>
+      <pose>-2.5 0 1 0 0 0</pose>
+      <collision name='c'><geometry><box><size>15 0.2 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>15 0.2 2</size></box></geometry>
+        <material><ambient>0.6 0.4 0.3 1</ambient><diffuse>0.6 0.4 0.3 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- Vertical divider: left side corridor, gap at bottom -->
+    <model name='v_div_left'><static>true</static><link name='link'>
+      <pose>-5 4.5 1 0 0 0</pose>
+      <collision name='c'><geometry><box><size>0.2 11 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.2 11 2</size></box></geometry>
+        <material><ambient>0.3 0.6 0.4 1</ambient><diffuse>0.3 0.6 0.4 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- Vertical divider: right side, top half only -->
+    <model name='v_div_right_top'><static>true</static><link name='link'>
+      <pose>3 5.5 1 0 0 0</pose>
+      <collision name='c'><geometry><box><size>0.2 9 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.2 9 2</size></box></geometry>
+        <material><ambient>0.3 0.6 0.4 1</ambient><diffuse>0.3 0.6 0.4 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- Bottom-right room: vertical wall -->
+    <model name='br_wall_v'><static>true</static><link name='link'>
+      <pose>3 -5.5 1 0 0 0</pose>
+      <collision name='c'><geometry><box><size>0.2 9 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.2 9 2</size></box></geometry>
+        <material><ambient>0.5 0.5 0.3 1</ambient><diffuse>0.5 0.5 0.3 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- Bottom-right room: horizontal wall, gap on left -->
+    <model name='br_wall_h'><static>true</static><link name='link'>
+      <pose>6.5 -3 1 0 0 0</pose>
+      <collision name='c'><geometry><box><size>7 0.2 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>7 0.2 2</size></box></geometry>
+        <material><ambient>0.5 0.5 0.3 1</ambient><diffuse>0.5 0.5 0.3 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- Narrow corridor: top-left box -->
+    <model name='tl_box'><static>true</static><link name='link'>
+      <pose>-7.5 6 1 0 0 0</pose>
+      <collision name='c'><geometry><box><size>3 3 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>3 3 2</size></box></geometry>
+        <material><ambient>0.6 0.3 0.4 1</ambient><diffuse>0.6 0.3 0.4 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- Central pillar cluster -->
+    <model name='pillar_a'><static>true</static><link name='link'>
+      <pose>0 3 1 0 0 0</pose>
+      <collision name='c'><geometry><box><size>1.5 1.5 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>1.5 1.5 2</size></box></geometry>
+        <material><ambient>0.8 0.6 0.2 1</ambient><diffuse>0.8 0.6 0.2 1</diffuse></material></visual>
+    </link></model>
+
+    <model name='pillar_b'><static>true</static><link name='link'>
+      <pose>0 -4 1 0 0 0</pose>
+      <collision name='c'><geometry><box><size>1.5 1.5 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>1.5 1.5 2</size></box></geometry>
+        <material><ambient>0.8 0.6 0.2 1</ambient><diffuse>0.8 0.6 0.2 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- Diagonal obstacle block (top-right area) -->
+    <model name='diag_block_1'><static>true</static><link name='link'>
+      <pose>6 6 1 0 0 0.785</pose>
+      <collision name='c'><geometry><box><size>3 0.3 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>3 0.3 2</size></box></geometry>
+        <material><ambient>0.3 0.3 0.7 1</ambient><diffuse>0.3 0.3 0.7 1</diffuse></material></visual>
+    </link></model>
+
+    <model name='diag_block_2'><static>true</static><link name='link'>
+      <pose>7.5 4.5 1 0 0 0.785</pose>
+      <collision name='c'><geometry><box><size>3 0.3 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>3 0.3 2</size></box></geometry>
+        <material><ambient>0.3 0.3 0.7 1</ambient><diffuse>0.3 0.3 0.7 1</diffuse></material></visual>
+    </link></model>
+
+  </world>
+</sdf>

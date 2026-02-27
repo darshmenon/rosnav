@@ -1,0 +1,9 @@
+# Waypoint route for waypoint_nav.py
+# Format: [x, y, yaw_degrees]
+# Copy this file and edit to define your own routes.
+
+waypoints:
+  - [2.0,  0.0,   0.0]
+  - [2.0,  2.0,  90.0]
+  - [0.0,  2.0, 180.0]
+  - [0.0,  0.0, -90.0]

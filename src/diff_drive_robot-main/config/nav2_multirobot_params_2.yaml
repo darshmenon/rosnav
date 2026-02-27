@@ -5,7 +5,7 @@ amcl:
     alpha3: 0.2
     alpha4: 0.2
     alpha5: 0.2
-    base_frame_id: "base_footprint"
+    base_frame_id: "base_link"
     beam_skip_distance: 0.5
     beam_skip_error_threshold: 0.9
     beam_skip_threshold: 0.3
@@ -150,7 +150,7 @@ local_costmap:
         mark_threshold: 0
         observation_sources: scan
         scan:
-          topic: /robot2/scan
+          topic: scan
           max_obstacle_height: 2.0
           clearing: True
           marking: True
@@ -172,7 +172,7 @@ global_costmap:
         enabled: True
         observation_sources: scan
         scan:
-          topic: /robot2/scan
+          topic: scan
           max_obstacle_height: 2.0
           clearing: True
           marking: True
@@ -192,7 +192,7 @@ global_costmap:
 
 map_server:
   ros__parameters:
-    yaml_filename: "tb3_sandbox.yaml"
+    yaml_filename: ""
     save_map_timeout: 5.0
 
 planner_server:
@@ -240,7 +240,7 @@ waypoint_follower:
 
 collision_monitor:
   ros__parameters:
-    base_frame_id: "base_footprint"
+    base_frame_id: "base_link"
     odom_frame_id: "odom"
     cmd_vel_in_topic: "cmd_vel_smoothed"
     cmd_vel_out_topic: "cmd_vel"
@@ -264,7 +264,7 @@ collision_monitor:
     observation_sources: ["scan"]
     scan:
       type: "scan"
-      topic: "/robot2/scan"
+      topic: "scan"
       min_height: 0.15
       max_height: 2.0
       enabled: True

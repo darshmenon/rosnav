@@ -27,10 +27,15 @@
   <depend>nav2_msgs</depend>
   <depend>nav2_common</depend>
   
-  <!-- Gazebo dependencies -->
-  <depend>gz-sim7</depend>
-  <depend>gz-common4</depend>
-  <depend>gz-transport11</depend>
+  <!-- Gazebo dependencies – gz-sim7/common4/transport11 = Humble (GZ Garden)  -->
+  <!--                         gz-sim8/common5/transport13 = Jazzy  (GZ Harmonic) -->
+  <!-- The correct set will be installed for your ROS distro; the other is ignored. -->
+  <exec_depend>gz-sim7</exec_depend>
+  <exec_depend>gz-common4</exec_depend>
+  <exec_depend>gz-transport11</exec_depend>
+  <exec_depend>gz-sim8</exec_depend>
+  <exec_depend>gz-common5</exec_depend>
+  <exec_depend>gz-transport13</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

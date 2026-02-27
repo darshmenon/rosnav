@@ -11,16 +11,18 @@ find_package(ament_cmake REQUIRED)
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)
 install(
-  PROGRAMS scripts/navigation.py  
+  PROGRAMS
+    scripts/navigation.py
+    scripts/path_planning.py
+    scripts/waypoint_nav.py
+    scripts/frontier_explorer.py
+    scripts/check_odometry.py
+    scripts/reset_pose.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(
   DIRECTORY launch urdf config worlds rviz
   DESTINATION share/${PROJECT_NAME}
-)
-install(
-  PROGRAMS scripts/navigation.py scripts/path_planning.py  # Added path_planning.py
-  DESTINATION lib/${PROJECT_NAME}
 )
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

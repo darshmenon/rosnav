@@ -1,0 +1,80 @@
+<?xml version="1.0"?>
+<!--
+  16-channel 3D LiDAR (Velodyne VLP-16 style)
+  Publishes a sensor_msgs/PointCloud2 on /points.
+
+  To swap from 2D to 3D LiDAR, edit robot.urdf.xacro:
+    Replace:  <xacro:include filename="lidar.xacro" />
+    With:     <xacro:include filename="lidar3d.xacro" />
+
+  Add the /points bridge to gz_bridge.yaml (already included in the
+  updated config) and rebuild:
+    colcon build (symlink-install) (packages-select diff_drive_robot)
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Mount at same position as 2D lidar so Nav2 costmaps still work -->
+  <joint name="laser_joint" type="fixed">
+    <parent link="chassis"/>
+    <child link="laser_frame"/>
+    <origin xyz="0.1 0 0.175" rpy="0 0 0"/>
+  </joint>
+
+  <link name="laser_frame">
+    <visual>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <cylinder length="0.07" radius="0.05"/>
+      </geometry>
+      <material name="lidar3d_material">
+        <color rgba="0.1 0.1 0.1 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <cylinder length="0.07" radius="0.05"/>
+      </geometry>
+    </collision>
+    <xacro:inertial_cylinder mass="0.1" length="0.07" radius="0.05">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </xacro:inertial_cylinder>
+  </link>
+
+  <!-- 3D gpu_lidar sensor (16 vertical channels, VLP-16 equivalent) -->
+  <gazebo reference="laser_frame">
+    <sensor name="lidar3d" type="gpu_lidar">
+      <pose>0 0 0 0 0 0</pose>
+      <always_on>true</always_on>
+      <visualize>false</visualize>
+      <update_rate>10</update_rate>
+      <topic>points</topic>
+      <gz_frame_id>laser_frame</gz_frame_id>
+      <lidar>
+        <scan>
+          <horizontal>
+            <samples>1800</samples>         <!-- 0.2 deg horizontal resolution -->
+            <min_angle>-3.14159</min_angle>
+            <max_angle>3.14159</max_angle>
+          </horizontal>
+          <vertical>
+            <samples>16</samples>           <!-- 16 channels -->
+            <min_angle>-0.2618</min_angle>  <!-- -15 deg -->
+            <max_angle>0.2618</max_angle>   <!-- +15 deg -->
+          </vertical>
+        </scan>
+        <range>
+          <min>0.3</min>
+          <max>100.0</max>
+          <resolution>0.001</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.01</stddev>
+        </noise>
+      </lidar>
+    </sensor>
+  </gazebo>
+
+</robot>
