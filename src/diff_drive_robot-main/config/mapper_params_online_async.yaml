@@ -15,12 +15,12 @@ slam_toolbox:
     base_frame: base_link
     scan_topic: /scan
     use_map_saver: true
-    mode: localization #localization
+    mode: mapping  # use 'localization' to load a saved map instead of building a new one
 
     # if you'd like to immediately start continuing a map at a given pose
     # or at the dock, but they are mutually exclusive, if pose is given
     # will use pose
-    map_file_name: /home/darsh/rosnav/my_map_serial
+    map_file_name: ""
     map_start_pose: [0.0, 0.0, 0.0]
     map_start_at_dock: true
 
