@@ -1,0 +1,96 @@
+<!--
+  navigate_w_recovery.xml
+  ═══════════════════════
+  Custom Nav2 Behavior Tree for diff_drive_robot.
+
+  Recovery sequence (executed on navigation failure, tried round-robin):
+    1. Clear local costmap   — removes stale dynamic obstacles
+    2. BackUp                — escape contact with walls or objects
+    3. Spin                  — reorient and acquire scan data
+    4. Clear global costmap  — force full replan on new map state
+    5. Wait                  — pause before retry (sensor data settles)
+
+  Outer RecoveryNode retries the whole navigate+recover loop up to 6 times.
+  If the goal is updated mid-flight, recovery exits immediately (GoalUpdated).
+
+  Nav2 BT node reference (Humble):
+    https://navigation.ros.org/behavior_trees/trees/nav2_bt_navigator_navigate_to_pose.html
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+
+    <!--
+      Outer retry wrapper: up to 6 full navigate+recover cycles.
+      If all 6 fail → NavigateToPose action returns FAILED.
+    -->
+    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+
+      <!-- ── Navigation pipeline ────────────────────────────────────────── -->
+      <PipelineSequence name="NavigateWithReplanning">
+
+        <!--
+          Recompute the global path at 1 Hz while following.
+          Wrapped in RecoveryNode: on planner failure, clear the global costmap
+          once then retry.
+        -->
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathRecovery">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            <ClearEntireCostmap
+              name="ClearGlobalCostmap-Replanning"
+              service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+
+        <!--
+          Follow the computed path.
+          On controller failure, clear the local costmap once then retry.
+        -->
+        <RecoveryNode number_of_retries="1" name="FollowPathRecovery">
+          <FollowPath path="{path}" controller_id="FollowPath"/>
+          <ClearEntireCostmap
+            name="ClearLocalCostmap-Following"
+            service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+
+      </PipelineSequence>
+
+      <!-- ── Recovery fallback ──────────────────────────────────────────── -->
+      <!--
+        ReactiveFallback: checks GoalUpdated on every tick.
+        If goal changed, abort recovery and re-enter navigation with new goal.
+      -->
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+
+        <!--
+          RoundRobin: each failure cycles to the NEXT recovery behaviour.
+          Sequence: backup → spin → clear costmaps → wait (all or nothing).
+        -->
+        <RoundRobin name="RecoveryActions">
+
+          <!-- Step 1: back away from whatever caused the failure -->
+          <BackUp backup_dist="0.20" backup_speed="0.05"/>
+
+          <!-- Step 2: spin to get fresh 360° scan coverage -->
+          <Spin spin_dist="1.57"/>
+
+          <!-- Step 3: clear both costmaps and try fresh plan -->
+          <Sequence name="ClearBothCostmaps">
+            <ClearEntireCostmap
+              name="ClearLocal"
+              service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap
+              name="ClearGlobal"
+              service_name="global_costmap/clear_entirely_global_costmap"/>
+          </Sequence>
+
+          <!-- Step 4: wait for dynamic obstacles to clear -->
+          <Wait wait_duration="3"/>
+
+        </RoundRobin>
+      </ReactiveFallback>
+
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

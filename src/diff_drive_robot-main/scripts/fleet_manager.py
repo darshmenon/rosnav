@@ -19,6 +19,9 @@ Commands
   mission <ns> status                                Show mission state
   mission <ns> cancel                                Cancel active mission
   collision <ns>  Show collision monitor state for a robot
+  tasks add <x> <y> <yaw> [label]   Add a task to the shared queue
+  tasks status                       Show task queue and robot states
+  tasks clear                        Remove all pending tasks
   help           Show this help
 
 Usage
@@ -296,6 +299,65 @@ class FleetNode(Node):
         time.sleep(0.2)
         print(f'Mission sent to {ns}: {payload}')
 
+    def cmd_tasks(self, sub: str, extra: list[str]):
+        """Interact with the task_allocator daemon."""
+        sub = sub.lower()
+
+        if sub == 'status':
+            received = [None]
+
+            def _cb(msg):
+                received[0] = json.loads(msg.data)
+
+            self.create_subscription(String, '/task_queue/state', _cb, 10)
+            deadline = time.time() + 3.0
+            while received[0] is None and time.time() < deadline:
+                time.sleep(0.05)
+            if received[0]:
+                s = received[0]
+                tasks = s.get('tasks', [])
+                bots  = s.get('robot_states', {})
+                print('\n── Task Queue ────────────────────────────────────')
+                for t in (tasks or []):
+                    robot = f' → {t["robot"]}' if t['robot'] else ''
+                    label = f' [{t["label"]}]' if t.get('label') else ''
+                    print(f'  {t["id"]}  ({t["x"]:.2f},{t["y"]:.2f})'
+                          f'{label}  {t["status"]}{robot}')
+                if not tasks:
+                    print('  (empty)')
+                print('\n── Robots ────────────────────────────────────────')
+                for ns, st in (bots.items() if bots else {}).items():
+                    print(f'  {ns}: {st}')
+                print('──────────────────────────────────────────────────\n')
+            else:
+                print('No task_allocator found (is it running?)')
+            return
+
+        pub = self.create_publisher(String, '/task_queue/add' if sub == 'add' else '/task_queue/clear', 10)
+        time.sleep(0.3)
+        if sub == 'add':
+            if len(extra) < 3:
+                print('Usage: tasks add <x> <y> <yaw_deg> [label]')
+                return
+            payload = {
+                'x': float(extra[0]), 'y': float(extra[1]),
+                'yaw': float(extra[2]),
+                'label': extra[3] if len(extra) > 3 else '',
+            }
+            msg = String()
+            msg.data = json.dumps(payload)
+            pub.publish(msg)
+            time.sleep(0.2)
+            print(f'Task queued: {payload}')
+        elif sub == 'clear':
+            msg = String()
+            msg.data = json.dumps({})
+            pub.publish(msg)
+            time.sleep(0.2)
+            print('Queue cleared.')
+        else:
+            print(f'Unknown tasks sub-command: {sub}')
+
     def cmd_collision(self, ns: str):
         """Print the latest collision monitor state for a robot."""
         topic    = f'/{ns}/collision_monitor/state' if ns else '/collision_monitor/state'
@@ -444,6 +506,12 @@ def main():
             print('Usage: fleet_manager.py collision <namespace>')
             sys.exit(1)
         node.cmd_collision(args[1])
+
+    elif cmd == 'tasks':
+        if len(args) < 2:
+            print('Usage: fleet_manager.py tasks add|status|clear [args…]')
+            sys.exit(1)
+        node.cmd_tasks(args[1], args[2:])
 
     else:
         print(f'Unknown command: {cmd}')

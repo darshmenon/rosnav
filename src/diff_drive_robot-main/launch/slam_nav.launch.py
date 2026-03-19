@@ -26,6 +26,7 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterFile
 
 ROS_DISTRO = os.environ.get('ROS_DISTRO', 'humble')
 _NAV2_PARAMS = 'nav2_params_jazzy.yaml' if ROS_DISTRO == 'jazzy' else 'nav2_params.yaml'
@@ -135,6 +136,18 @@ def _build_runtime_actions(context, pkg_share: str):
         ],
     )
 
+    # Patch the BT path placeholder before passing params to nav2
+    _raw_params  = os.path.join(pkg_share, 'config', _NAV2_PARAMS)
+    _bt_xml_path = os.path.join(pkg_share, 'config', 'bt', 'navigate_w_recovery.xml')
+    import tempfile, re as _re
+    with open(_raw_params) as _f:
+        _patched = _re.sub(r'replace_with_pkg_share', pkg_share.replace('\\', '/'), _f.read())
+    _tmp_params = tempfile.NamedTemporaryFile(
+        mode='w', suffix='_nav2_patched.yaml', delete=False, prefix='diff_drive_')
+    _tmp_params.write(_patched)
+    _tmp_params.close()
+    _params_file = _tmp_params.name
+
     nav2 = TimerAction(
         period=8.0,
         actions=[
@@ -148,9 +161,37 @@ def _build_runtime_actions(context, pkg_share: str):
                 ),
                 launch_arguments={
                     'use_sim_time': 'true',
-                    'params_file': os.path.join(pkg_share, 'config', _NAV2_PARAMS),
+                    'params_file': _params_file,
                 }.items(),
             )
+        ],
+    )
+
+    # ── Velocity Smoother (starts 2s after nav2) ──────────────────────────
+    # Subscribes to /cmd_vel (controller output), publishes /cmd_vel_smoothed.
+    # gz_bridge also forwards cmd_vel_smoothed → Gazebo so the robot receives
+    # the jerk-limited stream.  cmd_vel is still bridged as fallback.
+    velocity_smoother = TimerAction(
+        period=10.0,
+        actions=[
+            Node(
+                package='nav2_velocity_smoother',
+                executable='velocity_smoother',
+                name='velocity_smoother',
+                output='screen',
+                parameters=[_params_file],
+            ),
+            Node(
+                package='nav2_lifecycle_manager',
+                executable='lifecycle_manager',
+                name='lifecycle_manager_velocity_smoother',
+                output='screen',
+                parameters=[{
+                    'use_sim_time': True,
+                    'autostart': True,
+                    'node_names': ['velocity_smoother'],
+                }],
+            ),
         ],
     )
 
@@ -230,6 +271,7 @@ def _build_runtime_actions(context, pkg_share: str):
         spawn_robot,
         slam,
         nav2,
+        velocity_smoother,
         rviz2,
         collision_monitor,
         mission_server,

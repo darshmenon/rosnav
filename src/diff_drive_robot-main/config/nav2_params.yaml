@@ -52,10 +52,9 @@ bt_navigator:
       plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
     navigate_through_poses:
       plugin: "nav2_bt_navigator::NavigateThroughPosesNavigator"
-    # 'default_nav_through_poses_bt_xml' and 'default_nav_to_pose_bt_xml' are use defaults:
-    # nav2_bt_navigator::navigate_to_pose_w_replanning_and_recovery.xml
-    # nav2_bt_navigator::navigate_through_poses_w_replanning_and_recovery.xml
-    # They can be set here or via a RewrittenYaml remap from a parent launch file to Nav2.
+    # Custom BT with aggressive backup→spin→clear→wait recovery sequence.
+    # Set to "" to revert to Nav2's built-in default BT.
+    default_nav_to_pose_bt_xml: "replace_with_pkg_share/config/bt/navigate_w_recovery.xml"
 
     # plugin_lib_names is used to add custom BT plugins to the executor (vector of strings).
     # Built-in plugins are added automatically

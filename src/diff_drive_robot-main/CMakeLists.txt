@@ -23,6 +23,8 @@ install(
     scripts/fleet_gui.py
     scripts/collision_monitor.py
     scripts/mission_server.py
+    scripts/coverage_planner.py
+    scripts/task_allocator.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(

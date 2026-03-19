@@ -40,6 +40,10 @@ Nav2 plugin naming differs between distros. **The launch files detect `$ROS_DIST
 - **Multiple worlds** — maze, obstacles, warehouse, corridor (all self-contained SDF)
 - **Collision Monitor** — independent safety watchdog: stop/slowdown zones from live LaserScan
 - **Mission Server** — top-level mission layer: patrol loops, waypoint sequences, single-pose goto
+- **Velocity Smoother** — jerk-limited cmd_vel pipeline; started automatically alongside Nav2
+- **Custom Behavior Tree** — backup→spin→clear→wait recovery (replaces Nav2 default BT)
+- **Coverage Path Planner** — boustrophedon lawnmower sweep over any map
+- **Task Allocator** — multi-robot nearest-idle-robot task queue with automatic assignment
 
 ---
 
@@ -214,6 +218,25 @@ ros2 run diff_drive_robot mission_server.py cancel
 Monitor the collision safety layer:
 ```bash
 ros2 topic echo /collision_monitor/state
+```
+
+### Mode 9 — Coverage sweep (map the whole free space)
+```bash
+# After mapping is done:
+ros2 run diff_drive_robot coverage_planner.py
+# Tighter sweep for warehouse world:
+ros2 run diff_drive_robot coverage_planner.py --ros-args -p sweep_spacing:=0.4
+```
+
+### Mode 10 — Multi-robot task queue
+```bash
+# Start daemons (mission_server must also be running):
+ros2 run diff_drive_robot task_allocator.py
+
+# Queue tasks — allocator assigns nearest idle robot automatically:
+ros2 run diff_drive_robot fleet_manager.py tasks add 2.0 1.5 0 pickup_A
+ros2 run diff_drive_robot fleet_manager.py tasks add 4.0 -1.0 90 dock_B
+ros2 run diff_drive_robot fleet_manager.py tasks status
 ```
 
 ### Mode 8 — Multi-robot keyboard teleop

@@ -590,3 +590,175 @@ ros2 run diff_drive_robot fleet_manager.py mission robot1 patrol 1,2,0 3,4,90
 ros2 run diff_drive_robot fleet_manager.py mission robot1 status
 ros2 run diff_drive_robot fleet_manager.py collision robot1
 ```
+
+---
+
+## 19. Velocity Smoother
+
+`nav2_velocity_smoother` is a Nav2 lifecycle node that applies jerk-limiting to `cmd_vel`.
+
+**Why it matters:**  
+The MPPI controller outputs velocity commands that can change abruptly between ticks (10–20 Hz). Without smoothing, the robot's drivetrain receives step changes in velocity that cause:
+- Wheel slip
+- Mechanical stress
+- Oscillation at high speeds
+
+**How it works:**
+1. Subscribes to `/cmd_vel` (raw controller output).
+2. Applies configurable max acceleration (`max_accel`) and deceleration (`max_decel`) limits.
+3. Publishes filtered velocity to `/cmd_vel_smoothed`.
+4. `gz_bridge.yaml` also bridges `cmd_vel_smoothed → Gazebo /cmd_vel`, so the robot receives the smooth stream.
+
+**Pipeline:**
+```
+MPPI Controller → /cmd_vel → velocity_smoother → /cmd_vel_smoothed → gz_bridge → Gazebo
+```
+
+**Key parameters** (in `nav2_params.yaml` under `velocity_smoother`):
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `smoothing_frequency` | 20 Hz | Output rate |
+| `max_velocity` | [1.0, 0.0, 2.5] | [vx, vy, wz] max m/s or rad/s |
+| `max_accel` | [2.5, 0.0, 3.2] | [vx, vy, wz] max acceleration |
+| `max_decel` | [-2.5, 0.0, -3.2] | [vx, vy, wz] max deceleration |
+| `feedback` | OPEN_LOOP | OPEN_LOOP or CLOSED_LOOP (uses odom) |
+
+Started automatically by `slam_nav.launch.py` 10 seconds after Nav2.
+
+---
+
+## 20. Custom Behavior Tree
+
+`config/bt/navigate_w_recovery.xml` is a custom Nav2 Behavior Tree that replaces the default navigation BT.
+
+**What a Behavior Tree is:**  
+A BT is a tree of nodes that ticks top-down every cycle. Each node returns SUCCESS, FAILURE, or RUNNING. Nav2's bt_navigator runs your BT on every navigation goal.
+
+**Node types used:**
+
+| Node | Type | What it does |
+|---|---|---|
+| `RecoveryNode` | Decorator | Retries child N times before failing |
+| `PipelineSequence` | Control | Runs children in parallel pipeline — stops all if one fails |
+| `RateController` | Decorator | Throttles child to run at a fixed Hz |
+| `ReactiveFallback` | Control | Re-ticks all children every tick; succeeds on first success |
+| `RoundRobin` | Control | Tries next child each time it's called |
+| `ComputePathToPose` | Action | Calls global planner |
+| `FollowPath` | Action | Calls local controller (MPPI) |
+| `ClearEntireCostmap` | Action | Service call to clear global or local costmap |
+| `BackUp` | Action | Drives backward |
+| `Spin` | Action | Rotates in place |
+| `Wait` | Action | Pauses for N seconds |
+| `GoalUpdated` | Condition | Succeeds if goal changed since last tick |
+
+**Recovery sequence (this custom BT):**
+```
+NavigateToPose goal received
+  └─ Retry up to 6 times:
+       ├─ [Try] Plan + Follow path (replanning at 1 Hz)
+       └─ [Recover] RoundRobin:
+            1. BackUp 0.20m        — escape contact
+            2. Spin 90°            — fresh scan data
+            3. Clear both costmaps — force full replan
+            4. Wait 3s             — let dynamic obstacles clear
+```
+
+Registered in `nav2_params.yaml`:
+```yaml
+bt_navigator:
+  default_nav_to_pose_bt_xml: "<pkg_share>/config/bt/navigate_w_recovery.xml"
+```
+
+To revert to Nav2's built-in BT, set that value to `""`.
+
+---
+
+## 21. Coverage Path Planner
+
+`scripts/coverage_planner.py` computes a **boustrophedon** (lawnmower) sweep path over the free space of the current map and executes it via Nav2's `FollowWaypoints`.
+
+**Algorithm:**
+1. Receive `/map` (OccupancyGrid from SLAM or map_server).
+2. Identify FREE cells (value = 0).
+3. Erode free space by `robot_radius` to guarantee wall clearance.
+4. Find bounding box of navigable region.
+5. Sweep horizontal scan lines separated by `sweep_spacing` metres, alternating direction each line.
+6. Emit one waypoint per `sweep_spacing` interval on each navigable line.
+7. Optionally sort waypoints to start from the robot's current TF position.
+8. Send all waypoints to `FollowWaypoints` action server.
+
+**Pattern:**
+```
+→ → → → → → → → →
+                 ↓
+← ← ← ← ← ← ← ←
+↓
+→ → → → → → → → →
+```
+
+**Parameters:**
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `sweep_spacing` | 0.5 m | Distance between scan lines |
+| `robot_radius` | 0.25 m | Clearance from walls |
+| `start_from_robot` | true | Start nearest waypoint to robot pose |
+| `robot_ns` | `''` | Namespace (multi-robot) |
+
+```bash
+# Single robot coverage after mapping:
+ros2 run diff_drive_robot coverage_planner.py
+
+# Tighter sweep (warehouse):
+ros2 run diff_drive_robot coverage_planner.py --ros-args -p sweep_spacing:=0.4
+
+# Multi-robot:
+ros2 run diff_drive_robot coverage_planner.py --ros-args -p robot_ns:=robot2
+```
+
+---
+
+## 22. Multi-Robot Task Allocator
+
+`scripts/task_allocator.py` implements a **nearest-idle-robot** task allocation system that sits above `mission_server.py`.
+
+**How it works:**
+1. Maintains a shared task queue — a list of `(x, y, yaw)` poses with IDs.
+2. Discovers active robots from `/*/cmd_vel` topics (same as fleet_manager).
+3. Subscribes to `/mission/state` to track which robots are IDLE/DONE.
+4. Subscribes to `/<ns>/odom` to know each robot's current position.
+5. Every 0.5 s: for each idle robot, assign the nearest pending task.
+6. Sends `goto` missions to `/mission/execute` (consumed by mission_server daemon).
+7. When mission_server reports DONE/FAILED, marks the task as done and robot as free.
+
+**Topics:**
+
+| Topic | Direction | Content |
+|---|---|---|
+| `/task_queue/add` | in | JSON `{x, y, yaw, label}` — add task |
+| `/task_queue/clear` | in | Any JSON — remove pending tasks |
+| `/task_queue/state` | out | JSON queue + robot states at 2 Hz |
+| `/mission/state` | in | Robot mission states (from mission_server) |
+| `/mission/execute` | out | goto commands to mission_server |
+| `/<ns>/odom` | in | Robot position for distance calculation |
+
+**Task states:** `pending → assigned → done`
+
+```bash
+# Start daemons (mission_server must also be running):
+ros2 run diff_drive_robot task_allocator.py
+
+# Add tasks:
+ros2 run diff_drive_robot task_allocator.py add 2.0 1.5 0 pickup_A
+ros2 run diff_drive_robot task_allocator.py add 4.0 -1.0 90 dock_B
+ros2 run diff_drive_robot task_allocator.py add 0.0 3.0 180
+
+# Monitor:
+ros2 run diff_drive_robot task_allocator.py status
+
+# Or via fleet_manager:
+ros2 run diff_drive_robot fleet_manager.py tasks add 2.0 1.5 0 pickup_A
+ros2 run diff_drive_robot fleet_manager.py tasks status
+ros2 run diff_drive_robot fleet_manager.py tasks clear
+```
