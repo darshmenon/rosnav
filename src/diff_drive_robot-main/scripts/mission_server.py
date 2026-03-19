@@ -34,6 +34,7 @@ import math
 import sys
 import threading
 import time
+from typing import Optional
 
 import rclpy
 from rclpy.action import ActionClient
@@ -76,6 +77,9 @@ class MissionServer(Node):
     def __init__(self):
         super().__init__('mission_server')
 
+        self.declare_parameter('goal_timeout', 120.0)
+        self._goal_timeout = self.get_parameter('goal_timeout').value
+
         self._lock        = threading.Lock()
         self._state       = IDLE
         self._mission     = {}
@@ -83,7 +87,10 @@ class MissionServer(Node):
         self._robot_ns    = ''
         self._goal_handle = None
         self._clients: dict[str, ActionClient] = {}
-        self._active_thread: threading.Thread | None = None
+        self._active_thread: Optional[threading.Thread] = None
+        # Incremented each time a new mission starts; threads check this to
+        # know if they have been superseded and should exit.
+        self._mission_gen  = 0
 
         self.create_subscription(String, '/mission/execute', self._mission_cb, 10)
         self._state_pub = self.create_publisher(String, '/mission/state', 10)
@@ -133,41 +140,47 @@ class MissionServer(Node):
         self._cancel_current()    # abort any running mission first
 
         with self._lock:
-            self._mission  = {'type': mtype, 'waypoints': wps}
-            self._robot_ns = robot
-            self._wp_idx   = 0
-            self._state    = NAVIGATING
+            self._mission_gen += 1
+            my_gen             = self._mission_gen
+            self._mission      = {'type': mtype, 'waypoints': wps}
+            self._robot_ns     = robot
+            self._wp_idx       = 0
+            self._state        = NAVIGATING
 
         self.get_logger().info(
             f'Mission accepted: type={mtype}  robot={robot or "/"}  '
             f'waypoints={len(wps)}')
 
-        t = threading.Thread(target=self._run_mission, daemon=True)
+        t = threading.Thread(target=self._run_mission, args=(my_gen,), daemon=True)
         self._active_thread = t
         t.start()
 
     # ── Mission executor (runs in background thread) ───────────────────────────
 
-    def _run_mission(self):
+    def _run_mission(self, my_gen: int):
         with self._lock:
             mission = dict(self._mission)
             ns      = self._robot_ns
 
-        mtype = mission['type']
-        wps   = mission['waypoints']
+        mtype  = mission['type']
+        wps    = mission['waypoints']
         client = self._client(ns)
 
         self.get_logger().info(f'Waiting for Nav2 ({ns or "/"}) …')
         if not client.wait_for_server(timeout_sec=15.0):
             self.get_logger().error('Nav2 not available — mission aborted.')
-            self._state = FAILED
+            with self._lock:
+                if self._mission_gen == my_gen:
+                    self._state = FAILED
             return
 
         loop = True
         while loop:
             for i, wp in enumerate(wps):
-                if self._state != NAVIGATING:
-                    return
+                # Check if this thread has been superseded by a newer mission
+                with self._lock:
+                    if self._mission_gen != my_gen:
+                        return
 
                 with self._lock:
                     self._wp_idx = i
@@ -180,22 +193,30 @@ class MissionServer(Node):
                     f'→ waypoint {i + 1}/{len(wps)}: '
                     f'({x:.2f}, {y:.2f}, {yaw:.0f}°)')
 
-                ok = self._go(client, x, y, yaw)
+                ok = self._go(client, x, y, yaw, my_gen)
                 if not ok:
+                    # Check if cancelled/superseded before marking failed
+                    with self._lock:
+                        if self._mission_gen != my_gen:
+                            return
                     self.get_logger().warn(
                         f'Waypoint {i + 1} unreachable.  '
                         f'{"Continuing patrol loop." if mtype == "patrol" else "Mission failed."}')
                     if mtype != 'patrol':
-                        self._state = FAILED
+                        with self._lock:
+                            if self._mission_gen == my_gen:
+                                self._state = FAILED
                         return
 
             if mtype != 'patrol':
                 loop = False
 
-        self._state = DONE
+        with self._lock:
+            if self._mission_gen == my_gen:
+                self._state = DONE
         self.get_logger().info('Mission complete.')
 
-    def _go(self, client: ActionClient, x: float, y: float, yaw: float) -> bool:
+    def _go(self, client: ActionClient, x: float, y: float, yaw: float, my_gen: int) -> bool:
         goal      = NavigateToPose.Goal()
         goal.pose = _make_pose(x, y, yaw, self.get_clock().now().to_msg())
 
@@ -203,6 +224,7 @@ class MissionServer(Node):
         deadline = time.time() + 15.0
         while not future.done():
             if time.time() > deadline:
+                self.get_logger().warn('Goal acceptance timed out (15 s).')
                 return False
             time.sleep(0.05)
 
@@ -213,9 +235,17 @@ class MissionServer(Node):
         with self._lock:
             self._goal_handle = handle
 
-        result_future = handle.get_result_async()
+        result_future  = handle.get_result_async()
+        nav_deadline   = time.time() + self._goal_timeout
         while not result_future.done():
-            if self._state != NAVIGATING:
+            with self._lock:
+                superseded = self._mission_gen != my_gen
+            if superseded:
+                handle.cancel_goal_async()
+                return False
+            if time.time() > nav_deadline:
+                self.get_logger().warn(
+                    f'Goal timeout ({self._goal_timeout:.0f}s) — cancelling.')
                 handle.cancel_goal_async()
                 return False
             time.sleep(0.1)
@@ -224,6 +254,7 @@ class MissionServer(Node):
 
     def _cancel_current(self):
         with self._lock:
+            self._mission_gen += 1   # invalidates any running _run_mission thread
             self._state = IDLE
             gh = self._goal_handle
         if gh is not None:
@@ -267,8 +298,9 @@ def _status(node: Node):
 
     node.create_subscription(String, '/mission/state', _cb, 10)
     deadline = time.time() + 3.0
+    # The spin thread handles callbacks; just wait here without calling spin again.
     while received[0] is None and time.time() < deadline:
-        rclpy.spin_once(node, timeout_sec=0.1)
+        time.sleep(0.05)
 
     if received[0]:
         s = received[0]

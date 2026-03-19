@@ -252,7 +252,7 @@ class FleetNode(Node):
             self.create_subscription(String, '/mission/state', _cb, 10)
             deadline = time.time() + 3.0
             while received[0] is None and time.time() < deadline:
-                pass   # spin thread handles callbacks
+                time.sleep(0.05)
             if received[0]:
                 s = received[0]
                 print('\n── Mission State ─────────────────────────')
@@ -307,7 +307,7 @@ class FleetNode(Node):
         self.create_subscription(String, topic, _cb, 10)
         deadline = time.time() + 3.0
         while received[0] is None and time.time() < deadline:
-            pass
+            time.sleep(0.05)
         if received[0]:
             s = received[0]
             print(f'\n── Collision Monitor [{ns}] ──────────────')

@@ -39,6 +39,7 @@ Usage
 
 import json
 import math
+import time
 
 import rclpy
 from rclpy.node import Node
@@ -49,6 +50,9 @@ from std_msgs.msg import String
 CLEAR    = 'CLEAR'
 SLOWDOWN = 'SLOWDOWN'
 STOP     = 'STOP'
+
+# How long without a scan before we declare the sensor dead and latch STOP.
+_SCAN_TIMEOUT = 2.0
 
 
 class CollisionMonitor(Node):
@@ -73,9 +77,11 @@ class CollisionMonitor(Node):
         self._relay    = self.get_parameter('relay_mode').value
         hz             = self.get_parameter('publish_hz').value
 
-        self._state     = CLEAR
-        self._min_range = float('inf')
-        self._relay_vel = Twist()
+        self._state        = CLEAR
+        self._min_range    = float('inf')
+        self._relay_vel    = Twist()
+        self._last_scan_t  = 0.0          # wall-clock time of last scan
+        self._sensor_dead  = False
 
         pre = f'/{ns}' if ns else ''
 
@@ -98,6 +104,9 @@ class CollisionMonitor(Node):
     # ── Scan callback ─────────────────────────────────────────────────────────
 
     def _scan_cb(self, msg: LaserScan):
+        self._last_scan_t = time.monotonic()
+        self._sensor_dead = False
+
         if self._all:
             valid = [r for r in msg.ranges if msg.range_min < r < msg.range_max]
         else:
@@ -127,23 +136,51 @@ class CollisionMonitor(Node):
     # ── Timer tick ────────────────────────────────────────────────────────────
 
     def _tick(self):
+        # Sensor watchdog — if scan goes silent, treat as STOP
+        if self._last_scan_t > 0.0:
+            stale = time.monotonic() - self._last_scan_t > _SCAN_TIMEOUT
+            if stale and not self._sensor_dead:
+                self._sensor_dead = True
+                self._state = STOP
+                self.get_logger().warn(
+                    f'Scan topic silent for >{_SCAN_TIMEOUT}s — latching STOP')
+
         if self._relay:
             self._publish_relay()
-        elif self._state == STOP:
-            self._cmd_pub.publish(Twist())   # zero-vel override
+        else:
+            self._publish_watchdog()
 
         payload = {
-            'state':     self._state,
-            'min_range': round(self._min_range, 3) if self._min_range != float('inf') else -1,
-            'stop_dist': self._stop,
-            'slow_dist': self._slow,
+            'state':       self._state,
+            'sensor_dead': self._sensor_dead,
+            'min_range':   round(self._min_range, 3) if self._min_range != float('inf') else -1,
+            'stop_dist':   self._stop,
+            'slow_dist':   self._slow,
         }
         msg = String()
         msg.data = json.dumps(payload)
         self._state_pub.publish(msg)
 
-    def _publish_relay(self):
+    def _publish_watchdog(self):
+        """
+        Watchdog: publish a scaled/zero cmd_vel based on state.
+        In STOP/SLOWDOWN we publish; in CLEAR we stay silent so Nav2 drives normally
+        and there is only ever one active publisher on cmd_vel at a time.
+        NOTE: in SLOWDOWN we scale down by publishing 0 vel — this IS a hard stop,
+        not a proportional slow.  True proportional slowdown requires relay_mode:=true.
+        """
         if self._state == STOP:
+            self._cmd_pub.publish(Twist())
+        elif self._state == SLOWDOWN:
+            # Watchdog can't know Nav2's current cmd_vel, so we stop here too.
+            # Use relay_mode:=true for proportional slowdown.
+            self._cmd_pub.publish(Twist())
+
+    def _publish_relay(self):
+        if self._state in (STOP, SLOWDOWN) and self._sensor_dead:
+            # Sensor dead — always hard stop
+            self._cmd_pub.publish(Twist())
+        elif self._state == STOP:
             self._cmd_pub.publish(Twist())
         elif self._state == SLOWDOWN:
             scaled = Twist()
