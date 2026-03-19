@@ -483,3 +483,110 @@ ros2 run diff_drive_robot frontier_explorer.py
 ros2 run diff_drive_robot reset_pose.py --ros-args \
     -p world_name:=obstacles -p robot_name:=diff_drive
 ```
+
+---
+
+## 16. 3-Tier Autonomy Stack
+
+The full stack is structured as three independent layers:
+
+```
+┌─────────────────────────────────────────┐
+│  Mission Layer  — mission_server.py     │  High-level goals (patrol, goto, sequence)
+│                                         │  Breaks goals into NavigateToPose calls
+├─────────────────────────────────────────┤
+│  Navigation Layer  — Nav2 BT + MPPI     │  Path planning, local control, recovery
+│                                         │  Costmaps, planner, controller, BT
+├─────────────────────────────────────────┤
+│  Safety Layer  — collision_monitor.py   │  Independent scan watchdog
+│                                         │  Overrides cmd_vel on obstacle detection
+└─────────────────────────────────────────┘
+```
+
+Each layer is independent — the safety layer can stop the robot regardless of what the navigation or mission layer is doing.
+
+---
+
+## 17. Collision Monitor
+
+`scripts/collision_monitor.py` is a standalone safety watchdog.
+
+**How it works:**
+1. Subscribes to `/scan` (LaserScan).
+2. Checks the minimum range in a configurable forward FOV (default ±30°).
+3. When `min_range < stop_distance` (default 0.30 m): publishes `Twist(0,0)` to `/cmd_vel` at 20 Hz, overriding Nav2.
+4. When `min_range < slowdown_distance` (default 0.70 m): state = SLOWDOWN (relay mode only).
+5. Publishes JSON state to `/collision_monitor/state`.
+
+**Modes:**
+- `watchdog` (default): publishes zero-vel override during STOP. Simple — no pipeline changes needed.
+- `relay`: subscribes to `cmd_vel_nav`, scales or zeroes, publishes to `cmd_vel`. Requires controller remapping.
+
+**Parameters:**
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `robot_ns` | `''` | Namespace prefix (e.g. `robot1`) |
+| `stop_distance` | `0.30` | m — publish zero vel |
+| `slowdown_distance` | `0.70` | m — scale vel (relay mode) |
+| `slowdown_factor` | `0.40` | Scale factor in slowdown zone |
+| `front_angle_deg` | `60` | Total forward FOV to monitor |
+| `watch_all_around` | `false` | Use 360° instead of forward FOV |
+| `relay_mode` | `false` | Enable relay pipeline |
+
+```bash
+# Launch with slam_nav (safety:=true is default):
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze safety:=true
+
+# Or run standalone:
+ros2 run diff_drive_robot collision_monitor.py --ros-args \
+    -p stop_distance:=0.35 -p watch_all_around:=true
+
+# Monitor state:
+ros2 topic echo /collision_monitor/state
+```
+
+---
+
+## 18. Mission Server
+
+`scripts/mission_server.py` is the top-level mission execution daemon.
+
+**How it works:**
+1. Runs as a persistent ROS 2 node.
+2. Subscribes to `/mission/execute` (std_msgs/String JSON).
+3. On receipt of a mission, sends `NavigateToPose` goals to the target robot's Nav2 stack.
+4. Publishes current state to `/mission/state` (std_msgs/String JSON) at 1 Hz.
+
+**Mission types:**
+
+| Type | Behaviour |
+|---|---|
+| `patrol` | Loop through waypoints indefinitely |
+| `sequence` | Visit waypoints once in order, then DONE |
+| `goto` | Navigate to a single pose, then DONE |
+
+**State machine:** `IDLE → NAVIGATING → DONE / FAILED`
+Cancel with `action: cancel` → returns to `IDLE`.
+
+```bash
+# Start daemon:
+ros2 run diff_drive_robot mission_server.py
+
+# Patrol robot1 through 3 waypoints:
+ros2 run diff_drive_robot mission_server.py patrol robot1 1,2,0 3,4,90 0,0,180
+
+# Single goal:
+ros2 run diff_drive_robot mission_server.py goto robot1 3.0 -1.0 45
+
+# Check state:
+ros2 run diff_drive_robot mission_server.py status
+
+# Cancel:
+ros2 run diff_drive_robot mission_server.py cancel
+
+# Via fleet_manager:
+ros2 run diff_drive_robot fleet_manager.py mission robot1 patrol 1,2,0 3,4,90
+ros2 run diff_drive_robot fleet_manager.py mission robot1 status
+ros2 run diff_drive_robot fleet_manager.py collision robot1
+```

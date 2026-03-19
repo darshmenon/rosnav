@@ -13,6 +13,12 @@ Commands
   explore <ns>   Start frontier exploration on a robot
   stop <ns>      Stop navigation / teleop for a robot
   savemap [path] Save the current SLAM map
+  mission <ns> patrol x1,y1[,yaw] x2,y2[,yaw] …   Loop through waypoints
+  mission <ns> sequence x1,y1[,yaw] …               Visit once in order
+  mission <ns> goto <x> <y> [yaw]                   Single-pose mission
+  mission <ns> status                                Show mission state
+  mission <ns> cancel                                Cancel active mission
+  collision <ns>  Show collision monitor state for a robot
   help           Show this help
 
 Usage
@@ -23,8 +29,12 @@ Usage
   ros2 run diff_drive_robot fleet_manager.py goto robot2 3.0 -1.0
   ros2 run diff_drive_robot fleet_manager.py savemap /tmp/my_map
   ros2 run diff_drive_robot fleet_manager.py explore robot2
+  ros2 run diff_drive_robot fleet_manager.py mission robot1 patrol 1,2,0 3,4,90
+  ros2 run diff_drive_robot fleet_manager.py mission robot1 status
+  ros2 run diff_drive_robot fleet_manager.py collision robot1
 """
 
+import json
 import math
 import subprocess
 import sys
@@ -40,6 +50,7 @@ from nav_msgs.msg import OccupancyGrid
 from rclpy.action import ActionClient
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy
 from nav2_msgs.action import NavigateToPose
+from std_msgs.msg import String
 
 # ─────────────────────────────────────────────────────────────────────────────
 LINEAR_SPEED  = 0.22
@@ -228,6 +239,87 @@ class FleetNode(Node):
         else:
             print(f'Map save failed: {r.stderr.strip()}')
 
+    def cmd_mission(self, ns: str, sub: str, extra: list[str]):
+        """Send a mission to the mission_server daemon or query its state."""
+        sub = sub.lower()
+
+        if sub == 'status':
+            received = [None]
+
+            def _cb(msg):
+                received[0] = json.loads(msg.data)
+
+            self.create_subscription(String, '/mission/state', _cb, 10)
+            deadline = time.time() + 3.0
+            while received[0] is None and time.time() < deadline:
+                pass   # spin thread handles callbacks
+            if received[0]:
+                s = received[0]
+                print('\n── Mission State ─────────────────────────')
+                print(f'  State   : {s["state"]}')
+                print(f'  Type    : {s["type"] or "—"}')
+                print(f'  Robot   : {s["robot"] or "/"}')
+                if s['wp_total']:
+                    print(f'  Progress: {s["wp_index"] + 1}/{s["wp_total"]}')
+                print('──────────────────────────────────────────\n')
+            else:
+                print('No mission server found (is it running?)')
+            return
+
+        pub = self.create_publisher(String, '/mission/execute', 10)
+        time.sleep(0.3)
+
+        if sub == 'cancel':
+            payload = {'type': 'patrol', 'action': 'cancel', 'robot': ns, 'waypoints': []}
+
+        elif sub in ('patrol', 'sequence'):
+            wps = [[float(v) for v in w.split(',')] for w in extra]
+            payload = {'type': sub, 'robot': ns, 'waypoints': wps}
+
+        elif sub == 'goto':
+            if len(extra) < 2:
+                print('Usage: mission <ns> goto <x> <y> [yaw_deg]')
+                return
+            yaw = float(extra[2]) if len(extra) > 2 else 0.0
+            payload = {
+                'type': 'goto', 'robot': ns,
+                'pose': [float(extra[0]), float(extra[1]), yaw],
+                'waypoints': [],
+            }
+        else:
+            print(f'Unknown mission sub-command: {sub}')
+            return
+
+        msg = String()
+        msg.data = json.dumps(payload)
+        pub.publish(msg)
+        time.sleep(0.2)
+        print(f'Mission sent to {ns}: {payload}')
+
+    def cmd_collision(self, ns: str):
+        """Print the latest collision monitor state for a robot."""
+        topic    = f'/{ns}/collision_monitor/state' if ns else '/collision_monitor/state'
+        received = [None]
+
+        def _cb(msg):
+            received[0] = json.loads(msg.data)
+
+        self.create_subscription(String, topic, _cb, 10)
+        deadline = time.time() + 3.0
+        while received[0] is None and time.time() < deadline:
+            pass
+        if received[0]:
+            s = received[0]
+            print(f'\n── Collision Monitor [{ns}] ──────────────')
+            print(f'  State     : {s["state"]}')
+            mr = s["min_range"]
+            print(f'  Min range : {mr:.2f} m' if mr >= 0 else '  Min range : — (no scan)')
+            print(f'  Stop zone : {s["stop_dist"]} m')
+            print(f'  Slow zone : {s["slow_dist"]} m')
+            print('──────────────────────────────────────────\n')
+        else:
+            print(f'No collision monitor found for {ns} (is it running?)')
+
     def cmd_teleop(self, ns: str):
         """Interactive keyboard teleop for one robot."""
         self.cmd_stop(ns)   # cancel any active nav goal first
@@ -339,6 +431,19 @@ def main():
             sys.exit(1)
         node.cmd_stop(args[1])
         print(f'Nav2 stopped for {args[1]}. Gazebo entity remains.')
+
+    elif cmd == 'mission':
+        # mission <ns> <sub> [extra …]
+        if len(args) < 3:
+            print('Usage: fleet_manager.py mission <ns> patrol|sequence|goto|status|cancel [args…]')
+            sys.exit(1)
+        node.cmd_mission(args[1], args[2], args[3:])
+
+    elif cmd == 'collision':
+        if len(args) < 2:
+            print('Usage: fleet_manager.py collision <namespace>')
+            sys.exit(1)
+        node.cmd_collision(args[1])
 
     else:
         print(f'Unknown command: {cmd}')

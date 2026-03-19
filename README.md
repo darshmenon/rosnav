@@ -35,9 +35,11 @@ Nav2 plugin naming differs between distros. **The launch files detect `$ROS_DIST
 - **Waypoint following** — navigate a sequence of poses
 - **2D LiDAR** — native LaserScan (`gpu_lidar`), no conversion needed for Nav2/SLAM
 - **Fleet GUI** — Tkinter dashboard: click-to-navigate on map, teleop sliders, spawn/save
-- **Fleet CLI** — `fleet_manager.py`: list, status, add, teleop, goto, explore, savemap
+- **Fleet CLI** — `fleet_manager.py`: list, status, add, teleop, goto, explore, savemap, mission, collision
 - **Multi-robot teleop** — `multi_teleop.py`: WASD keyboard control with robot switcher
 - **Multiple worlds** — maze, obstacles, warehouse, corridor (all self-contained SDF)
+- **Collision Monitor** — independent safety watchdog: stop/slowdown zones from live LaserScan
+- **Mission Server** — top-level mission layer: patrol loops, waypoint sequences, single-pose goto
 
 ---
 
@@ -164,9 +166,57 @@ ros2 run diff_drive_robot fleet_manager.py teleop robot1 # keyboard drive
 ros2 run diff_drive_robot fleet_manager.py goto robot2 3.0 -1.0 # send goal
 ros2 run diff_drive_robot fleet_manager.py explore robot2        # frontier nav
 ros2 run diff_drive_robot fleet_manager.py savemap src/diff_drive_robot-main/maps/map_maze
+# Mission commands (mission server must be running):
+ros2 run diff_drive_robot fleet_manager.py mission robot1 patrol 1,2,0 3,4,90 0,0,180
+ros2 run diff_drive_robot fleet_manager.py mission robot1 goto 3.0 -1.0 45
+ros2 run diff_drive_robot fleet_manager.py mission robot1 status
+ros2 run diff_drive_robot fleet_manager.py mission robot1 cancel
+ros2 run diff_drive_robot fleet_manager.py collision robot1  # safety state
 ```
 
-### Mode 7 — Multi-robot keyboard teleop
+### Mode 7 — 3-Tier Autonomy Stack (Mission + Safety)
+
+The stack now has three layers:
+```
+Mission Layer  ← mission_server.py  (patrol/sequence/goto missions)
+Nav Layer      ← Nav2 BT + MPPI     (path planning + control)
+Safety Layer   ← collision_monitor  (stop/slowdown zones from scan)
+```
+
+Launch with safety enabled (default):
+```bash
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze safety:=true
+```
+
+Start the mission server daemon in a separate terminal:
+```bash
+ros2 run diff_drive_robot mission_server.py
+```
+
+Send missions directly:
+```bash
+# Patrol loop — robot1 visits three waypoints repeatedly
+ros2 run diff_drive_robot mission_server.py patrol robot1 1,2,0 3,4,90 0,0,180
+
+# One-shot sequence
+ros2 run diff_drive_robot mission_server.py sequence robot1 2,0,0 2,2,90 0,2,180
+
+# Single goal
+ros2 run diff_drive_robot mission_server.py goto robot1 3.0 -1.0 45
+
+# Check state
+ros2 run diff_drive_robot mission_server.py status
+
+# Cancel
+ros2 run diff_drive_robot mission_server.py cancel
+```
+
+Monitor the collision safety layer:
+```bash
+ros2 topic echo /collision_monitor/state
+```
+
+### Mode 8 — Multi-robot keyboard teleop
 ```bash
 ros2 run diff_drive_robot multi_teleop.py
 # → interactive menu: select robot, WASD to drive, R to switch, N to spawn new
