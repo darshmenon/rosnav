@@ -22,6 +22,7 @@ Commands
   tasks add <x> <y> <yaw> [label]   Add a task to the shared queue
   tasks status                       Show task queue and robot states
   tasks clear                        Remove all pending tasks
+  health         Show per-robot health (odom/scan Hz, nav2, collision)
   help           Show this help
 
 Usage
@@ -357,6 +358,35 @@ class FleetNode(Node):
             print('Queue cleared.')
         else:
             print(f'Unknown tasks sub-command: {sub}')
+
+    def cmd_health(self):
+        """Print fleet health from the fleet_health daemon."""
+        received = [None]
+
+        def _cb(msg):
+            received[0] = json.loads(msg.data)
+
+        self.create_subscription(String, '/fleet/health', _cb, 10)
+        deadline = time.time() + 3.0
+        while received[0] is None and time.time() < deadline:
+            time.sleep(0.05)
+
+        if received[0]:
+            data = received[0]
+            print('\n── Fleet Health ──────────────────────────────────────')
+            for ns, s in data.items():
+                icon = {'OK': 'OK', 'WARN': 'WARN', 'ERROR': 'ERR'}.get(s['overall'], '?')
+                print(f'  [{icon}] {ns:<10}  '
+                      f'odom={s["odom_hz"]:4.1f}Hz  '
+                      f'scan={s["scan_hz"]:4.1f}Hz  '
+                      f'nav2={"✓" if s["nav2"] else "✗"}  '
+                      f'mission={s["mission"]:<12}  '
+                      f'collision={s["collision"]}')
+            if not data:
+                print('  No robots detected.')
+            print('──────────────────────────────────────────────────────\n')
+        else:
+            print('No fleet_health monitor found (is it running?)')
 
     def cmd_collision(self, ns: str):
         """Print the latest collision monitor state for a robot."""

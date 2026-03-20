@@ -25,6 +25,8 @@ install(
     scripts/mission_server.py
     scripts/coverage_planner.py
     scripts/task_allocator.py
+    scripts/obstacle_tracker.py
+    scripts/fleet_health.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(

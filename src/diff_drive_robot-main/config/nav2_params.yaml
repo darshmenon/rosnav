@@ -275,10 +275,30 @@ planner_server:
     planner_plugins: ["GridBased"]
     costmap_update_timeout: 1.0
     GridBased:
-      plugin: "nav2_navfn_planner/NavfnPlanner"
-      tolerance: 0.5
-      use_astar: false
+      # Smac Hybrid-A*: kinematically feasible paths that respect the robot's
+      # turning radius.  Produces smoother, more drivable paths than NavFn.
+      # Fall back to NavfnPlanner by swapping the plugin line below.
+      plugin: "nav2_smac_planner/SmacPlannerHybrid"
+      downsample_costmap: false
+      downsampling_factor: 1
+      tolerance: 0.25
       allow_unknown: true
+      max_iterations: 1000000
+      max_on_approach_iterations: 1000
+      max_planning_time: 5.0
+      motion_model_for_search: "REEDS_SHEPP"
+      angle_quantization_bins: 72
+      analytic_expansion_ratio: 3.5
+      analytic_expansion_max_length: 3.0
+      minimum_turning_radius: 0.40
+      reverse_penalty: 2.0
+      change_penalty: 0.0
+      non_straight_penalty: 1.2
+      cost_penalty: 2.0
+      retrospective_penalty: 0.015
+      lookup_table_size: 20.0
+      cache_obstacle_heuristic: false
+      debug_visualizations: false
 
 smoother_server:
   ros__parameters:
