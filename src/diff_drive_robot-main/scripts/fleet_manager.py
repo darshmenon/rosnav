@@ -216,9 +216,8 @@ class FleetNode(Node):
 
     def cmd_stop(self, ns: str):
         self._send_vel(ns, 0.0, 0.0)
-        client = ActionClient(self, NavigateToPose, f'/{ns}/navigate_to_pose')
-        if client.wait_for_server(timeout_sec=1.0):
-            client.cancel_goal_async(None)
+        # Goal-handle based cancel is not possible without tracking the handle;
+        # zero-vel above halts the robot; use mission cancel to abort Nav2 goals.
         print(f'{ns} stopped.')
 
     def cmd_explore(self, ns: str):

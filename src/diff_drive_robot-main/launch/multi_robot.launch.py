@@ -290,10 +290,11 @@ def _build_all(context, pkg_share: str):
                 TimerAction(period=18.0, actions=[explorer]),
             ]
         elif explore:
-            # Other robots in explore mode: need AMCL to localise on SLAM map
+            # Other robots in explore mode: need AMCL to localise on SLAM map.
+            # SLAM starts at 6s; give it 7s to publish /map before AMCL starts.
             per_robot += [
-                TimerAction(period=10.0, actions=[amcl_node, amcl_lc, nav2]),
-                TimerAction(period=18.0, actions=[explorer]),
+                TimerAction(period=13.0, actions=[amcl_node, amcl_lc, nav2]),
+                TimerAction(period=20.0, actions=[explorer]),
             ]
         else:
             # Pre-built map mode: all robots use AMCL

@@ -147,7 +147,7 @@ class FleetHealthMonitor(Node):
     def _tick(self):
         self._discover()
 
-        nodes = set(self.get_node_names())
+        node_ns_pairs = self.get_node_names_and_namespaces()
 
         with self._lock:
             robots = sorted(self._known_robots)
@@ -156,7 +156,10 @@ class FleetHealthMonitor(Node):
             for ns in robots:
                 odom_hz = self._odom_rates[ns].hz
                 scan_hz = self._scan_rates[ns].hz
-                nav2_ok = any('bt_navigator' in n for n in nodes)
+                nav2_ok = any(
+                    name == 'bt_navigator' and namespace.rstrip('/') == f'/{ns}'
+                    for name, namespace in node_ns_pairs
+                )
                 mission = self._mission_states.get(ns, 'UNKNOWN')
                 col     = self._collision_states.get(ns, {})
                 col_state = col.get('state', 'UNKNOWN')

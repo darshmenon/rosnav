@@ -135,16 +135,15 @@ def _build_runtime_actions(context, pkg_share: str):
         ],
     )
 
-    # Patch the BT path placeholder before passing params to nav2
+    # Patch the BT path placeholder before passing params to nav2.
+    # Use a fixed path so repeated launches overwrite rather than accumulate files.
     _raw_params = os.path.join(pkg_share, 'config', _NAV2_PARAMS)
-    import tempfile, re as _re
+    import re as _re
     with open(_raw_params) as _f:
         _patched = _re.sub(r'replace_with_pkg_share', pkg_share.replace('\\', '/'), _f.read())
-    _tmp_params = tempfile.NamedTemporaryFile(
-        mode='w', suffix='_nav2_patched.yaml', delete=False, prefix='diff_drive_')
-    _tmp_params.write(_patched)
-    _tmp_params.close()
-    _params_file = _tmp_params.name
+    _params_file = f'/tmp/diff_drive_nav2_patched_{os.getpid()}.yaml'
+    with open(_params_file, 'w') as _f:
+        _f.write(_patched)
 
     nav2 = TimerAction(
         period=8.0,

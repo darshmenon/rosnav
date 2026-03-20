@@ -128,7 +128,7 @@ class ObstacleTracker(Node):
                 continue
 
             closing_speed = (r_prev - r_now) / dt   # positive = approaching
-            if closing_speed < self._min_speed:
+            if closing_speed <= self._min_speed:
                 continue
 
             angle = curr.angle_min + i * curr.angle_increment
