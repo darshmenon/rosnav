@@ -26,7 +26,6 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from launch_ros.parameter_descriptions import ParameterFile
 
 ROS_DISTRO = os.environ.get('ROS_DISTRO', 'humble')
 _NAV2_PARAMS = 'nav2_params_jazzy.yaml' if ROS_DISTRO == 'jazzy' else 'nav2_params.yaml'
@@ -137,8 +136,7 @@ def _build_runtime_actions(context, pkg_share: str):
     )
 
     # Patch the BT path placeholder before passing params to nav2
-    _raw_params  = os.path.join(pkg_share, 'config', _NAV2_PARAMS)
-    _bt_xml_path = os.path.join(pkg_share, 'config', 'bt', 'navigate_w_recovery.xml')
+    _raw_params = os.path.join(pkg_share, 'config', _NAV2_PARAMS)
     import tempfile, re as _re
     with open(_raw_params) as _f:
         _patched = _re.sub(r'replace_with_pkg_share', pkg_share.replace('\\', '/'), _f.read())

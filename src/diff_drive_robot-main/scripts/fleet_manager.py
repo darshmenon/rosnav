@@ -543,6 +543,9 @@ def main():
             sys.exit(1)
         node.cmd_tasks(args[1], args[2:])
 
+    elif cmd == 'health':
+        node.cmd_health()
+
     else:
         print(f'Unknown command: {cmd}')
         _usage()
