@@ -44,6 +44,9 @@ Nav2 plugin naming differs between distros. **The launch files detect `$ROS_DIST
 - **Custom Behavior Tree** — backup→spin→clear→wait recovery (replaces Nav2 default BT)
 - **Coverage Path Planner** — boustrophedon lawnmower sweep over any map
 - **Task Allocator** — multi-robot nearest-idle-robot task queue with automatic assignment
+- **Dynamic Obstacle Tracker** — detects and tracks moving obstacles from consecutive LaserScan frames; publishes MarkerArray + JSON state
+- **Fleet Health Monitor** — per-robot odom/scan Hz, Nav2 node presence, collision and mission state; publishes `/fleet/health` at 1 Hz
+- **Smac Hybrid-A\* Planner** — replaces NavFn; Reeds-Shepp motion model for smooth, kinematically-feasible paths
 
 ---
 
@@ -176,6 +179,7 @@ ros2 run diff_drive_robot fleet_manager.py mission robot1 goto 3.0 -1.0 45
 ros2 run diff_drive_robot fleet_manager.py mission robot1 status
 ros2 run diff_drive_robot fleet_manager.py mission robot1 cancel
 ros2 run diff_drive_robot fleet_manager.py collision robot1  # safety state
+ros2 run diff_drive_robot fleet_manager.py health            # per-robot health
 ```
 
 ### Mode 7 — 3-Tier Autonomy Stack (Mission + Safety)
@@ -238,6 +242,29 @@ ros2 run diff_drive_robot fleet_manager.py tasks add 2.0 1.5 0 pickup_A
 ros2 run diff_drive_robot fleet_manager.py tasks add 4.0 -1.0 90 dock_B
 ros2 run diff_drive_robot fleet_manager.py tasks status
 ```
+
+### Mode 11 — Dynamic Obstacle Tracker
+```bash
+ros2 run diff_drive_robot obstacle_tracker.py
+# Visualise in RViz: add MarkerArray on /obstacle_tracker/markers
+# Raw JSON state:
+ros2 topic echo /obstacle_tracker/state
+```
+Detects moving obstacles by comparing consecutive LaserScan frames.
+Clusters closing range rays via single-linkage and transforms them to the map frame.
+Tunable params: `lookback` (frames to compare, default 3), `delta_threshold` (m, default 0.05), `cluster_dist` (m, default 0.3).
+
+### Mode 12 — Fleet Health Monitor
+```bash
+ros2 run diff_drive_robot fleet_health.py
+# Live health dashboard:
+ros2 topic echo /fleet/health
+# Or via fleet CLI:
+ros2 run diff_drive_robot fleet_manager.py health
+```
+Tracks per-robot odom/scan publish rate (Hz), Nav2 node presence, collision monitor state, and mission state.
+Reports `ERROR` if Hz = 0, `WARN` if below threshold or Nav2 is down, `OK` otherwise.
+Publishes a JSON summary to `/fleet/health` once per second.
 
 ### Mode 8 — Multi-robot keyboard teleop
 ```bash
@@ -305,6 +332,7 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 | Symptom | Fix |
 |---|---|
 | `FATAL: plugin X does not exist` | Wrong distro params — check `$ROS_DISTRO` is sourced correctly |
+| Planner fails / `SmacPlannerHybrid` not found | Install: `sudo apt install ros-$ROS_DISTRO-nav2-smac-planner` |
 | Map not saving correctly | Ensure `explore:=true` is set. Maps save to `src/diff_drive_robot-main/maps/` |
 | Frontier says `No frontiers` repeatedly | Check SLAM logs for `TF_OLD_DATA` / dropped scans and kill stale Gazebo/ROS processes before relaunch |
 | Robot not moving | Run `ros2 topic hz /cmd_vel` — if 0, Nav2 lifecycle failed; check node list |
