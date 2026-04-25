@@ -4,6 +4,7 @@ from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogI
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from ament_index_python.packages import get_package_share_directory
+from nav2_common.launch import RewrittenYaml
 
 ROS_DISTRO = os.environ.get('ROS_DISTRO', 'humble')
 _NAV2_PARAMS = 'nav2_params_jazzy.yaml' if ROS_DISTRO == 'jazzy' else 'nav2_params.yaml'
@@ -35,10 +36,18 @@ def _build_nav2_action(context, pkg_share: str, home: str):
     map_arg = LaunchConfiguration('map').perform(context).strip()
     use_sim_time = LaunchConfiguration('use_sim_time').perform(context)
     map_file = _resolve_map_file(map_arg, world_path, home, pkg_share)
-    params_file = os.path.join(pkg_share, 'config', _NAV2_PARAMS)
+    raw_params = os.path.join(pkg_share, 'config', _NAV2_PARAMS)
+    bt_xml = os.path.join(pkg_share, 'config', 'bt', 'navigate_w_recovery.xml')
+
+    params_file = RewrittenYaml(
+        source_file=raw_params,
+        root_key='',
+        param_rewrites={'default_nav_to_pose_bt_xml': bt_xml},
+        convert_types=True,
+    ).perform(context)
 
     return [
-        LogInfo(msg=f'[nav2.launch] ROS_DISTRO={ROS_DISTRO}, params={os.path.basename(params_file)}'),
+        LogInfo(msg=f'[nav2.launch] ROS_DISTRO={ROS_DISTRO}, params={os.path.basename(raw_params)}'),
         LogInfo(msg=f'[nav2.launch] using map={map_file}'),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(

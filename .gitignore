@@ -20,3 +20,6 @@ __pycache__/
 # OS
 .DS_Store
 *.swp
+
+# Resume
+resume.md

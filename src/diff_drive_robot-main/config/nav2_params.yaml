@@ -52,7 +52,7 @@ bt_navigator:
       plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
     navigate_through_poses:
       plugin: "nav2_bt_navigator::NavigateThroughPosesNavigator"
-    # Custom BT with aggressive backup→spin→clear→wait recovery sequence.
+    # Custom BT — path is substituted at launch time by nav2.launch.py via RewrittenYaml.
     # Set to "" to revert to Nav2's built-in default BT.
     default_nav_to_pose_bt_xml: "replace_with_pkg_share/config/bt/navigate_w_recovery.xml"
 
