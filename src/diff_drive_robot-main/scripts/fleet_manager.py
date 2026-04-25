@@ -9,15 +9,18 @@ Commands
   add <ns> <x> <y>   Dynamically spawn a robot into a running simulation
   remove <ns>    Kill a robot's Nav2 stack (Gazebo entity stays)
   teleop <ns>    Interactive keyboard control for one robot
-  goto <ns> <x> <y> [yaw]   Send a navigation goal
+  goto <ns> <location>       Send a navigation goal by location name
+  goto <ns> <x> <y> [yaw]   Send a navigation goal by coordinates
   explore <ns>   Start frontier exploration on a robot
   stop <ns>      Stop navigation / teleop for a robot
   savemap [path] Save the current SLAM map
-  mission <ns> patrol x1,y1[,yaw] x2,y2[,yaw] …   Loop through waypoints
-  mission <ns> sequence x1,y1[,yaw] …               Visit once in order
-  mission <ns> goto <x> <y> [yaw]                   Single-pose mission
-  mission <ns> status                                Show mission state
-  mission <ns> cancel                                Cancel active mission
+  locations      List all named locations from locations.yaml
+  mission <ns> patrol <loc_or_wp> …   Loop through waypoints/locations
+  mission <ns> sequence <loc_or_wp> … Visit once in order
+  mission <ns> goto <location>        Single named-location mission
+  mission <ns> goto <x> <y> [yaw]    Single-pose mission
+  mission <ns> status                 Show mission state
+  mission <ns> cancel                 Cancel active mission
   collision <ns>  Show collision monitor state for a robot
   tasks add <x> <y> <yaw> [label]   Add a task to the shared queue
   tasks status                       Show task queue and robot states
@@ -28,18 +31,19 @@ Commands
 Usage
 ─────
   ros2 run diff_drive_robot fleet_manager.py list
-  ros2 run diff_drive_robot fleet_manager.py add robot3 1.0 2.0
-  ros2 run diff_drive_robot fleet_manager.py teleop robot1
+  ros2 run diff_drive_robot fleet_manager.py locations
+  ros2 run diff_drive_robot fleet_manager.py goto robot1 room_a
   ros2 run diff_drive_robot fleet_manager.py goto robot2 3.0 -1.0
-  ros2 run diff_drive_robot fleet_manager.py savemap /tmp/my_map
-  ros2 run diff_drive_robot fleet_manager.py explore robot2
+  ros2 run diff_drive_robot fleet_manager.py mission robot1 patrol room_a room_b room_c
   ros2 run diff_drive_robot fleet_manager.py mission robot1 patrol 1,2,0 3,4,90
+  ros2 run diff_drive_robot fleet_manager.py mission robot1 goto charging_dock
   ros2 run diff_drive_robot fleet_manager.py mission robot1 status
   ros2 run diff_drive_robot fleet_manager.py collision robot1
 """
 
 import json
 import math
+import os
 import subprocess
 import sys
 import termios
@@ -56,11 +60,49 @@ from rclpy.qos import QoSProfile, QoSDurabilityPolicy
 from nav2_msgs.action import NavigateToPose
 from std_msgs.msg import String
 
+try:
+    import yaml
+    HAS_YAML = True
+except ImportError:
+    HAS_YAML = False
+
 # ─────────────────────────────────────────────────────────────────────────────
 LINEAR_SPEED  = 0.22
 ANGULAR_SPEED = 1.0
 STOP_TIMEOUT  = 0.3
 PKG = 'diff_drive_robot'
+
+
+# ── Location helpers ──────────────────────────────────────────────────────────
+
+def _load_locations() -> dict:
+    if not HAS_YAML:
+        return {}
+    try:
+        from ament_index_python.packages import get_package_share_directory
+        share = get_package_share_directory(PKG)
+    except Exception:
+        share = os.path.join(
+            os.path.expanduser('~'), 'rosnav', 'src', 'diff_drive_robot-main')
+    candidates = [
+        os.path.join(share, 'config', 'locations.yaml'),
+        os.path.join(os.path.expanduser('~'), 'rosnav', 'locations.yaml'),
+    ]
+    for p in candidates:
+        if os.path.isfile(p):
+            with open(p) as f:
+                data = yaml.safe_load(f) or {}
+            return data.get('locations', {})
+    return {}
+
+
+def _resolve_location(arg: str, locations: dict) -> tuple[float, float, float]:
+    """Return (x, y, yaw_rad) from a location name."""
+    if arg not in locations:
+        known = list(locations)
+        raise KeyError(f'Unknown location: {arg!r}. Known: {known}')
+    coords = locations[arg]
+    return float(coords[0]), float(coords[1]), math.radians(float(coords[2]) if len(coords) > 2 else 0.0)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -276,18 +318,42 @@ class FleetNode(Node):
             payload = {'type': 'patrol', 'action': 'cancel', 'robot': ns, 'waypoints': []}
 
         elif sub in ('patrol', 'sequence'):
-            wps = [[float(v) for v in w.split(',')] for w in extra]
+            locations = _load_locations()
+            wps = []
+            for w in extra:
+                if ',' in w:
+                    wps.append([float(v) for v in w.split(',')])
+                elif w in locations:
+                    wps.append(w)   # pass name; mission_server resolves it
+                else:
+                    print(f'Unknown location: {w!r}. Known: {list(locations)}')
+                    return
             payload = {'type': sub, 'robot': ns, 'waypoints': wps}
 
         elif sub == 'goto':
-            if len(extra) < 2:
-                print('Usage: mission <ns> goto <x> <y> [yaw_deg]')
+            if not extra:
+                print('Usage: mission <ns> goto <location>|<x> <y> [yaw_deg]')
                 return
-            yaw = float(extra[2]) if len(extra) > 2 else 0.0
+            locations = _load_locations()
+            try:
+                float(extra[0])
+                is_numeric = True
+            except ValueError:
+                is_numeric = False
+            if is_numeric:
+                if len(extra) < 2:
+                    print('Usage: mission <ns> goto <x> <y> [yaw_deg]')
+                    return
+                yaw  = float(extra[2]) if len(extra) > 2 else 0.0
+                pose = [float(extra[0]), float(extra[1]), yaw]
+            else:
+                if extra[0] not in locations:
+                    print(f'Unknown location: {extra[0]!r}. Known: {list(locations)}')
+                    return
+                pose = list(locations[extra[0]])
             payload = {
                 'type': 'goto', 'robot': ns,
-                'pose': [float(extra[0]), float(extra[1]), yaw],
-                'waypoints': [],
+                'pose': pose, 'waypoints': [],
             }
         else:
             print(f'Unknown mission sub-command: {sub}')
@@ -493,12 +559,40 @@ def main():
             sys.exit(1)
         node.cmd_teleop(args[1])
 
+    elif cmd == 'locations':
+        locs = _load_locations()
+        if not locs:
+            print('No locations.yaml found.')
+        else:
+            print('\n── Known Locations ───────────────────────')
+            for name, coords in locs.items():
+                print(f'  {name:<18} {coords}')
+            print('──────────────────────────────────────────\n')
+
     elif cmd == 'goto':
-        if len(args) < 4:
-            print('Usage: fleet_manager.py goto <namespace> <x> <y> [yaw_deg]')
+        if len(args) < 3:
+            print('Usage: fleet_manager.py goto <namespace> <location>|<x> <y> [yaw_deg]')
             sys.exit(1)
-        yaw = math.radians(float(args[4])) if len(args) > 4 else 0.0
-        node.cmd_goto(args[1], float(args[2]), float(args[3]), yaw)
+        ns = args[1]
+        try:
+            float(args[2])
+            is_numeric = True
+        except ValueError:
+            is_numeric = False
+        if is_numeric:
+            if len(args) < 4:
+                print('Usage: fleet_manager.py goto <namespace> <x> <y> [yaw_deg]')
+                sys.exit(1)
+            yaw = math.radians(float(args[4])) if len(args) > 4 else 0.0
+            node.cmd_goto(ns, float(args[2]), float(args[3]), yaw)
+        else:
+            locs = _load_locations()
+            try:
+                x, y, yaw = _resolve_location(args[2], locs)
+            except KeyError as e:
+                print(e)
+                sys.exit(1)
+            node.cmd_goto(ns, x, y, yaw)
 
     elif cmd == 'stop':
         if len(args) < 2:

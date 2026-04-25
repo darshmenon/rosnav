@@ -1,0 +1,14 @@
+# Named locations for semantic navigation.
+# Format:  name: [x, y, yaw_degrees]
+# Usage:
+#   fleet_manager.py goto robot1 room_a
+#   mission_server.py goto robot1 charging_dock
+#   waypoints.yaml:  waypoints: [room_a, hallway, room_b]
+
+locations:
+  origin:        [ 0.0,   0.0,   0.0]
+  room_a:        [ 2.5,   0.0,   0.0]
+  room_b:        [ 2.5,   2.5,  90.0]
+  room_c:        [ 0.0,   2.5, 180.0]
+  hallway:       [ 1.25,  1.25, 45.0]
+  charging_dock: [-1.0,   0.0, 180.0]

@@ -2,22 +2,35 @@
 """
 Waypoint follower using Nav2's FollowWaypoints action.
 
-Waypoints are loaded from a YAML file (default: ~/rosnav/waypoints.yaml).
-Override the file at runtime:
-  ros2 run diff_drive_robot waypoint_nav.py --ros-args \
+Waypoints are loaded from a YAML file.  The default path is
+<package_share>/config/waypoints.yaml (falls back to ~/rosnav/waypoints.yaml).
+Override at runtime:
+  ros2 run diff_drive_robot waypoint_nav.py --ros-args \\
       -p waypoints_file:=/path/to/waypoints.yaml
 
-Waypoints YAML format:
+Waypoints YAML — two supported formats:
+
+  # Raw coordinates
   waypoints:
     - [x, y, yaw_degrees]
     - [2.0, 0.0, 0.0]
-    - [2.0, 2.0, 90.0]
+
+  # Named locations (resolved from locations.yaml)
+  waypoints:
+    - room_a
+    - hallway
+    - room_b
+
+  # Mixed
+  waypoints:
+    - room_a
+    - [2.0, 0.0, 0.0]
 
 If the file is not found, a built-in default square route is used.
 """
 
-import os
 import math
+import os
 
 import rclpy
 from rclpy.node import Node
@@ -33,13 +46,71 @@ try:
 except ImportError:
     HAS_YAML = False
 
-# Default route used when no file is provided / file not found
 DEFAULT_WAYPOINTS = [
     (2.0,  0.0,   0.0),
     (2.0,  2.0,  90.0),
     (0.0,  2.0, 180.0),
     (0.0,  0.0, -90.0),
 ]
+
+
+def _pkg_share() -> str:
+    try:
+        from ament_index_python.packages import get_package_share_directory
+        return get_package_share_directory('diff_drive_robot')
+    except Exception:
+        return os.path.join(
+            os.path.expanduser('~'), 'rosnav', 'src', 'diff_drive_robot-main')
+
+
+def _default_waypoints_path() -> str:
+    return os.path.join(_pkg_share(), 'config', 'waypoints.yaml')
+
+
+def _load_locations(share: str) -> dict:
+    if not HAS_YAML:
+        return {}
+    candidates = [
+        os.path.join(share, 'config', 'locations.yaml'),
+        os.path.join(os.path.expanduser('~'), 'rosnav', 'locations.yaml'),
+    ]
+    for p in candidates:
+        if os.path.isfile(p):
+            with open(p) as f:
+                data = yaml.safe_load(f) or {}
+            return data.get('locations', {})
+    return {}
+
+
+def load_waypoints(path: str) -> list[tuple]:
+    if not HAS_YAML or not os.path.isfile(path):
+        return DEFAULT_WAYPOINTS
+
+    with open(path) as f:
+        data = yaml.safe_load(f)
+
+    raw = data.get('waypoints', [])
+    if not raw:
+        return DEFAULT_WAYPOINTS
+
+    share     = _pkg_share()
+    locations = _load_locations(share)
+    result    = []
+
+    for wp in raw:
+        if isinstance(wp, str):
+            if wp not in locations:
+                raise ValueError(
+                    f'Unknown location name {wp!r} in {path}. '
+                    f'Known: {list(locations)}')
+            coords = locations[wp]
+            result.append((float(coords[0]), float(coords[1]),
+                           float(coords[2]) if len(coords) > 2 else 0.0))
+        else:
+            result.append((float(wp[0]), float(wp[1]),
+                           float(wp[2]) if len(wp) > 2 else 0.0))
+
+    return result or DEFAULT_WAYPOINTS
 
 
 def make_pose(x: float, y: float, yaw_deg: float, stamp) -> PoseStamped:
@@ -54,24 +125,11 @@ def make_pose(x: float, y: float, yaw_deg: float, stamp) -> PoseStamped:
     return pose
 
 
-def load_waypoints(path: str) -> list[tuple]:
-    if not HAS_YAML:
-        return DEFAULT_WAYPOINTS
-    if not os.path.isfile(path):
-        return DEFAULT_WAYPOINTS
-    with open(path) as f:
-        data = yaml.safe_load(f)
-    raw = data.get('waypoints', [])
-    return [(float(wp[0]), float(wp[1]), float(wp[2])) for wp in raw] or DEFAULT_WAYPOINTS
-
-
 class WaypointNavigator(Node):
     def __init__(self):
         super().__init__('waypoint_navigator')
 
-        self.declare_parameter(
-            'waypoints_file',
-            os.path.join(os.path.expanduser('~'), 'rosnav', 'waypoints.yaml'))
+        self.declare_parameter('waypoints_file', _default_waypoints_path())
         self.declare_parameter('frame_id', 'map')
         self.declare_parameter('action_name', 'follow_waypoints')
 
