@@ -7,6 +7,8 @@
 
 Autonomous robot navigation using **Nav2**, **SLAM Toolbox**, and **Gazebo Harmonic**. Includes frontier-based exploration, waypoint following, multi-robot support, and 2D LiDAR. Works on **ROS 2 Humble and Jazzy** — distro is detected automatically at launch.
 
+Maintained on GitHub by **@darshmenon**.
+
 ![alt text](images/nav2spedup-ezgif.com-video-to-gif-converter.gif)
 ![alt text](images/map_demo.png)
 
