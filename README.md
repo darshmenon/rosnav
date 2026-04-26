@@ -32,6 +32,7 @@ Nav2 plugin naming differs between distros. **The launch files detect `$ROS_DIST
 - **Frontier exploration** — robot autonomously explores unknown areas
 - **Nav2 full stack** — MPPI controller, planner, recovery, behaviours
 - **Multi-robot (scalable)** — N robots sharing one SLAM-built map; add robots by editing one list
+- **Coordinated frontier exploration** — single coordinator assigns each robot a unique frontier; no duplicate effort across the fleet
 - **Waypoint following** — navigate a sequence of poses
 - **2D LiDAR** — native LaserScan (`gpu_lidar`), no conversion needed for Nav2/SLAM
 - **Fleet GUI** — Tkinter dashboard: click-to-navigate on map, teleop sliders, spawn/save
@@ -114,20 +115,24 @@ ros2 launch diff_drive_robot robot.launch.py world:=/full/path/to/maze.world
 ```
 
 ### Mode 4 — Multi-Robot Navigation (Scalable)
-Launch N robots in the maze, sharing a SLAM-built map. Each robot runs its own
-frontier explorer independently. Default is SLAM + exploration in the maze world:
+Launch N robots sharing a single SLAM-built map. A centralized **frontier coordinator**
+assigns each robot a unique frontier — no two robots ever explore the same area.
+
 ```bash
-# SLAM + frontier exploration (default — no pre-built map needed)
+# SLAM + coordinated frontier exploration (default — no pre-built map needed)
 ros2 launch diff_drive_robot multi_robot.launch.py
 
-# Pre-built map mode
+# Pre-built map mode (no exploration)
 ros2 launch diff_drive_robot multi_robot.launch.py explore:=false
 
-# Different world with pre-built map
-ros2 launch diff_drive_robot multi_robot.launch.py world:=obstacles explore:=false
+# Different world
+ros2 launch diff_drive_robot multi_robot.launch.py world:=warehouse
+
+# Different world, pre-built map
+ros2 launch diff_drive_robot multi_robot.launch.py world:=warehouse explore:=false
 ```
 
-To add more robots, edit the `ROBOTS` list in `multi_robot.launch.py` — no other files change:
+To add more robots, edit only the `ROBOTS` list in `multi_robot.launch.py`:
 ```python
 ROBOTS = [
     {'name': 'robot1', 'x': '-2.0', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
@@ -135,6 +140,13 @@ ROBOTS = [
     {'name': 'robot3', 'x':  '0.5', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
 ]
 ```
+The coordinator picks up the new robot automatically — no other files change.
+
+**How coordinated exploration works:**
+- `frontier_coordinator.py` starts as a single node at t=20s (after all Nav2 stacks are up)
+- It reads `/map`, finds all frontier clusters, and assigns the nearest unassigned frontier to each idle robot
+- When a robot reaches its frontier it is immediately assigned the next one
+- If a robot fails, the frontier is freed for another robot to retry
 
 ### 3D LiDAR Setup
 The robot URDF supports both 2D and 3D LiDARs. To use the 3D LiDAR:
@@ -266,7 +278,7 @@ Tracks per-robot odom/scan publish rate (Hz), Nav2 node presence, collision moni
 Reports `ERROR` if Hz = 0, `WARN` if below threshold or Nav2 is down, `OK` otherwise.
 Publishes a JSON summary to `/fleet/health` once per second.
 
-### Mode 8 — Multi-robot keyboard teleop
+### Mode 13 — Multi-robot keyboard teleop
 ```bash
 ros2 run diff_drive_robot multi_teleop.py
 # → interactive menu: select robot, WASD to drive, R to switch, N to spawn new
@@ -337,6 +349,8 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 | Frontier says `No frontiers` repeatedly | Check SLAM logs for `TF_OLD_DATA` / dropped scans and kill stale Gazebo/ROS processes before relaunch |
 | Robot not moving | Run `ros2 topic hz /cmd_vel` — if 0, Nav2 lifecycle failed; check node list |
 | Multi-robot robots not visible in Gazebo | Ensure you have sourced and rebuilt after the latest fixes (`colcon build --symlink-install`) |
+| Coordinator logs `goal rejected` immediately | Nav2 for that robot hasn't finished starting — coordinator will retry on next poll cycle (every 2s) |
+| All robots go to same area | Old per-robot `frontier_explorer` nodes still running — kill them; only `frontier_coordinator` should run |
 | Multi-robot TF errors | Confirm RSP `frame_prefix` fix is applied (`rsp.launch.py`). Run `ros2 run tf2_tools view_frames` to inspect the tree |
 | RViz GLSL errors | Cosmetic only, can be ignored |
 

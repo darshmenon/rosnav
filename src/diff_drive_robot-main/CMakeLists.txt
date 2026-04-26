@@ -27,6 +27,7 @@ install(
     scripts/task_allocator.py
     scripts/obstacle_tracker.py
     scripts/fleet_health.py
+    scripts/frontier_coordinator.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(

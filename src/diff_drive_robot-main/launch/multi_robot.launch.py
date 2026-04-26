@@ -11,7 +11,8 @@ Architecture
     - A single SLAM Toolbox instance (driven by robot1) builds the shared /map.
     - robot1 uses SLAM for localisation (no AMCL needed).
     - All other robots localise on that map via their own AMCL node.
-    - Each robot runs an independent frontier-explorer node.
+    - A single frontier_coordinator assigns unique frontiers to each robot —
+      no two robots ever target the same unexplored area.
     - Map is auto-saved when exploration finishes.
 
 • When explore:=false:
@@ -267,19 +268,6 @@ def _build_all(context, pkg_share: str):
                 'params_file': robot_params,
             }.items())
 
-        # Frontier explorer — independent per robot.
-        # Only robot1 triggers the final map save.
-        explorer = Node(
-            package='diff_drive_robot',
-            executable='frontier_explorer.py',
-            name='frontier_explorer',
-            namespace=ns,
-            output='screen',
-            parameters=[{
-                'base_frame': f'{ns}/base_link',
-                'map_save_path': map_prefix if idx == 0 else '',
-            }])
-
         # Assemble per-robot actions
         per_robot = [rsp, spawn, bridge]
 
@@ -287,14 +275,12 @@ def _build_all(context, pkg_share: str):
             # robot1 in explore mode: SLAM handles localisation
             per_robot += [
                 TimerAction(period=10.0, actions=[nav2]),
-                TimerAction(period=18.0, actions=[explorer]),
             ]
         elif explore:
             # Other robots in explore mode: need AMCL to localise on SLAM map.
             # SLAM starts at 6s; give it 7s to publish /map before AMCL starts.
             per_robot += [
                 TimerAction(period=13.0, actions=[amcl_node, amcl_lc, nav2]),
-                TimerAction(period=20.0, actions=[explorer]),
             ]
         else:
             # Pre-built map mode: all robots use AMCL
@@ -303,6 +289,24 @@ def _build_all(context, pkg_share: str):
             ]
 
         actions.append(GroupAction([PushRosNamespace(ns), *per_robot]))
+
+    # ── Centralized frontier coordinator (explore mode only) ──────────────────
+    if explore:
+        robot_ns_list = ','.join(r['name'] for r in ROBOTS)
+        # Start after all Nav2 stacks are up (robot1 at 10s, others at 13s)
+        actions.append(TimerAction(
+            period=20.0,
+            actions=[Node(
+                package='diff_drive_robot',
+                executable='frontier_coordinator.py',
+                name='frontier_coordinator',
+                output='screen',
+                parameters=[{
+                    'robot_namespaces': robot_ns_list,
+                    'map_save_path': map_prefix,
+                }])]))
+        actions.append(LogInfo(
+            msg=f'[multi_robot] frontier_coordinator will start at t=20s for {robot_ns_list}'))
 
     # ── RViz ─────────────────────────────────────────────────────────────────
     actions.append(GroupAction(
