@@ -114,6 +114,7 @@ def _build_all(context, pkg_share: str):
     world_arg    = LaunchConfiguration('world').perform(context).strip()
     explore      = LaunchConfiguration('explore').perform(context).strip().lower() in ('true', '1', 'yes')
     headless     = LaunchConfiguration('headless').perform(context).strip().lower() in ('true', '1', 'yes')
+    fleet_mgmt   = LaunchConfiguration('fleet_mgmt').perform(context).strip().lower() in ('true', '1', 'yes')
 
     nav2_bringup = get_package_share_directory('nav2_bringup')
     slam_pkg     = get_package_share_directory('slam_toolbox')
@@ -294,8 +295,8 @@ def _build_all(context, pkg_share: str):
         actions.append(GroupAction([PushRosNamespace(ns), *per_robot]))
 
     # ── Centralized frontier coordinator (explore mode only) ──────────────────
+    robot_ns_list = ','.join(r['name'] for r in ROBOTS)
     if explore:
-        robot_ns_list = ','.join(r['name'] for r in ROBOTS)
         # Start after all Nav2 stacks are up (robot1 at 10s, others at 13s)
         actions.append(TimerAction(
             period=20.0,
@@ -310,6 +311,27 @@ def _build_all(context, pkg_share: str):
                 }])]))
         actions.append(LogInfo(
             msg=f'[multi_robot] frontier_coordinator will start at t=20s for {robot_ns_list}'))
+
+    # ── Fleet management algorithms (optional) ────────────────────────────────
+    if fleet_mgmt:
+        actions.append(TimerAction(
+            period=15.0,
+            actions=[
+                Node(
+                    package='diff_drive_robot',
+                    executable='priority_collision_avoidance.py',
+                    name='priority_collision_avoidance',
+                    output='screen',
+                    parameters=[{'robot_namespaces': robot_ns_list}]),
+                Node(
+                    package='diff_drive_robot',
+                    executable='deadlock_recovery.py',
+                    name='deadlock_recovery',
+                    output='screen',
+                    parameters=[{'robot_namespaces': robot_ns_list}]),
+            ]))
+        actions.append(LogInfo(
+            msg=f'[multi_robot] fleet_mgmt nodes will start at t=15s for {robot_ns_list}'))
 
     # ── RViz ─────────────────────────────────────────────────────────────────
     if not headless:
@@ -342,5 +364,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'headless', default_value='false',
             description='true = Gazebo server only, no GUI or RViz'),
+        DeclareLaunchArgument(
+            'fleet_mgmt', default_value='false',
+            description='true = start priority collision avoidance + deadlock recovery nodes'),
         OpaqueFunction(function=_build_all, args=[pkg_share]),
     ])

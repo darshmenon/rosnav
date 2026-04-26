@@ -28,6 +28,8 @@ install(
     scripts/obstacle_tracker.py
     scripts/fleet_health.py
     scripts/frontier_coordinator.py
+    scripts/priority_collision_avoidance.py
+    scripts/deadlock_recovery.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(

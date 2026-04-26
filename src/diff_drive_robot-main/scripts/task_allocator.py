@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """
-task_allocator.py — Multi-robot task allocation via nearest-idle-robot auction.
+task_allocator.py — Multi-robot task allocation with Hungarian optimal assignment.
 
-Maintains a shared task queue.  When a robot becomes idle (mission_server
-reports DONE/FAILED/IDLE), the allocator assigns it the nearest pending task
-by Euclidean distance to the robot's current map position (from TF or odom).
+Maintains a shared task queue.  When one or more robots become idle, the
+allocator solves an optimal assignment problem (Hungarian / Munkres algorithm)
+that minimises total travel distance across all idle robots × pending tasks.
+
+With only one idle robot, this reduces to nearest-task selection.
+With N idle robots and M≥N tasks, it finds the globally optimal batch assignment.
 
 Topics
 ──────
@@ -45,7 +48,6 @@ Usage
 """
 
 import json
-import math
 import sys
 import threading
 import time
@@ -53,9 +55,66 @@ import uuid
 
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from std_msgs.msg import String
+
+
+# ── Pure-Python Hungarian algorithm (O(n³)) ──────────────────────────────────
+# Finds the minimum-cost assignment for an NxM cost matrix (N ≤ M).
+# Returns a list of (row, col) pairs — one per row — giving the optimal match.
+
+def _hungarian(cost: list[list[float]]) -> list[tuple[int, int]]:
+    n = len(cost)
+    m = len(cost[0])
+    INF = float('inf')
+
+    # Pad to square if needed
+    if n < m:
+        cost = [row[:] for row in cost] + [[INF] * m] * (m - n)
+    size = len(cost)
+
+    u = [0.0] * (size + 1)
+    v = [0.0] * (size + 1)
+    p = [0] * (size + 1)   # p[j] = row assigned to column j (1-indexed)
+    way = [0] * (size + 1)
+
+    for i in range(1, size + 1):
+        p[0] = i
+        j0 = 0
+        minv = [INF] * (size + 1)
+        used = [False] * (size + 1)
+        while True:
+            used[j0] = True
+            i0, delta, j1 = p[j0], INF, -1
+            for j in range(1, size + 1):
+                if not used[j]:
+                    cur = cost[i0 - 1][j - 1] - u[i0] - v[j]
+                    if cur < minv[j]:
+                        minv[j] = cur
+                        way[j] = j0
+                    if minv[j] < delta:
+                        delta, j1 = minv[j], j
+            for j in range(size + 1):
+                if used[j]:
+                    u[p[j]] += delta
+                    v[j] -= delta
+                else:
+                    minv[j] -= delta
+            j0 = j1
+            if p[j0] == 0:
+                break
+        while j0:
+            p[j0] = p[way[j0]]
+            j0 = way[j0]
+
+    # Extract assignments for original n rows only
+    result = []
+    for j in range(1, size + 1):
+        r = p[j] - 1  # 0-indexed row
+        c = j - 1     # 0-indexed col
+        if r < n and c < m and cost[r][c] < INF:
+            result.append((r, c))
+    return result
 
 PENDING  = 'pending'
 ASSIGNED = 'assigned'
@@ -196,30 +255,34 @@ class TaskAllocator(Node):
             if not idle_robots:
                 return
 
-            for robot in idle_robots:
-                if not pending:
-                    break
+            # Build cost matrix: rows = robots, cols = tasks (Euclidean distance)
+            cost = []
+            for ns in idle_robots:
+                rx, ry = self._robot_poses.get(ns, (0.0, 0.0))
+                row = [((t['x'] - rx) ** 2 + (t['y'] - ry) ** 2) ** 0.5
+                       for t in pending]
+                cost.append(row)
 
-                rx, ry = self._robot_poses.get(robot, (0.0, 0.0))
+            # Hungarian assignment minimises total distance
+            assignments = _hungarian(cost)
 
-                # Pick nearest pending task to this robot
-                best = min(pending,
-                           key=lambda t: (t['x'] - rx) ** 2 + (t['y'] - ry) ** 2)
+            for robot_idx, task_idx in assignments:
+                ns   = idle_robots[robot_idx]
+                best = pending[task_idx]
                 best['status'] = ASSIGNED
-                best['robot']  = robot
-                pending.remove(best)
+                best['robot']  = ns
 
                 payload = {
                     'type':      'goto',
-                    'robot':     robot,
+                    'robot':     ns,
                     'pose':      [best['x'], best['y'], best['yaw']],
                     'waypoints': [],
                 }
-                msg       = String()
-                msg.data  = json.dumps(payload)
+                msg      = String()
+                msg.data = json.dumps(payload)
                 self._mission_pub.publish(msg)
                 self.get_logger().info(
-                    f'Assigned task {best["id"]} → {robot}  '
+                    f'[hungarian] Assigned task {best["id"]} → {ns}  '
                     f'({best["x"]:.2f}, {best["y"]:.2f})')
 
     # ── State publisher ───────────────────────────────────────────────────────
