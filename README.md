@@ -291,8 +291,28 @@ ros2 run diff_drive_robot multi_teleop.py
 |---|---|---|
 | `maze` | Enclosed maze for exploration | `world:=maze` |
 | `obstacles` | Open field with barrels | `world:=obstacles` |
-| `warehouse` | 16×14m warehouse with shelf aisles | `world:=warehouse` |
+| `warehouse` | 24×20m warehouse — 5 double shelf-rows, loading dock, staging zone, pillars, pallet stacks | `world:=warehouse` |
+| `house` | 16×12m house — living room, kitchen, hallway, 2 bedrooms, bathroom, furniture | `world:=house` |
 | `corridor` | Narrow corridor with rooms | `world:=corridor` |
+
+All worlds use only SDF primitives — no external model downloads, instant load.
+
+#### Single-robot in any world
+```bash
+# Explore + SLAM
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=warehouse explore:=true
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=house explore:=true
+
+# Pre-built map (after saving one)
+ros2 launch diff_drive_robot robot.launch.py world:=/full/path/to/warehouse.world
+```
+
+#### Multi-robot in any world
+```bash
+ros2 launch diff_drive_robot multi_robot.launch.py world:=warehouse
+ros2 launch diff_drive_robot multi_robot.launch.py world:=house
+ros2 launch diff_drive_robot multi_robot.launch.py world:=corridor explore:=false
+```
 
 ### Verify multi-robot
 ```bash

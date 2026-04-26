@@ -1,12 +1,19 @@
 <?xml version="1.0" ?>
 <!--
-  warehouse.world — A simple warehouse environment for multi-robot testing.
-  - 16 m × 14 m rectangular floor
-  - Three aisles separated by box-stack shelves
-  - No Fuel model downloads — all primitives, loads instantly
+  warehouse.world — Large warehouse environment for multi-robot fleet testing.
+  All primitives: loads instantly, no external model downloads required.
 
-  Spawn robots in the open area (x: -6 to -3, y: -5 to 5)
-  Goal areas are in the aisles (x: 2 to 7)
+  Layout (24 m × 20 m):
+    Staging / spawn zone  :  x = -11 to -4,  y = -8 to 8  (western open area)
+    Separator wall        :  x = -3            (with 2 m gap at y = 0 for passage)
+    Storage zone          :  x = -2  to 11,   y = -8 to 8
+      - 4 double shelf-rows (each pair separated by 1 m pick-aisle)
+      - 3 m drive-aisles between row-pairs
+      - 3 shelf segments per row (3 m each, 0.5 m gap between)
+      - Support pillars at x = 0, 4, 8   along y = ±3
+
+  Robot spawn area:  x = -9 to -5,  y = -6 to 6
+  Loading dock:      x = 10 to 11,  y = -4 to 4
 
   Launch:
     ros2 launch diff_drive_robot multi_robot.launch.py world:=warehouse
@@ -32,135 +39,281 @@
     <plugin filename="ignition-gazebo-contact-system"
             name="ignition::gazebo::systems::Contact"/>
 
+    <!-- Overhead lighting -->
     <light name='sun' type='directional'>
-      <pose>0 0 15 0 0 0</pose>
+      <pose>0 0 20 0 0 0</pose>
       <cast_shadows>true</cast_shadows>
       <intensity>1</intensity>
-      <direction>-0.5 0.1 -0.9</direction>
-      <diffuse>0.9 0.9 0.9 1</diffuse>
+      <direction>-0.2 0.1 -0.9</direction>
+      <diffuse>1.0 0.98 0.95 1</diffuse>
       <specular>0.3 0.3 0.3 1</specular>
     </light>
+    <light name='light_west' type='point'>
+      <pose>-7 0 4 0 0 0</pose>
+      <diffuse>0.8 0.8 0.9 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>15</range><linear>0.05</linear></attenuation>
+    </light>
+    <light name='light_east' type='point'>
+      <pose>5 0 4 0 0 0</pose>
+      <diffuse>0.8 0.8 0.9 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>15</range><linear>0.05</linear></attenuation>
+    </light>
 
-    <!-- ── Ground plane ──────────────────────────────────────── -->
+    <!-- ── Ground plane ──────────────────────────────────────────────────── -->
     <model name='ground_plane'>
       <static>true</static>
       <link name='link'>
-        <collision name='collision'>
+        <collision name='c'>
           <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
         </collision>
-        <visual name='visual'>
+        <visual name='v'>
           <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
-          <material>
-            <ambient>0.7 0.7 0.7 1</ambient>
-            <diffuse>0.7 0.7 0.7 1</diffuse>
-          </material>
+          <material><ambient>0.72 0.72 0.72 1</ambient><diffuse>0.72 0.72 0.72 1</diffuse></material>
         </visual>
       </link>
     </model>
 
-    <!-- ── Outer walls (16 m × 14 m) ────────────────────────── -->
+    <!-- ── Floor zone markers (flat coloured pads, h=0.005 m) ───────────── -->
+    <!-- Staging zone: light blue -->
+    <model name='zone_staging'>
+      <static>true</static><pose>-7.5 0 0.003 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>7 16 0.005</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>7 16 0.005</size></box></geometry>
+          <material><ambient>0.55 0.75 0.95 0.6</ambient><diffuse>0.55 0.75 0.95 0.6</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <!-- Storage zone: light warm grey -->
+    <model name='zone_storage'>
+      <static>true</static><pose>4.5 0 0.003 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>13 16 0.005</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>13 16 0.005</size></box></geometry>
+          <material><ambient>0.88 0.85 0.80 0.6</ambient><diffuse>0.88 0.85 0.80 0.6</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <!-- Loading dock: yellow -->
+    <model name='zone_dock'>
+      <static>true</static><pose>10.5 0 0.003 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>1.5 8 0.005</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>1.5 8 0.005</size></box></geometry>
+          <material><ambient>0.95 0.85 0.1 0.7</ambient><diffuse>0.95 0.85 0.1 0.7</diffuse></material>
+        </visual>
+      </link>
+    </model>
 
+    <!-- ── Outer walls (24 m × 20 m, 3 m tall) ─────────────────────────── -->
     <!-- North wall -->
     <model name='wall_north'>
-      <static>true</static>
-      <pose>0 7 1 0 0 0</pose>
+      <static>true</static><pose>0 10 1.5 0 0 0</pose>
       <link name='link'>
-        <collision name='c'><geometry><box><size>16 0.2 2</size></box></geometry></collision>
-        <visual name='v'><geometry><box><size>16 0.2 2</size></box></geometry>
-          <material><ambient>0.6 0.5 0.4 1</ambient><diffuse>0.6 0.5 0.4 1</diffuse></material>
+        <collision name='c'><geometry><box><size>24.4 0.2 3</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>24.4 0.2 3</size></box></geometry>
+          <material><ambient>0.70 0.62 0.52 1</ambient><diffuse>0.70 0.62 0.52 1</diffuse></material>
         </visual>
       </link>
     </model>
-
     <!-- South wall -->
     <model name='wall_south'>
-      <static>true</static>
-      <pose>0 -7 1 0 0 0</pose>
+      <static>true</static><pose>0 -10 1.5 0 0 0</pose>
       <link name='link'>
-        <collision name='c'><geometry><box><size>16 0.2 2</size></box></geometry></collision>
-        <visual name='v'><geometry><box><size>16 0.2 2</size></box></geometry>
-          <material><ambient>0.6 0.5 0.4 1</ambient><diffuse>0.6 0.5 0.4 1</diffuse></material>
+        <collision name='c'><geometry><box><size>24.4 0.2 3</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>24.4 0.2 3</size></box></geometry>
+          <material><ambient>0.70 0.62 0.52 1</ambient><diffuse>0.70 0.62 0.52 1</diffuse></material>
         </visual>
       </link>
     </model>
-
     <!-- East wall -->
     <model name='wall_east'>
-      <static>true</static>
-      <pose>8 0 1 0 0 0</pose>
+      <static>true</static><pose>12 0 1.5 0 0 0</pose>
       <link name='link'>
-        <collision name='c'><geometry><box><size>0.2 14 2</size></box></geometry></collision>
-        <visual name='v'><geometry><box><size>0.2 14 2</size></box></geometry>
-          <material><ambient>0.6 0.5 0.4 1</ambient><diffuse>0.6 0.5 0.4 1</diffuse></material>
+        <collision name='c'><geometry><box><size>0.2 20 3</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>0.2 20 3</size></box></geometry>
+          <material><ambient>0.70 0.62 0.52 1</ambient><diffuse>0.70 0.62 0.52 1</diffuse></material>
         </visual>
       </link>
     </model>
-
     <!-- West wall -->
     <model name='wall_west'>
-      <static>true</static>
-      <pose>-8 0 1 0 0 0</pose>
+      <static>true</static><pose>-12 0 1.5 0 0 0</pose>
       <link name='link'>
-        <collision name='c'><geometry><box><size>0.2 14 2</size></box></geometry></collision>
-        <visual name='v'><geometry><box><size>0.2 14 2</size></box></geometry>
-          <material><ambient>0.6 0.5 0.4 1</ambient><diffuse>0.6 0.5 0.4 1</diffuse></material>
+        <collision name='c'><geometry><box><size>0.2 20 3</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>0.2 20 3</size></box></geometry>
+          <material><ambient>0.70 0.62 0.52 1</ambient><diffuse>0.70 0.62 0.52 1</diffuse></material>
         </visual>
       </link>
     </model>
 
-    <!-- ── Shelf rows (3 aisles) ─────────────────────────────── -->
-
-    <!-- Shelf row A — left side, from x=0 to x=6, at y=+4.5 -->
-    <model name='shelf_A1'>
-      <static>true</static><pose>2 4.5 0.6 0 0 0</pose>
+    <!-- ── Interior separator wall (x = -3, gap at y=0 ±1.2 m) ─────────── -->
+    <!-- North segment: y = 2 to 10 -->
+    <model name='sep_north'>
+      <static>true</static><pose>-3 6 1.25 0 0 0</pose>
       <link name='link'>
-        <collision name='c'><geometry><box><size>4 0.4 1.2</size></box></geometry></collision>
-        <visual name='v'><geometry><box><size>4 0.4 1.2</size></box></geometry>
-          <material><ambient>0.4 0.3 0.2 1</ambient><diffuse>0.4 0.3 0.2 1</diffuse></material>
+        <collision name='c'><geometry><box><size>0.2 8 2.5</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>0.2 8 2.5</size></box></geometry>
+          <material><ambient>0.60 0.60 0.60 1</ambient><diffuse>0.60 0.60 0.60 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <!-- South segment: y = -2 to -10 -->
+    <model name='sep_south'>
+      <static>true</static><pose>-3 -6 1.25 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>0.2 8 2.5</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>0.2 8 2.5</size></box></geometry>
+          <material><ambient>0.60 0.60 0.60 1</ambient><diffuse>0.60 0.60 0.60 1</diffuse></material>
         </visual>
       </link>
     </model>
 
-    <!-- Shelf row A — right side, at y=+1.5 -->
-    <model name='shelf_A2'>
-      <static>true</static><pose>2 1.5 0.6 0 0 0</pose>
+    <!-- ── Support pillars (x=0,4,8 at y=±6) ───────────────────────────── -->
+    <model name='pillar_A1'><static>true</static><pose>0  6 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.15</radius><length>3</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.15</radius><length>3</length></cylinder></geometry><material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material></visual></link></model>
+    <model name='pillar_A2'><static>true</static><pose>0 -6 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.15</radius><length>3</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.15</radius><length>3</length></cylinder></geometry><material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material></visual></link></model>
+    <model name='pillar_B1'><static>true</static><pose>4  6 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.15</radius><length>3</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.15</radius><length>3</length></cylinder></geometry><material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material></visual></link></model>
+    <model name='pillar_B2'><static>true</static><pose>4 -6 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.15</radius><length>3</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.15</radius><length>3</length></cylinder></geometry><material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material></visual></link></model>
+    <model name='pillar_C1'><static>true</static><pose>8  6 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.15</radius><length>3</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.15</radius><length>3</length></cylinder></geometry><material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material></visual></link></model>
+    <model name='pillar_C2'><static>true</static><pose>8 -6 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.15</radius><length>3</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.15</radius><length>3</length></cylinder></geometry><material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material></visual></link></model>
+
+    <!-- ── Shelf rows ────────────────────────────────────────────────────── -->
+    <!--
+      4 double shelf-rows, each pair:
+        front shelf  +  1 m pick-aisle  +  back shelf
+      3 m drive-aisle between pairs.
+
+      Row pair 1:  front y=+8.0,  back y=+7.0   (drive-aisle → y=+5.5)
+      Row pair 2:  front y=+4.5,  back y=+3.5   (drive-aisle → y=+2.0)
+      Row pair 3:  front y=+1.0,  back y=+0.0   (drive-aisle → y=-1.5)
+      Row pair 4:  front y=-3.0,  back y=-4.0   (drive-aisle → y=-5.5)
+      Row pair 5:  front y=-7.0,  back y=-8.0
+
+      Each shelf: 3 segments × 3 m (0.5 m gap between) at x=0, 3.5, 7
+      Shelf dimensions: 2.8 m long × 0.5 m deep × 1.6 m tall
+    -->
+
+    <!-- Shelf material macros (brown tones per row for visual variety) -->
+
+    <!-- ROW PAIR 1 — y=8.0 / 7.0 -->
+    <!-- front y=8.0 -->
+    <model name='sh_1f_1'><static>true</static><pose>0   8.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.45 0.30 0.18 1</ambient><diffuse>0.45 0.30 0.18 1</diffuse></material></visual></link></model>
+    <model name='sh_1f_2'><static>true</static><pose>3.5 8.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.45 0.30 0.18 1</ambient><diffuse>0.45 0.30 0.18 1</diffuse></material></visual></link></model>
+    <model name='sh_1f_3'><static>true</static><pose>7.0 8.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.45 0.30 0.18 1</ambient><diffuse>0.45 0.30 0.18 1</diffuse></material></visual></link></model>
+    <!-- back y=7.0 -->
+    <model name='sh_1b_1'><static>true</static><pose>0   7.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.45 0.30 0.18 1</ambient><diffuse>0.45 0.30 0.18 1</diffuse></material></visual></link></model>
+    <model name='sh_1b_2'><static>true</static><pose>3.5 7.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.45 0.30 0.18 1</ambient><diffuse>0.45 0.30 0.18 1</diffuse></material></visual></link></model>
+    <model name='sh_1b_3'><static>true</static><pose>7.0 7.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.45 0.30 0.18 1</ambient><diffuse>0.45 0.30 0.18 1</diffuse></material></visual></link></model>
+
+    <!-- ROW PAIR 2 — y=4.5 / 3.5 -->
+    <model name='sh_2f_1'><static>true</static><pose>0   4.5 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.30 0.40 0.22 1</ambient><diffuse>0.30 0.40 0.22 1</diffuse></material></visual></link></model>
+    <model name='sh_2f_2'><static>true</static><pose>3.5 4.5 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.30 0.40 0.22 1</ambient><diffuse>0.30 0.40 0.22 1</diffuse></material></visual></link></model>
+    <model name='sh_2f_3'><static>true</static><pose>7.0 4.5 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.30 0.40 0.22 1</ambient><diffuse>0.30 0.40 0.22 1</diffuse></material></visual></link></model>
+    <model name='sh_2b_1'><static>true</static><pose>0   3.5 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.30 0.40 0.22 1</ambient><diffuse>0.30 0.40 0.22 1</diffuse></material></visual></link></model>
+    <model name='sh_2b_2'><static>true</static><pose>3.5 3.5 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.30 0.40 0.22 1</ambient><diffuse>0.30 0.40 0.22 1</diffuse></material></visual></link></model>
+    <model name='sh_2b_3'><static>true</static><pose>7.0 3.5 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.30 0.40 0.22 1</ambient><diffuse>0.30 0.40 0.22 1</diffuse></material></visual></link></model>
+
+    <!-- ROW PAIR 3 — y=1.0 / 0.0 -->
+    <model name='sh_3f_1'><static>true</static><pose>0   1.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.22 0.32 0.45 1</ambient><diffuse>0.22 0.32 0.45 1</diffuse></material></visual></link></model>
+    <model name='sh_3f_2'><static>true</static><pose>3.5 1.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.22 0.32 0.45 1</ambient><diffuse>0.22 0.32 0.45 1</diffuse></material></visual></link></model>
+    <model name='sh_3f_3'><static>true</static><pose>7.0 1.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.22 0.32 0.45 1</ambient><diffuse>0.22 0.32 0.45 1</diffuse></material></visual></link></model>
+    <model name='sh_3b_1'><static>true</static><pose>0   0.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.22 0.32 0.45 1</ambient><diffuse>0.22 0.32 0.45 1</diffuse></material></visual></link></model>
+    <model name='sh_3b_2'><static>true</static><pose>3.5 0.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.22 0.32 0.45 1</ambient><diffuse>0.22 0.32 0.45 1</diffuse></material></visual></link></model>
+    <model name='sh_3b_3'><static>true</static><pose>7.0 0.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.22 0.32 0.45 1</ambient><diffuse>0.22 0.32 0.45 1</diffuse></material></visual></link></model>
+
+    <!-- ROW PAIR 4 — y=-3.0 / -4.0 -->
+    <model name='sh_4f_1'><static>true</static><pose>0  -3.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.42 0.28 0.38 1</ambient><diffuse>0.42 0.28 0.38 1</diffuse></material></visual></link></model>
+    <model name='sh_4f_2'><static>true</static><pose>3.5 -3.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.42 0.28 0.38 1</ambient><diffuse>0.42 0.28 0.38 1</diffuse></material></visual></link></model>
+    <model name='sh_4f_3'><static>true</static><pose>7.0 -3.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.42 0.28 0.38 1</ambient><diffuse>0.42 0.28 0.38 1</diffuse></material></visual></link></model>
+    <model name='sh_4b_1'><static>true</static><pose>0  -4.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.42 0.28 0.38 1</ambient><diffuse>0.42 0.28 0.38 1</diffuse></material></visual></link></model>
+    <model name='sh_4b_2'><static>true</static><pose>3.5 -4.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.42 0.28 0.38 1</ambient><diffuse>0.42 0.28 0.38 1</diffuse></material></visual></link></model>
+    <model name='sh_4b_3'><static>true</static><pose>7.0 -4.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.42 0.28 0.38 1</ambient><diffuse>0.42 0.28 0.38 1</diffuse></material></visual></link></model>
+
+    <!-- ROW PAIR 5 — y=-7.0 / -8.0 -->
+    <model name='sh_5f_1'><static>true</static><pose>0  -7.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.38 0.36 0.22 1</ambient><diffuse>0.38 0.36 0.22 1</diffuse></material></visual></link></model>
+    <model name='sh_5f_2'><static>true</static><pose>3.5 -7.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.38 0.36 0.22 1</ambient><diffuse>0.38 0.36 0.22 1</diffuse></material></visual></link></model>
+    <model name='sh_5f_3'><static>true</static><pose>7.0 -7.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.38 0.36 0.22 1</ambient><diffuse>0.38 0.36 0.22 1</diffuse></material></visual></link></model>
+    <model name='sh_5b_1'><static>true</static><pose>0  -8.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.38 0.36 0.22 1</ambient><diffuse>0.38 0.36 0.22 1</diffuse></material></visual></link></model>
+    <model name='sh_5b_2'><static>true</static><pose>3.5 -8.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.38 0.36 0.22 1</ambient><diffuse>0.38 0.36 0.22 1</diffuse></material></visual></link></model>
+    <model name='sh_5b_3'><static>true</static><pose>7.0 -8.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.38 0.36 0.22 1</ambient><diffuse>0.38 0.36 0.22 1</diffuse></material></visual></link></model>
+
+    <!-- ── Charging stations (NW + SW corners of staging zone) ──────────── -->
+    <model name='charger_nw'>
+      <static>true</static><pose>-10 7 0.3 0 0 0</pose>
       <link name='link'>
-        <collision name='c'><geometry><box><size>4 0.4 1.2</size></box></geometry></collision>
-        <visual name='v'><geometry><box><size>4 0.4 1.2</size></box></geometry>
-          <material><ambient>0.4 0.3 0.2 1</ambient><diffuse>0.4 0.3 0.2 1</diffuse></material>
+        <collision name='c'><geometry><box><size>0.6 0.4 0.6</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>0.6 0.4 0.6</size></box></geometry>
+          <material><ambient>0.1 0.6 0.2 1</ambient><diffuse>0.1 0.6 0.2 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name='charger_sw'>
+      <static>true</static><pose>-10 -7 0.3 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>0.6 0.4 0.6</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>0.6 0.4 0.6</size></box></geometry>
+          <material><ambient>0.1 0.6 0.2 1</ambient><diffuse>0.1 0.6 0.2 1</diffuse></material>
         </visual>
       </link>
     </model>
 
-    <!-- Shelf row B — at y=-1.5 -->
-    <model name='shelf_B1'>
-      <static>true</static><pose>2 -1.5 0.6 0 0 0</pose>
+    <!-- ── Workstation desk (staging zone, east side of staging) ─────────── -->
+    <model name='desk_1'>
+      <static>true</static><pose>-4.5 8 0.4 0 0 0</pose>
       <link name='link'>
-        <collision name='c'><geometry><box><size>4 0.4 1.2</size></box></geometry></collision>
-        <visual name='v'><geometry><box><size>4 0.4 1.2</size></box></geometry>
-          <material><ambient>0.3 0.4 0.2 1</ambient><diffuse>0.3 0.4 0.2 1</diffuse></material>
+        <collision name='c'><geometry><box><size>1.2 0.6 0.8</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>1.2 0.6 0.8</size></box></geometry>
+          <material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name='desk_2'>
+      <static>true</static><pose>-4.5 -8 0.4 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>1.2 0.6 0.8</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>1.2 0.6 0.8</size></box></geometry>
+          <material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material>
         </visual>
       </link>
     </model>
 
-    <!-- Shelf row B — at y=-4.5 -->
-    <model name='shelf_B2'>
-      <static>true</static><pose>2 -4.5 0.6 0 0 0</pose>
+    <!-- ── Pallet stacks near loading dock ───────────────────────────────── -->
+    <model name='pallet_1'>
+      <static>true</static><pose>9.5  3 0.1 0 0 0</pose>
       <link name='link'>
-        <collision name='c'><geometry><box><size>4 0.4 1.2</size></box></geometry></collision>
-        <visual name='v'><geometry><box><size>4 0.4 1.2</size></box></geometry>
-          <material><ambient>0.3 0.4 0.2 1</ambient><diffuse>0.3 0.4 0.2 1</diffuse></material>
+        <collision name='c'><geometry><box><size>1.2 0.8 0.15</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>1.2 0.8 0.15</size></box></geometry>
+          <material><ambient>0.60 0.45 0.28 1</ambient><diffuse>0.60 0.45 0.28 1</diffuse></material>
         </visual>
       </link>
     </model>
-
-    <!-- ── Divider wall (separates loading from storage) ─────── -->
-    <model name='divider'>
-      <static>true</static><pose>0 0 0.75 0 0 0</pose>
+    <model name='pallet_2'>
+      <static>true</static><pose>9.5 -3 0.1 0 0 0</pose>
       <link name='link'>
-        <collision name='c'><geometry><box><size>0.2 4 1.5</size></box></geometry></collision>
-        <visual name='v'><geometry><box><size>0.2 4 1.5</size></box></geometry>
-          <material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material>
+        <collision name='c'><geometry><box><size>1.2 0.8 0.15</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>1.2 0.8 0.15</size></box></geometry>
+          <material><ambient>0.60 0.45 0.28 1</ambient><diffuse>0.60 0.45 0.28 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <!-- Boxes on pallets -->
+    <model name='box_1'>
+      <static>true</static><pose>9.5  3 0.375 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>0.6 0.5 0.45</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>0.6 0.5 0.45</size></box></geometry>
+          <material><ambient>0.80 0.55 0.20 1</ambient><diffuse>0.80 0.55 0.20 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name='box_2'>
+      <static>true</static><pose>9.5 -3 0.375 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>0.6 0.5 0.45</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>0.6 0.5 0.45</size></box></geometry>
+          <material><ambient>0.80 0.55 0.20 1</ambient><diffuse>0.80 0.55 0.20 1</diffuse></material>
         </visual>
       </link>
     </model>
