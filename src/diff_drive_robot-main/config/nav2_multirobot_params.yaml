@@ -119,6 +119,7 @@ local_costmap:
   local_costmap:
     ros__parameters:
       global_frame: "ROBOT_NS/odom"
+      robot_base_frame: "ROBOT_NS/base_link"
       rolling_window: true
       width: 3
       height: 3
@@ -148,6 +149,7 @@ local_costmap:
 global_costmap:
   global_costmap:
     ros__parameters:
+      robot_base_frame: "ROBOT_NS/base_link"
       robot_radius: 0.22
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       obstacle_layer:

@@ -34,6 +34,7 @@ Nav2 plugin naming differs between distros. **The launch files detect `$ROS_DIST
 - **Frontier exploration** — robot autonomously explores unknown areas
 - **Nav2 full stack** — MPPI controller, planner, recovery, behaviours
 - **Multi-robot (scalable)** — N robots sharing one SLAM-built map; add robots by editing one list
+- **Namespaced TF for multi-robot** — per-robot `odom` and `base_link` frame IDs, plus dedicated TF bridging for Nav2 and SLAM
 - **Coordinated frontier exploration** — single coordinator assigns each robot a unique frontier; no duplicate effort across the fleet
 - **Waypoint following** — navigate a sequence of poses
 - **2D LiDAR** — native LaserScan (`gpu_lidar`), no conversion needed for Nav2/SLAM
@@ -119,6 +120,9 @@ ros2 launch diff_drive_robot robot.launch.py world:=/full/path/to/maze.world
 ### Mode 4 — Multi-Robot Navigation (Scalable)
 Launch N robots sharing a single SLAM-built map. A centralized **frontier coordinator**
 assigns each robot a unique frontier — no two robots ever explore the same area.
+
+This launch now also propagates robot namespaces cleanly into xacro/TF and Nav2,
+so each robot gets isolated `odom` and `base_link` frames in shared simulation.
 
 ```bash
 # SLAM + coordinated frontier exploration (default — no pre-built map needed)

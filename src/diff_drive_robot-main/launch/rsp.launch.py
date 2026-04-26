@@ -18,6 +18,7 @@ def generate_launch_description():
     urdf = LaunchConfiguration('urdf')
     use_sim_time = LaunchConfiguration('use_sim_time')
     frame_prefix = LaunchConfiguration('frame_prefix')
+    namespace = LaunchConfiguration('namespace')
 
     # Declare launch arguments
     declare_use_sim_time = DeclareLaunchArgument(
@@ -32,6 +33,10 @@ def generate_launch_description():
             name='frame_prefix', default_value='',
             description='TF frame prefix for multi-robot setups (e.g. "robot1/")')
 
+    declare_namespace = DeclareLaunchArgument(
+            name='namespace', default_value='',
+            description='Robot namespace passed to xacro for TF frame IDs (e.g. "robot1")')
+
     # Create a robot state publisher
     robot_state_publisher = Node(
         package='robot_state_publisher',
@@ -39,7 +44,9 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'use_sim_time': use_sim_time,
-            'robot_description': ParameterValue(Command(['xacro ', urdf]), value_type=str),
+            'robot_description': ParameterValue(
+                Command(['xacro ', urdf, ' namespace:=', namespace]),
+                value_type=str),
             'frame_prefix': frame_prefix,
         }]
     )
@@ -49,5 +56,6 @@ def generate_launch_description():
         declare_urdf,
         declare_use_sim_time,
         declare_frame_prefix,
+        declare_namespace,
         robot_state_publisher
     ])

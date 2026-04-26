@@ -201,7 +201,7 @@ def _build_all(context, pkg_share: str):
         # Template → per-robot YAML (ROBOT_NS substituted)
         robot_params = _make_robot_params(template_yaml, ns)
 
-        # Robot State Publisher — frame_prefix makes TF frames unique per robot
+        # Robot State Publisher — frame_prefix + namespace arg makes TF frames unique per robot
         rsp = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(pkg_share, 'launch', 'rsp.launch.py')),
@@ -209,6 +209,7 @@ def _build_all(context, pkg_share: str):
                 'use_sim_time': 'true',
                 'urdf': os.path.join(pkg_share, 'urdf', 'robot.urdf.xacro'),
                 'frame_prefix': f'{ns}/',
+                'namespace': ns,
             }.items())
 
         # Spawn in Gazebo
@@ -222,7 +223,8 @@ def _build_all(context, pkg_share: str):
             ],
             output='screen')
 
-        # Gazebo ↔ ROS bridge (2D lidar, odom, cmd_vel, TF)
+        # Gazebo ↔ ROS bridge (2D lidar, odom, cmd_vel)
+        # TF is handled by dedicated bridge nodes below to avoid the /{ns}/tf empty-topic problem.
         bridge = Node(
             package='ros_gz_bridge',
             executable='parameter_bridge',
@@ -232,8 +234,26 @@ def _build_all(context, pkg_share: str):
                 f'/{ns}/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist',
                 f'/{ns}/odom@nav_msgs/msg/Odometry[gz.msgs.Odometry',
                 f'/{ns}/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
-                f'/{ns}/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
             ],
+            output='screen')
+
+        # TF bridge A: Gazebo global /tf → ROS /tf
+        # Needed by SLAM toolbox and other root-namespace nodes.
+        tf_bridge_global = Node(
+            package='ros_gz_bridge',
+            executable='parameter_bridge',
+            name=f'tf_bridge_global_{ns}',
+            arguments=['/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V'],
+            output='screen')
+
+        # TF bridge B: Gazebo global /tf → ROS /{ns}/tf
+        # Needed by Nav2 nodes (navigation_launch.py remaps /tf → tf = /{ns}/tf).
+        tf_bridge_ns = Node(
+            package='ros_gz_bridge',
+            executable='parameter_bridge',
+            name=f'tf_bridge_ns_{ns}',
+            arguments=['/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V'],
+            remappings=[('/tf', f'/{ns}/tf')],
             output='screen')
 
         # AMCL — localises against /map (shared).
@@ -273,23 +293,31 @@ def _build_all(context, pkg_share: str):
             }.items())
 
         # Assemble per-robot actions
-        per_robot = [rsp, spawn, bridge]
+        per_robot = [rsp, spawn, bridge, tf_bridge_global, tf_bridge_ns]
 
+        # PushRosNamespace in the outer GroupAction doesn't propagate through TimerAction.
+        # Wrap delayed actions in their own GroupAction+PushRosNamespace to ensure
+        # nav2 and AMCL nodes land in the correct robot namespace.
         if is_slam_robot:
             # robot1 in explore mode: SLAM handles localisation
             per_robot += [
-                TimerAction(period=10.0, actions=[nav2]),
+                TimerAction(period=10.0,
+                            actions=[GroupAction([PushRosNamespace(ns), nav2])]),
             ]
         elif explore:
             # Other robots in explore mode: need AMCL to localise on SLAM map.
             # SLAM starts at 6s; give it 7s to publish /map before AMCL starts.
             per_robot += [
-                TimerAction(period=13.0, actions=[amcl_node, amcl_lc, nav2]),
+                TimerAction(period=13.0,
+                            actions=[GroupAction([PushRosNamespace(ns),
+                                                 amcl_node, amcl_lc, nav2])]),
             ]
         else:
             # Pre-built map mode: all robots use AMCL
             per_robot += [
-                TimerAction(period=5.0, actions=[amcl_node, amcl_lc, nav2]),
+                TimerAction(period=5.0,
+                            actions=[GroupAction([PushRosNamespace(ns),
+                                                 amcl_node, amcl_lc, nav2])]),
             ]
 
         actions.append(GroupAction([PushRosNamespace(ns), *per_robot]))
