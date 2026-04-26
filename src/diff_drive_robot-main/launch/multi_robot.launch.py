@@ -113,6 +113,7 @@ def _build_all(context, pkg_share: str):
     map_arg      = LaunchConfiguration('map').perform(context).strip()
     world_arg    = LaunchConfiguration('world').perform(context).strip()
     explore      = LaunchConfiguration('explore').perform(context).strip().lower() in ('true', '1', 'yes')
+    headless     = LaunchConfiguration('headless').perform(context).strip().lower() in ('true', '1', 'yes')
 
     nav2_bringup = get_package_share_directory('nav2_bringup')
     slam_pkg     = get_package_share_directory('slam_toolbox')
@@ -138,19 +139,18 @@ def _build_all(context, pkg_share: str):
     ]
 
     # ── Gazebo server + GUI ───────────────────────────────────────────────────
-    actions += [
-        IncludeLaunchDescription(
+    actions.append(IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(ros_gz, 'launch', 'gz_sim.launch.py')),
+        launch_arguments={
+            'gz_args': f'-r -s -v1 {world_path}',
+            'on_exit_shutdown': 'true',
+        }.items()))
+    if not headless:
+        actions.append(IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(ros_gz, 'launch', 'gz_sim.launch.py')),
-            launch_arguments={
-                'gz_args': f'-r -s -v1 {world_path}',
-                'on_exit_shutdown': 'true',
-            }.items()),
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(ros_gz, 'launch', 'gz_sim.launch.py')),
-            launch_arguments={'gz_args': '-g'}.items()),
-    ]
+            launch_arguments={'gz_args': '-g'}.items()))
 
     # ── Shared map source ─────────────────────────────────────────────────────
     if explore:
@@ -259,12 +259,15 @@ def _build_all(context, pkg_share: str):
             }])
 
         # Nav2 navigation stack (planner, controller, bt_navigator, …)
+        # NOTE: 'namespace' is intentionally omitted here. Passing it triggers
+        # RewrittenYaml(root_key=ns) inside navigation_launch.py, which re-serializes
+        # the entire YAML via yaml.dump and breaks nested string-array params (critics).
+        # PushRosNamespace(ns) in the GroupAction below provides the correct namespace.
         nav2 = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(nav2_bringup, 'launch', 'navigation_launch.py')),
             launch_arguments={
                 'use_sim_time': 'true',
-                'namespace': ns,
                 'params_file': robot_params,
             }.items())
 
@@ -309,13 +312,14 @@ def _build_all(context, pkg_share: str):
             msg=f'[multi_robot] frontier_coordinator will start at t=20s for {robot_ns_list}'))
 
     # ── RViz ─────────────────────────────────────────────────────────────────
-    actions.append(GroupAction(
-        condition=IfCondition(LaunchConfiguration('rviz')),
-        actions=[Node(
-            package='rviz2',
-            executable='rviz2',
-            arguments=['-d', os.path.join(pkg_share, 'rviz', 'bot.rviz')],
-            output='screen')]))
+    if not headless:
+        actions.append(GroupAction(
+            condition=IfCondition(LaunchConfiguration('rviz')),
+            actions=[Node(
+                package='rviz2',
+                executable='rviz2',
+                arguments=['-d', os.path.join(pkg_share, 'rviz', 'bot.rviz')],
+                output='screen')]))
 
     return actions
 
@@ -335,5 +339,8 @@ def generate_launch_description():
             'explore', default_value='true',
             description='true = SLAM + frontier exploration (default). '
                         'false = use saved map yaml'),
+        DeclareLaunchArgument(
+            'headless', default_value='false',
+            description='true = Gazebo server only, no GUI or RViz'),
         OpaqueFunction(function=_build_all, args=[pkg_share]),
     ])

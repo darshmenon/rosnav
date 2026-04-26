@@ -1,4 +1,5 @@
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch_ros.substitutions import FindPackageShare
@@ -38,7 +39,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'use_sim_time': use_sim_time,
-            'robot_description': Command(['xacro ', urdf]),
+            'robot_description': ParameterValue(Command(['xacro ', urdf]), value_type=str),
             'frame_prefix': frame_prefix,
         }]
     )
