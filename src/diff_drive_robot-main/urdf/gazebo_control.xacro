@@ -15,7 +15,7 @@
     <wheel_radius>0.1</wheel_radius>
 
     <odom_publish_frequency>50</odom_publish_frequency>
-    <topic>cmd_vel</topic>
+    <topic>${ns + '/cmd_vel' if ns else 'cmd_vel'}</topic>
 
 
     <!-- PID controllers -->
@@ -24,7 +24,7 @@
     <max_linear_speed>2.0</max_linear_speed>
     <max_angular_speed>3.14</max_angular_speed>
 
-    <odom_topic>odom</odom_topic>
+    <odom_topic>${ns + '/odom' if ns else 'odom'}</odom_topic>
     <!-- frame IDs include namespace prefix so they are unique across robots -->
     <frame_id>${ns + '/odom' if ns else 'odom'}</frame_id>
     <child_frame_id>${ns + '/base_link' if ns else 'base_link'}</child_frame_id>

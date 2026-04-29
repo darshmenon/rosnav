@@ -1,5 +1,7 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" >
+   <xacro:arg name="namespace" default=""/>
+   <xacro:property name="ns" value="$(arg namespace)"/>
    <joint name="laser_joint" type="fixed">
      <parent link="chassis"/>
      <child link="laser_frame"/>
@@ -33,8 +35,8 @@
          <always_on>true</always_on>
          <visualize>true</visualize>
          <update_rate>10</update_rate>
-         <topic>scan</topic>
-         <gz_frame_id>laser_frame</gz_frame_id>
+         <topic>${ns + '/scan' if ns else 'scan'}</topic>
+         <gz_frame_id>${ns + '/laser_frame' if ns else 'laser_frame'}</gz_frame_id>
          <lidar>
             <scan>
                <horizontal>

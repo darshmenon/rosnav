@@ -12,6 +12,8 @@
     colcon build (symlink-install) (packages-select diff_drive_robot)
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:arg name="namespace" default=""/>
+  <xacro:property name="ns" value="$(arg namespace)"/>
 
   <!-- Mount at same position as 2D lidar so Nav2 costmaps still work -->
   <joint name="laser_joint" type="fixed">
@@ -48,8 +50,8 @@
       <always_on>true</always_on>
       <visualize>false</visualize>
       <update_rate>10</update_rate>
-      <topic>points</topic>
-      <gz_frame_id>laser_frame</gz_frame_id>
+      <topic>${ns + '/points' if ns else 'points'}</topic>
+      <gz_frame_id>${ns + '/laser_frame' if ns else 'laser_frame'}</gz_frame_id>
       <lidar>
         <scan>
           <horizontal>
