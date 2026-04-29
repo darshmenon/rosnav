@@ -42,6 +42,9 @@ Usage
 
 import os
 import tempfile
+import json
+import math
+import yaml
 
 from ament_index_python.packages import get_package_share_directory
 
@@ -54,7 +57,7 @@ _MR_PARAMS = (
 )
 from launch import LaunchDescription
 from launch.actions import (
-    DeclareLaunchArgument, GroupAction, IncludeLaunchDescription,
+    DeclareLaunchArgument, ExecuteProcess, GroupAction, IncludeLaunchDescription,
     LogInfo, OpaqueFunction, TimerAction,
 )
 from launch.conditions import IfCondition
@@ -77,11 +80,21 @@ ROBOTS = [
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
-def _make_robot_params(template_path: str, robot_ns: str) -> str:
+def _make_robot_params(
+    template_path: str,
+    robot_ns: str,
+    initial_pose: dict | None = None,
+) -> str:
     """Substitute ROBOT_NS in the template YAML and return a temp-file path."""
     with open(template_path) as f:
         content = f.read()
     content = content.replace('ROBOT_NS', robot_ns)
+    if initial_pose is not None:
+        params = yaml.safe_load(content)
+        amcl_params = params.setdefault('amcl', {}).setdefault('ros__parameters', {})
+        amcl_params['set_initial_pose'] = True
+        amcl_params['initial_pose'] = initial_pose
+        content = yaml.safe_dump(params, sort_keys=False)
     tmp = tempfile.NamedTemporaryFile(
         mode='w', suffix=f'_{robot_ns}.yaml', delete=False, prefix='nav2_mr_')
     tmp.write(content)
@@ -104,6 +117,38 @@ def _resolve_map_file(map_arg: str, world_path: str, pkg_share: str) -> str:
         if os.path.exists(c):
             return c
     return candidates[0]
+
+
+def _initial_pose_pub(robot_ns: str, x: str, y: str, yaw: str) -> ExecuteProcess:
+    yaw_f = float(yaw)
+    qz = math.sin(yaw_f / 2.0)
+    qw = math.cos(yaw_f / 2.0)
+    msg = json.dumps({
+        'header': {'frame_id': 'map'},
+        'pose': {
+            'pose': {
+                'position': {'x': float(x), 'y': float(y), 'z': 0.0},
+                'orientation': {'z': qz, 'w': qw},
+            },
+            'covariance': [
+                0.25, 0.0, 0.0, 0.0, 0.0, 0.0,
+                0.0, 0.25, 0.0, 0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.06853891945200942,
+            ],
+        },
+    })
+    return ExecuteProcess(
+        cmd=[
+            'ros2', 'topic', 'pub', '--once',
+            f'/{robot_ns}/initialpose',
+            'geometry_msgs/msg/PoseWithCovarianceStamped',
+            msg,
+        ],
+        output='screen',
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -199,7 +244,15 @@ def _build_all(context, pkg_share: str):
         is_slam_robot = (explore and idx == 0)  # robot1 localises via SLAM
 
         # Template → per-robot YAML (ROBOT_NS substituted)
-        robot_params = _make_robot_params(template_yaml, ns)
+        initial_pose = None
+        if not is_slam_robot:
+            initial_pose = {
+                'x': float(x),
+                'y': float(y),
+                'z': float(z),
+                'yaw': float(yaw),
+            }
+        robot_params = _make_robot_params(template_yaml, ns, initial_pose)
 
         # Robot State Publisher — frame_prefix + namespace arg makes TF frames unique per robot
         rsp = IncludeLaunchDescription(
@@ -243,6 +296,7 @@ def _build_all(context, pkg_share: str):
             package='ros_gz_bridge',
             executable='parameter_bridge',
             name=f'tf_bridge_global_{ns}',
+            namespace=ns,
             arguments=['/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V'],
             output='screen')
 
@@ -252,8 +306,17 @@ def _build_all(context, pkg_share: str):
             package='ros_gz_bridge',
             executable='parameter_bridge',
             name=f'tf_bridge_ns_{ns}',
+            namespace=ns,
             arguments=['/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V'],
             remappings=[('/tf', f'/{ns}/tf')],
+            output='screen')
+
+        odom_tf = Node(
+            package='diff_drive_robot',
+            executable='odom_tf_broadcaster.py',
+            namespace=ns,
+            name='odom_tf_broadcaster',
+            remappings=[('/tf', 'tf')],
             output='screen')
 
         # AMCL — localises against /map (shared).
@@ -280,47 +343,57 @@ def _build_all(context, pkg_share: str):
             }])
 
         # Nav2 navigation stack (planner, controller, bt_navigator, …)
-        # NOTE: 'namespace' is intentionally omitted here. Passing it triggers
-        # RewrittenYaml(root_key=ns) inside navigation_launch.py, which re-serializes
-        # the entire YAML via yaml.dump and breaks nested string-array params (critics).
-        # PushRosNamespace(ns) in the GroupAction below provides the correct namespace.
+        # Pass namespace so RewrittenYaml wraps params under the robot key, making
+        # /robot1/controller_server find its parameters. MPPI critics survive yaml.dump.
         nav2 = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(nav2_bringup, 'launch', 'navigation_launch.py')),
             launch_arguments={
                 'use_sim_time': 'true',
                 'params_file': robot_params,
+                'namespace': ns,
             }.items())
 
         # Assemble per-robot actions
-        per_robot = [rsp, spawn, bridge, tf_bridge_global, tf_bridge_ns]
+        per_robot = [rsp, spawn, bridge, tf_bridge_global, tf_bridge_ns, odom_tf]
 
-        # PushRosNamespace in the outer GroupAction doesn't propagate through TimerAction.
-        # Wrap delayed actions in their own GroupAction+PushRosNamespace to ensure
-        # nav2 and AMCL nodes land in the correct robot namespace.
         if is_slam_robot:
             # robot1 in explore mode: SLAM handles localisation
             per_robot += [
-                TimerAction(period=10.0,
-                            actions=[GroupAction([PushRosNamespace(ns), nav2])]),
+                TimerAction(period=10.0, actions=[GroupAction([
+                    PushRosNamespace(ns),
+                    nav2,
+                ])]),
             ]
         elif explore:
             # Other robots in explore mode: need AMCL to localise on SLAM map.
             # SLAM starts at 6s; give it 7s to publish /map before AMCL starts.
             per_robot += [
-                TimerAction(period=13.0,
-                            actions=[GroupAction([PushRosNamespace(ns),
-                                                 amcl_node, amcl_lc, nav2])]),
+                TimerAction(period=13.0, actions=[
+                    amcl_node,
+                    amcl_lc,
+                ]),
+                TimerAction(period=16.0, actions=[_initial_pose_pub(ns, x, y, yaw)]),
+                TimerAction(period=19.0, actions=[GroupAction([
+                    PushRosNamespace(ns),
+                    nav2,
+                ])]),
             ]
         else:
             # Pre-built map mode: all robots use AMCL
             per_robot += [
-                TimerAction(period=5.0,
-                            actions=[GroupAction([PushRosNamespace(ns),
-                                                 amcl_node, amcl_lc, nav2])]),
+                TimerAction(period=5.0, actions=[
+                    amcl_node,
+                    amcl_lc,
+                ]),
+                TimerAction(period=8.0, actions=[_initial_pose_pub(ns, x, y, yaw)]),
+                TimerAction(period=11.0, actions=[GroupAction([
+                    PushRosNamespace(ns),
+                    nav2,
+                ])]),
             ]
 
-        actions.append(GroupAction([PushRosNamespace(ns), *per_robot]))
+        actions.append(GroupAction(per_robot))
 
     # ── Centralized frontier coordinator (explore mode only) ──────────────────
     robot_ns_list = ','.join(r['name'] for r in ROBOTS)
