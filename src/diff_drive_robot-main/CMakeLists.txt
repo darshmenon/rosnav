@@ -19,6 +19,7 @@ install(
     scripts/check_odometry.py
     scripts/reset_pose.py
     scripts/odom_tf_broadcaster.py
+    scripts/tf_static_relay.py
     scripts/multi_teleop.py
     scripts/fleet_manager.py
     scripts/fleet_gui.py

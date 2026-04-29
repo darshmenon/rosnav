@@ -198,6 +198,15 @@ def _build_all(context, pkg_share: str):
                 os.path.join(ros_gz, 'launch', 'gz_sim.launch.py')),
             launch_arguments={'gz_args': '-g'}.items()))
 
+    # Bridge the Gazebo clock exactly once.
+    # Multiple /clock bridges can race and produce backward time jumps.
+    actions.append(Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='clock_bridge',
+        arguments=['/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock'],
+        output='screen'))
+
     # ── Shared map source ─────────────────────────────────────────────────────
     if explore:
         # SLAM Toolbox (robot1's 2D lidar → shared /map)
@@ -283,7 +292,6 @@ def _build_all(context, pkg_share: str):
             executable='parameter_bridge',
             namespace=ns,
             arguments=[
-                '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
                 f'/{ns}/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist',
                 f'/{ns}/odom@nav_msgs/msg/Odometry[gz.msgs.Odometry',
                 f'/{ns}/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
@@ -319,6 +327,13 @@ def _build_all(context, pkg_share: str):
             remappings=[('/tf', 'tf')],
             output='screen')
 
+        tf_static_relay = Node(
+            package='diff_drive_robot',
+            executable='tf_static_relay.py',
+            namespace=ns,
+            name='tf_static_relay',
+            output='screen')
+
         # AMCL — localises against /map (shared).
         # Skipped for robot1 in SLAM mode (SLAM provides the map→odom TF).
         amcl_node = Node(
@@ -328,7 +343,12 @@ def _build_all(context, pkg_share: str):
             namespace=ns,
             output='screen',
             parameters=[robot_params],
-            remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')])
+            remappings=[
+                ('/tf', 'tf'),
+                ('/tf_static', 'tf_static'),
+                ('map', '/map'),
+                ('/map', '/map'),
+            ])
 
         amcl_lc = Node(
             package='nav2_lifecycle_manager',
@@ -355,7 +375,7 @@ def _build_all(context, pkg_share: str):
             }.items())
 
         # Assemble per-robot actions
-        per_robot = [rsp, spawn, bridge, tf_bridge_global, tf_bridge_ns, odom_tf]
+        per_robot = [rsp, spawn, bridge, tf_bridge_global, tf_bridge_ns, odom_tf, tf_static_relay]
 
         if is_slam_robot:
             # robot1 in explore mode: SLAM handles localisation
