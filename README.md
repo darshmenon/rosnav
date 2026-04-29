@@ -154,6 +154,65 @@ The coordinator picks up the new robot automatically — no other files change.
 - When a robot reaches its frontier it is immediately assigned the next one
 - If a robot fails, the frontier is freed for another robot to retry
 
+#### Multi-robot launch arguments
+
+| Argument | Default | Description |
+|---|---|---|
+| `world` | `maze` | World name (`maze`, `warehouse`, `house`, `corridor`, `obstacles`) or full `.world` path |
+| `explore` | `true` | `true` = SLAM + frontier exploration; `false` = pre-built map + AMCL |
+| `headless` | `false` | `true` = Gazebo server only — no GUI, no RViz (CI / SSH-friendly) |
+| `fleet_mgmt` | `false` | `true` = also start priority collision avoidance + deadlock recovery |
+| `rviz` | `True` | `false` = skip RViz (automatically skipped when `headless:=true`) |
+| `map` | *(auto)* | Path to pre-built map yaml; only used when `explore:=false` |
+
+#### Headless mode (no GUI — SSH / CI friendly)
+
+```bash
+# Headless SLAM + frontier exploration
+ros2 launch diff_drive_robot multi_robot.launch.py headless:=true
+
+# Headless pre-built map navigation
+ros2 launch diff_drive_robot multi_robot.launch.py headless:=true explore:=false
+
+# Headless + fleet management (collision avoidance + deadlock recovery)
+ros2 launch diff_drive_robot multi_robot.launch.py headless:=true fleet_mgmt:=true
+
+# Headless warehouse, pre-built map
+ros2 launch diff_drive_robot multi_robot.launch.py headless:=true explore:=false world:=warehouse
+```
+
+Verify navigation from CLI when headless:
+
+```bash
+# Robots publishing scan
+ros2 topic list | grep scan
+
+# Nav2 action server ready
+ros2 action list | grep navigate_to_pose
+
+# Send goal to robot1
+ros2 action send_goal /robot1/navigate_to_pose nav2_msgs/action/NavigateToPose \
+  "{pose: {header: {frame_id: map}, pose: {position: {x: -1.5, y: -0.5}, orientation: {w: 1.0}}}}"
+
+# Watch goal status
+ros2 action send_goal --feedback /robot1/navigate_to_pose nav2_msgs/action/NavigateToPose \
+  "{pose: {header: {frame_id: map}, pose: {position: {x: 0.0, y: -0.5}, orientation: {w: 1.0}}}}"
+
+# Monitor odom
+ros2 topic echo /robot1/odom --once
+ros2 topic echo /robot2/odom --once
+```
+
+#### Fleet management layer (optional)
+
+```bash
+# Enable priority collision avoidance + deadlock recovery alongside exploration
+ros2 launch diff_drive_robot multi_robot.launch.py fleet_mgmt:=true
+
+# Headless + fleet management + warehouse
+ros2 launch diff_drive_robot multi_robot.launch.py headless:=true fleet_mgmt:=true world:=warehouse
+```
+
 ### 3D LiDAR Setup
 The robot URDF supports both 2D and 3D LiDARs. To use the 3D LiDAR:
 1. Edit `urdf/robot.urdf.xacro` and change `<xacro:include filename="lidar.xacro" />` to `<xacro:include filename="lidar3d.xacro" />`.
