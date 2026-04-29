@@ -245,10 +245,90 @@ ros2 action send_goal /robot2/navigate_to_pose nav2_msgs/action/NavigateToPose \
 - Costmap local layer changed from `voxel_layer` (3D only) to `obstacle_layer` for 2D LaserScan
 - AMCL per-robot added (was missing from `navigation_launch.py` which does not include AMCL)
 - All frame IDs prefixed with robot namespace (was causing TF conflicts between robots)
+- Gazebo plugin topics are namespaced per robot, so odom/scan/camera data no longer collapses onto shared root topics
+- `robot_state_publisher` remaps `tf` and `tf_static` into each robot namespace, which avoids cross-robot static TF collisions
 
 ---
 
-## 11. 2D vs 3D LiDAR
+## 11. Fleet Management Stack
+
+The optional fleet-management layer is enabled with:
+
+```bash
+ros2 launch diff_drive_robot multi_robot.launch.py fleet_mgmt:=true
+```
+
+It starts five cooperating nodes:
+
+| Node | Role |
+|---|---|
+| `mission_server.py` | Accepts high-level per-robot missions and drives Nav2 actions |
+| `task_allocator.py` | Assigns pending tasks to idle robots using Hungarian matching |
+| `fleet_health.py` | Publishes fleet health telemetry to `/fleet/health` |
+| `priority_collision_avoidance.py` | Makes lower-priority robots yield in predicted close conflicts |
+| `deadlock_recovery.py` | Detects robots stuck mid-mission and triggers recovery maneuvers |
+
+### Mission Server
+
+`mission_server.py` sits above Nav2. Clients publish JSON to `/mission/execute`, and the server converts it into `NavigateToPose` goals.
+
+Supported mission types:
+- `goto`
+- `sequence`
+- `patrol`
+
+Important behavior:
+- Mission execution is concurrent per robot, not single-global.
+- State is published on `/mission/state` as one message per robot.
+- Each state message includes robot namespace, mission type, waypoint progress, and current target pose.
+
+### Task Allocation
+
+`task_allocator.py` keeps a shared task queue and watches `/mission/state` plus per-robot odometry.
+
+Allocation flow:
+1. Detect idle robots.
+2. Build a robot-task distance matrix.
+3. Solve the optimal assignment using the Hungarian algorithm.
+4. Publish per-robot `goto` missions to `/mission/execute`.
+
+Task lifecycle:
+- `pending`
+- `assigned`
+- `done`
+- `failed`
+
+If a mission is cancelled, the task returns to `pending`.
+If a mission fails, the task is retried up to the configured retry limit.
+
+### Collision Avoidance vs CBS
+
+This repo does not implement Conflict-Based Search (CBS) or another centralized multi-agent path planner.
+
+Instead, it uses:
+- independent Nav2 planners per robot
+- a shared global map
+- priority-based yielding for near conflicts
+- deadlock recovery when a robot stops making progress
+
+That means coordination here is reactive rather than globally optimal.
+
+### Behavior Trees in Multi-Robot Mode
+
+Each robot runs its own namespaced Nav2 BT navigator:
+- `/robot1/bt_navigator`
+- `/robot2/bt_navigator`
+
+The custom tree in `config/bt/navigate_w_recovery.xml` is still a single-robot recovery tree:
+- compute path
+- follow path
+- on failure: backup, spin, clear costmaps, wait
+
+The fleet-management layer sits outside the BT. It coordinates missions and recovery around Nav2; it does not replace Nav2 with a centralized multi-robot behavior tree.
+
+---
+
+## 12. 2D vs 3D LiDAR
 
 | | 2D LiDAR (`lidar.xacro`) | 3D LiDAR (`lidar3d.xacro`) |
 |---|---|---|
@@ -273,7 +353,7 @@ ros2 run pointcloud_to_laserscan pointcloud_to_laserscan_node \
 
 ---
 
-## 12. Adding a Camera Sensor (RGB / Depth)
+## 13. Adding a Camera Sensor (RGB / Depth)
 
 Cameras are added as a URDF xacro file, similar to `lidar.xacro`.
 
@@ -332,7 +412,7 @@ Mount the camera link at any offset from `chassis`:
 
 ---
 
-## 13. New Tool Scripts
+## 14. New Tool Scripts
 
 ### `fleet_manager.py` — Product-like fleet CLI
 ```bash
@@ -354,7 +434,7 @@ ros2 run diff_drive_robot multi_teleop.py
 
 ---
 
-## 14. Custom Obstacle Avoidance (`navigation.py`)
+## 15. Custom Obstacle Avoidance (`navigation.py`)
 
 A simpler alternative to Nav2 — a 4-state finite state machine:
 
@@ -368,7 +448,7 @@ Uses only `/scan` (LiDAR) and `/odom`, no map required. Good for unstructured en
 
 ---
 
-## 13. Repository Organization (Recommended)
+## 16. Repository Organization (Recommended)
 
 For this repo, a cleaner layout helps debugging and repeatability:
 
@@ -381,7 +461,7 @@ For this repo, a cleaner layout helps debugging and repeatability:
 - Add `Makefile` or `justfile` commands for common flows (`build`, `slam-nav`, `frontier`, `save-map`).
 
 
-## 14. A* Path Planner (`path_planning.py`)
+## 17. A* Path Planner (`path_planning.py`)
 
 Standalone global planner using the **A\* algorithm**:
 - Converts the world to a discrete grid.
@@ -486,7 +566,7 @@ ros2 run diff_drive_robot reset_pose.py --ros-args \
 
 ---
 
-## 16. 3-Tier Autonomy Stack
+## 18. 3-Tier Autonomy Stack
 
 The full stack is structured as three independent layers:
 
@@ -507,7 +587,7 @@ Each layer is independent — the safety layer can stop the robot regardless of 
 
 ---
 
-## 17. Collision Monitor
+## 19. Collision Monitor
 
 `scripts/collision_monitor.py` is a standalone safety watchdog.
 
@@ -548,15 +628,16 @@ ros2 topic echo /collision_monitor/state
 
 ---
 
-## 18. Mission Server
+## 20. Mission Server
 
 `scripts/mission_server.py` is the top-level mission execution daemon.
 
 **How it works:**
 1. Runs as a persistent ROS 2 node.
 2. Subscribes to `/mission/execute` (std_msgs/String JSON).
-3. On receipt of a mission, sends `NavigateToPose` goals to the target robot's Nav2 stack.
-4. Publishes current state to `/mission/state` (std_msgs/String JSON) at 1 Hz.
+3. Runs missions concurrently per robot instead of using one global active mission.
+4. Sends `NavigateToPose` goals to the target robot's Nav2 stack.
+5. Publishes current state to `/mission/state` (std_msgs/String JSON) at 1 Hz, one message per robot.
 
 **Mission types:**
 
@@ -566,8 +647,10 @@ ros2 topic echo /collision_monitor/state
 | `sequence` | Visit waypoints once in order, then DONE |
 | `goto` | Navigate to a single pose, then DONE |
 
-**State machine:** `IDLE → NAVIGATING → DONE / FAILED`
-Cancel with `action: cancel` → returns to `IDLE`.
+**State machine:** `IDLE → NAVIGATING → DONE / FAILED`, with `RECOVERING` used for patrol retries.
+Cancel with `action: cancel`:
+- with `robot` set: cancels only that robot's mission
+- with empty `robot`: cancels all tracked missions
 
 ```bash
 # Start daemon:
@@ -579,8 +662,11 @@ ros2 run diff_drive_robot mission_server.py patrol robot1 1,2,0 3,4,90 0,0,180
 # Single goal:
 ros2 run diff_drive_robot mission_server.py goto robot1 3.0 -1.0 45
 
-# Check state:
+# Check all robots:
 ros2 run diff_drive_robot mission_server.py status
+
+# Check just one robot:
+ros2 run diff_drive_robot mission_server.py status robot1
 
 # Cancel:
 ros2 run diff_drive_robot mission_server.py cancel
@@ -593,7 +679,7 @@ ros2 run diff_drive_robot fleet_manager.py collision robot1
 
 ---
 
-## 19. Velocity Smoother
+## 21. Velocity Smoother
 
 `nav2_velocity_smoother` is a Nav2 lifecycle node that applies jerk-limiting to `cmd_vel`.
 
@@ -628,7 +714,7 @@ Started automatically by `slam_nav.launch.py` 10 seconds after Nav2.
 
 ---
 
-## 20. Custom Behavior Tree
+## 22. Custom Behavior Tree
 
 `config/bt/navigate_w_recovery.xml` is a custom Nav2 Behavior Tree that replaces the default navigation BT.
 
@@ -674,7 +760,7 @@ To revert to Nav2's built-in BT, set that value to `""`.
 
 ---
 
-## 21. Coverage Path Planner
+## 23. Coverage Path Planner
 
 `scripts/coverage_planner.py` computes a **boustrophedon** (lawnmower) sweep path over the free space of the current map and executes it via Nav2's `FollowWaypoints`.
 
@@ -719,18 +805,19 @@ ros2 run diff_drive_robot coverage_planner.py --ros-args -p robot_ns:=robot2
 
 ---
 
-## 22. Multi-Robot Task Allocator
+## 24. Multi-Robot Task Allocator
 
-`scripts/task_allocator.py` implements a **nearest-idle-robot** task allocation system that sits above `mission_server.py`.
+`scripts/task_allocator.py` implements a Hungarian-assignment task allocator that sits above `mission_server.py`.
 
 **How it works:**
 1. Maintains a shared task queue — a list of `(x, y, yaw)` poses with IDs.
 2. Discovers active robots from `/*/cmd_vel` topics (same as fleet_manager).
 3. Subscribes to `/mission/state` to track which robots are IDLE/DONE.
 4. Subscribes to `/<ns>/odom` to know each robot's current position.
-5. Every 0.5 s: for each idle robot, assign the nearest pending task.
+5. Every 0.5 s: build a robot-task distance matrix and solve the minimum-total-cost assignment.
 6. Sends `goto` missions to `/mission/execute` (consumed by mission_server daemon).
-7. When mission_server reports DONE/FAILED, marks the task as done and robot as free.
+7. When mission_server reports DONE, marks the task complete.
+8. When mission_server reports FAILED or IDLE, re-queues or fails the task based on retry count.
 
 **Topics:**
 
@@ -743,10 +830,10 @@ ros2 run diff_drive_robot coverage_planner.py --ros-args -p robot_ns:=robot2
 | `/mission/execute` | out | goto commands to mission_server |
 | `/<ns>/odom` | in | Robot position for distance calculation |
 
-**Task states:** `pending → assigned → done`
+**Task states:** `pending → assigned → done` or `failed`
 
 ```bash
-# Start daemons (mission_server must also be running):
+# Start daemons (or launch `multi_robot.launch.py fleet_mgmt:=true`):
 ros2 run diff_drive_robot task_allocator.py
 
 # Add tasks:

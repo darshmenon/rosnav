@@ -39,15 +39,15 @@ Nav2 plugin naming differs between distros. **The launch files detect `$ROS_DIST
 - **Waypoint following** — navigate a sequence of poses
 - **2D LiDAR** — native LaserScan (`gpu_lidar`), no conversion needed for Nav2/SLAM
 - **Fleet GUI** — Tkinter dashboard: click-to-navigate on map, teleop sliders, spawn/save
-- **Fleet CLI** — `fleet_manager.py`: list, status, add, teleop, goto, explore, savemap, mission, collision
+- **Fleet CLI** — `fleet_manager.py`: list, status, add, teleop, goto, explore, savemap, mission, tasks, collision, health
 - **Multi-robot teleop** — `multi_teleop.py`: WASD keyboard control with robot switcher
 - **Multiple worlds** — maze, obstacles, warehouse, corridor (all self-contained SDF)
 - **Collision Monitor** — independent safety watchdog: stop/slowdown zones from live LaserScan
-- **Mission Server** — top-level mission layer: patrol loops, waypoint sequences, single-pose goto
+- **Mission Server** — concurrent per-robot mission layer: patrol loops, waypoint sequences, single-pose goto
 - **Velocity Smoother** — jerk-limited cmd_vel pipeline; started automatically alongside Nav2
 - **Custom Behavior Tree** — backup→spin→clear→wait recovery (replaces Nav2 default BT)
 - **Coverage Path Planner** — boustrophedon lawnmower sweep over any map
-- **Task Allocator** — multi-robot nearest-idle-robot task queue with automatic assignment
+- **Task Allocator** — multi-robot Hungarian assignment with retry-aware task queueing
 - **Dynamic Obstacle Tracker** — detects and tracks moving obstacles from consecutive LaserScan frames; publishes MarkerArray + JSON state
 - **Fleet Health Monitor** — per-robot odom/scan Hz, Nav2 node presence, collision and mission state; publishes `/fleet/health` at 1 Hz
 - **Smac Hybrid-A\* Planner** — replaces NavFn; Reeds-Shepp motion model for smooth, kinematically-feasible paths
@@ -161,7 +161,7 @@ The coordinator picks up the new robot automatically — no other files change.
 | `world` | `maze` | World name (`maze`, `warehouse`, `house`, `corridor`, `obstacles`) or full `.world` path |
 | `explore` | `true` | `true` = SLAM + frontier exploration; `false` = pre-built map + AMCL |
 | `headless` | `false` | `true` = Gazebo server only — no GUI, no RViz (CI / SSH-friendly) |
-| `fleet_mgmt` | `false` | `true` = also start priority collision avoidance + deadlock recovery |
+| `fleet_mgmt` | `false` | `true` = also start mission server, task allocator, fleet health, priority collision avoidance, and deadlock recovery |
 | `rviz` | `True` | `false` = skip RViz (automatically skipped when `headless:=true`) |
 | `map` | *(auto)* | Path to pre-built map yaml; only used when `explore:=false` |
 
@@ -174,7 +174,7 @@ ros2 launch diff_drive_robot multi_robot.launch.py headless:=true
 # Headless pre-built map navigation
 ros2 launch diff_drive_robot multi_robot.launch.py headless:=true explore:=false
 
-# Headless + fleet management (collision avoidance + deadlock recovery)
+# Headless + fleet management
 ros2 launch diff_drive_robot multi_robot.launch.py headless:=true fleet_mgmt:=true
 
 # Headless warehouse, pre-built map
@@ -206,12 +206,24 @@ ros2 topic echo /robot2/odom --once
 #### Fleet management layer (optional)
 
 ```bash
-# Enable priority collision avoidance + deadlock recovery alongside exploration
+# Enable the fleet-management stack alongside exploration
 ros2 launch diff_drive_robot multi_robot.launch.py fleet_mgmt:=true
 
 # Headless + fleet management + warehouse
 ros2 launch diff_drive_robot multi_robot.launch.py headless:=true fleet_mgmt:=true world:=warehouse
 ```
+
+When `fleet_mgmt:=true`, the launch starts:
+- `mission_server.py`
+- `task_allocator.py`
+- `fleet_health.py`
+- `priority_collision_avoidance.py`
+- `deadlock_recovery.py`
+
+Notes:
+- This repo uses per-robot Nav2 plus reactive fleet coordination. It does not include a full CBS planner.
+- Task allocation is distance-based Hungarian matching across idle robots and pending tasks.
+- Mission state is published per robot on `/mission/state`.
 
 ### 3D LiDAR Setup
 The robot URDF supports both 2D and 3D LiDARs. To use the 3D LiDAR:
@@ -255,6 +267,9 @@ ros2 run diff_drive_robot fleet_manager.py mission robot1 patrol 1,2,0 3,4,90 0,
 ros2 run diff_drive_robot fleet_manager.py mission robot1 goto 3.0 -1.0 45
 ros2 run diff_drive_robot fleet_manager.py mission robot1 status
 ros2 run diff_drive_robot fleet_manager.py mission robot1 cancel
+ros2 run diff_drive_robot fleet_manager.py tasks add 2.0 1.5 0 pickup_A
+ros2 run diff_drive_robot fleet_manager.py tasks status
+ros2 run diff_drive_robot fleet_manager.py tasks clear
 ros2 run diff_drive_robot fleet_manager.py collision robot1  # safety state
 ros2 run diff_drive_robot fleet_manager.py health            # per-robot health
 ```
@@ -292,6 +307,9 @@ ros2 run diff_drive_robot mission_server.py goto robot1 3.0 -1.0 45
 # Check state
 ros2 run diff_drive_robot mission_server.py status
 
+# Check one robot
+ros2 run diff_drive_robot mission_server.py status robot1
+
 # Cancel
 ros2 run diff_drive_robot mission_server.py cancel
 ```
@@ -311,10 +329,10 @@ ros2 run diff_drive_robot coverage_planner.py --ros-args -p sweep_spacing:=0.4
 
 ### Mode 10 — Multi-robot task queue
 ```bash
-# Start daemons (mission_server must also be running):
+# Start daemon (or use multi_robot.launch.py fleet_mgmt:=true):
 ros2 run diff_drive_robot task_allocator.py
 
-# Queue tasks — allocator assigns nearest idle robot automatically:
+# Queue tasks — allocator solves a Hungarian assignment across idle robots:
 ros2 run diff_drive_robot fleet_manager.py tasks add 2.0 1.5 0 pickup_A
 ros2 run diff_drive_robot fleet_manager.py tasks add 4.0 -1.0 90 dock_B
 ros2 run diff_drive_robot fleet_manager.py tasks status
