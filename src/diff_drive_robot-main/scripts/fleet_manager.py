@@ -292,7 +292,10 @@ class FleetNode(Node):
             received = [None]
 
             def _cb(msg):
-                received[0] = json.loads(msg.data)
+                data = json.loads(msg.data)
+                if ns and data.get('robot', '') != ns:
+                    return
+                received[0] = data
 
             self.create_subscription(String, '/mission/state', _cb, 10)
             deadline = time.time() + 3.0

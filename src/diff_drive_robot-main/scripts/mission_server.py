@@ -54,6 +54,7 @@ from typing import Optional
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
+from rclpy.utilities import remove_ros_args
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose
@@ -143,15 +144,8 @@ class MissionServer(Node):
         self._locations    = _load_locations(loc_file)
 
         self._lock        = threading.Lock()
-        self._state       = IDLE
-        self._mission     = {}
-        self._wp_idx      = 0
-        self._wp_labels   : list[str] = []
-        self._robot_ns    = ''
-        self._goal_handle = None
         self._clients: dict[str, ActionClient] = {}
-        self._active_thread: Optional[threading.Thread] = None
-        self._mission_gen  = 0
+        self._missions: dict[str, dict] = {}
 
         self.create_subscription(String, '/mission/execute', self._mission_cb, 10)
         self._state_pub = self.create_publisher(String, '/mission/state', 10)
@@ -168,6 +162,19 @@ class MissionServer(Node):
         if ns not in self._clients:
             self._clients[ns] = ActionClient(self, NavigateToPose, _action_topic(ns))
         return self._clients[ns]
+
+    def _ctx(self, ns: str) -> dict:
+        if ns not in self._missions:
+            self._missions[ns] = {
+                'state': IDLE,
+                'mission': {},
+                'wp_idx': 0,
+                'wp_labels': [],
+                'goal_handle': None,
+                'mission_gen': 0,
+                'current_pose': None,
+            }
+        return self._missions[ns]
 
     # ── Mission intake ─────────────────────────────────────────────────────────
 
@@ -211,31 +218,37 @@ class MissionServer(Node):
         # Build human-readable labels for state publishing
         labels = [wp if isinstance(wp, str) else '' for wp in wps]
 
-        self._cancel_current()
+        with self._lock:
+            ctx = self._ctx(robot)
+            had_active = ctx['state'] in (NAVIGATING, RECOVERING)
+
+        if had_active:
+            self._cancel_current(robot, log_msg=False)
 
         with self._lock:
-            self._mission_gen += 1
-            my_gen             = self._mission_gen
-            self._mission      = {'type': mtype, 'waypoints': resolved}
-            self._wp_labels    = labels
-            self._robot_ns     = robot
-            self._wp_idx       = 0
-            self._state        = NAVIGATING
+            ctx = self._ctx(robot)
+            ctx['mission_gen'] += 1
+            my_gen              = ctx['mission_gen']
+            ctx['mission']      = {'type': mtype, 'waypoints': resolved}
+            ctx['wp_labels']    = labels
+            ctx['wp_idx']       = 0
+            ctx['state']        = NAVIGATING
+            ctx['current_pose'] = resolved[0]
+            ctx['goal_handle']  = None
 
         self.get_logger().info(
             f'Mission accepted: type={mtype}  robot={robot or "/"}  '
             f'waypoints={len(resolved)}')
 
-        t = threading.Thread(target=self._run_mission, args=(my_gen,), daemon=True)
-        self._active_thread = t
+        t = threading.Thread(target=self._run_mission, args=(robot, my_gen), daemon=True)
         t.start()
 
     # ── Mission executor (runs in background thread) ───────────────────────────
 
-    def _run_mission(self, my_gen: int):
+    def _run_mission(self, ns: str, my_gen: int):
         with self._lock:
-            mission = dict(self._mission)
-            ns      = self._robot_ns
+            ctx     = self._ctx(ns)
+            mission = dict(ctx['mission'])
 
         mtype  = mission['type']
         wps    = mission['waypoints']
@@ -245,57 +258,61 @@ class MissionServer(Node):
         if not client.wait_for_server(timeout_sec=15.0):
             self.get_logger().error('Nav2 not available — mission aborted.')
             with self._lock:
-                if self._mission_gen == my_gen:
-                    self._state = FAILED
+                if self._ctx(ns)['mission_gen'] == my_gen:
+                    self._ctx(ns)['state'] = FAILED
             return
 
         loop = True
         while loop:
             for i, wp in enumerate(wps):
                 with self._lock:
-                    if self._mission_gen != my_gen:
+                    ctx = self._ctx(ns)
+                    if ctx['mission_gen'] != my_gen:
                         return
-                    self._wp_idx = i
-                    self._state  = NAVIGATING
+                    ctx['wp_idx'] = i
+                    ctx['state'] = NAVIGATING
 
                 x   = float(wp[0])
                 y   = float(wp[1])
                 yaw = float(wp[2]) if len(wp) > 2 else 0.0
 
                 with self._lock:
-                    label = self._wp_labels[i] if i < len(self._wp_labels) else ''
+                    ctx = self._ctx(ns)
+                    ctx['current_pose'] = [x, y, yaw]
+                    labels = ctx['wp_labels']
+                    label = labels[i] if i < len(labels) else ''
                 loc_str = f' ({label})' if label else ''
                 self.get_logger().info(
                     f'→ waypoint {i + 1}/{len(wps)}{loc_str}: '
                     f'({x:.2f}, {y:.2f}, {yaw:.0f}°)')
 
-                ok = self._go(client, x, y, yaw, my_gen)
+                ok = self._go(ns, client, x, y, yaw, my_gen)
                 if not ok:
                     with self._lock:
-                        if self._mission_gen != my_gen:
+                        if self._ctx(ns)['mission_gen'] != my_gen:
                             return
                     self.get_logger().warn(
                         f'Waypoint {i + 1} unreachable.  '
                         f'{"Continuing patrol — RECOVERING." if mtype == "patrol" else "Mission failed."}')
                     if mtype != 'patrol':
                         with self._lock:
-                            if self._mission_gen == my_gen:
-                                self._state = FAILED
+                            if self._ctx(ns)['mission_gen'] == my_gen:
+                                self._ctx(ns)['state'] = FAILED
                         return
                     # Patrol: mark RECOVERING before the next loop iteration
                     with self._lock:
-                        if self._mission_gen == my_gen:
-                            self._state = RECOVERING
+                        if self._ctx(ns)['mission_gen'] == my_gen:
+                            self._ctx(ns)['state'] = RECOVERING
 
             if mtype != 'patrol':
                 loop = False
 
         with self._lock:
-            if self._mission_gen == my_gen:
-                self._state = DONE
+            if self._ctx(ns)['mission_gen'] == my_gen:
+                self._ctx(ns)['state'] = DONE
         self.get_logger().info('Mission complete.')
 
-    def _go(self, client: ActionClient, x: float, y: float, yaw: float, my_gen: int) -> bool:
+    def _go(self, ns: str, client: ActionClient, x: float, y: float, yaw: float, my_gen: int) -> bool:
         goal      = NavigateToPose.Goal()
         goal.pose = _make_pose(x, y, yaw, self.get_clock().now().to_msg())
 
@@ -312,13 +329,17 @@ class MissionServer(Node):
             return False
 
         with self._lock:
-            self._goal_handle = handle
+            ctx = self._ctx(ns)
+            if ctx['mission_gen'] != my_gen:
+                handle.cancel_goal_async()
+                return False
+            ctx['goal_handle'] = handle
 
         result_future  = handle.get_result_async()
         nav_deadline   = time.time() + self._goal_timeout
         while not result_future.done():
             with self._lock:
-                superseded = self._mission_gen != my_gen
+                superseded = self._ctx(ns)['mission_gen'] != my_gen
             if superseded:
                 handle.cancel_goal_async()
                 return False
@@ -331,33 +352,51 @@ class MissionServer(Node):
 
         return result_future.result().status == GoalStatus.STATUS_SUCCEEDED
 
-    def _cancel_current(self):
+    def _cancel_current(self, robot: str = '', log_msg: bool = True):
         with self._lock:
-            self._mission_gen += 1
-            self._state = IDLE
-            gh = self._goal_handle
-        if gh is not None:
+            targets = [robot] if robot in self._missions else list(self._missions)
+            cancelled = []
+            handles = []
+            for ns in targets:
+                ctx = self._ctx(ns)
+                ctx['mission_gen'] += 1
+                ctx['state'] = IDLE
+                ctx['mission'] = {}
+                ctx['wp_idx'] = 0
+                ctx['wp_labels'] = []
+                ctx['current_pose'] = None
+                if ctx['goal_handle'] is not None:
+                    handles.append(ctx['goal_handle'])
+                ctx['goal_handle'] = None
+                cancelled.append(ns)
+        for gh in handles:
             gh.cancel_goal_async()
-        self.get_logger().info('Mission cancelled.')
+        if log_msg and cancelled:
+            scope = ', '.join(cancelled)
+            self.get_logger().info(f'Mission cancelled for: {scope}')
 
     # ── State publisher ────────────────────────────────────────────────────────
 
     def _publish_state(self):
         with self._lock:
-            m      = self._mission
-            idx    = self._wp_idx
-            labels = self._wp_labels
-            payload = {
-                'state':    self._state,
-                'type':     m.get('type', ''),
-                'robot':    self._robot_ns,
-                'wp_index': idx,
-                'wp_total': len(m.get('waypoints', [])),
-                'location': labels[idx] if labels and idx < len(labels) else '',
-            }
-        msg      = String()
-        msg.data = json.dumps(payload)
-        self._state_pub.publish(msg)
+            snapshots = []
+            for ns, ctx in self._missions.items():
+                mission = ctx['mission']
+                idx = ctx['wp_idx']
+                labels = ctx['wp_labels']
+                snapshots.append({
+                    'state':    ctx['state'],
+                    'type':     mission.get('type', ''),
+                    'robot':    ns,
+                    'wp_index': idx,
+                    'wp_total': len(mission.get('waypoints', [])),
+                    'location': labels[idx] if labels and idx < len(labels) else '',
+                    'pose':     ctx['current_pose'],
+                })
+        for payload in snapshots:
+            msg      = String()
+            msg.data = json.dumps(payload)
+            self._state_pub.publish(msg)
 
 
 # ── CLI helpers ────────────────────────────────────────────────────────────────
@@ -372,26 +411,33 @@ def _send(node: Node, payload: dict):
     print(f'Sent: {payload}')
 
 
-def _status(node: Node):
-    received = [None]
+def _status(node: Node, robot_filter: str = ''):
+    received: dict[str, dict] = {}
 
     def _cb(msg):
-        received[0] = json.loads(msg.data)
+        data = json.loads(msg.data)
+        robot = data.get('robot', '')
+        if robot_filter and robot != robot_filter:
+            return
+        received[robot or '/'] = data
 
     node.create_subscription(String, '/mission/state', _cb, 10)
+    spin = threading.Thread(target=lambda: rclpy.spin(node), daemon=True)
+    spin.start()
     deadline = time.time() + 3.0
-    while received[0] is None and time.time() < deadline:
+    while not received and time.time() < deadline:
         time.sleep(0.05)
 
-    if received[0]:
-        s = received[0]
+    if received:
         print('\n── Mission State ─────────────────────────')
-        print(f'  State   : {s["state"]}')
-        print(f'  Type    : {s["type"] or "—"}')
-        print(f'  Robot   : {s["robot"] or "/"}')
-        if s['wp_total']:
-            loc = f' ({s["location"]})' if s.get('location') else ''
-            print(f'  Progress: {s["wp_index"] + 1}/{s["wp_total"]}{loc}')
+        for robot in sorted(received):
+            s = received[robot]
+            print(f'  Robot   : {s["robot"] or "/"}')
+            print(f'  State   : {s["state"]}')
+            print(f'  Type    : {s["type"] or "—"}')
+            if s['wp_total']:
+                loc = f' ({s["location"]})' if s.get('location') else ''
+                print(f'  Progress: {s["wp_index"] + 1}/{s["wp_total"]}{loc}')
         print('──────────────────────────────────────────\n')
     else:
         print('No mission server found (is it running as a daemon?)')
@@ -418,7 +464,7 @@ def _usage():
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def main():
-    argv = sys.argv[1:]
+    argv = remove_ros_args(args=sys.argv)[1:]
 
     if not argv or argv[0] == '--daemon':
         rclpy.init()
@@ -429,7 +475,10 @@ def main():
             pass
         finally:
             node.destroy_node()
-            rclpy.shutdown()
+            try:
+                rclpy.shutdown()
+            except Exception:
+                pass
         return
 
     locations = _load_locations()
@@ -443,7 +492,7 @@ def main():
     cmd = argv[0].lower()
 
     if cmd == 'status':
-        _status(node)
+        _status(node, argv[1] if len(argv) > 1 else '')
 
     elif cmd == 'cancel':
         _send(node, {'type': 'patrol', 'action': 'cancel', 'robot': '', 'waypoints': []})
@@ -496,7 +545,10 @@ def main():
         _usage()
 
     node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.shutdown()
+    except Exception:
+        pass
 
 
 if __name__ == '__main__':

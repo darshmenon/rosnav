@@ -40,6 +40,7 @@ from collections import defaultdict, deque
 
 import rclpy
 from rclpy.node import Node
+from rclpy.utilities import remove_ros_args
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
@@ -226,7 +227,7 @@ def _usage():
 
 
 def main():
-    argv = sys.argv[1:]
+    argv = remove_ros_args(args=sys.argv)[1:]
 
     if not argv:
         rclpy.init()
@@ -237,7 +238,10 @@ def main():
             pass
         finally:
             node.destroy_node()
-            rclpy.shutdown()
+            try:
+                rclpy.shutdown()
+            except Exception:
+                pass
         return
 
     rclpy.init()
@@ -249,7 +253,10 @@ def main():
         _usage()
 
     node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.shutdown()
+    except Exception:
+        pass
 
 
 if __name__ == '__main__':

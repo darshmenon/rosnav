@@ -11,8 +11,8 @@ Recovery sequence
   2. Publish a reverse + spin escape manoeuvre directly to cmd_vel.
   3. Re-issue the original goal after `recover_pause` seconds.
 
-The node tracks robot progress via /robotN/odom.  It infers "active goal" by
-watching the navigate_to_pose action status topic.
+The node tracks robot progress via /robotN/odom and watches /mission/state
+for active mission targets to recover and re-issue.
 
 Parameters
 ──────────
@@ -30,6 +30,7 @@ Usage
       --ros-args -p robot_namespaces:=robot1,robot2
 """
 
+import json
 import math
 import threading
 import time
@@ -37,16 +38,10 @@ import time
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
-from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import Odometry
 from nav2_msgs.action import NavigateToPose
-
-
-_NAVIGATING_STATUSES = {
-    GoalStatus.STATUS_ACCEPTED,
-    GoalStatus.STATUS_EXECUTING,
-}
+from std_msgs.msg import String
 
 
 class RobotTracker:
@@ -58,6 +53,7 @@ class RobotTracker:
         self.last_progress_time = time.monotonic()
         self.active_goal_handle = None
         self.active_goal_pose   = None   # PoseStamped to re-issue
+        self.mission_state      = 'IDLE'
         self.recovering         = False
         self.lock               = threading.Lock()
 
@@ -105,6 +101,8 @@ class DeadlockRecovery(Node):
             # Watch goal result to capture goal handles
             # We monkey-patch the client's _goal_response_cb in _send_goal wrapper
 
+        self.create_subscription(String, '/mission/state', self._mission_cb, 20)
+
         check_period = self.get_parameter('check_period').value
         self.create_timer(check_period, self._check_all)
 
@@ -121,12 +119,47 @@ class DeadlockRecovery(Node):
         with t.lock:
             t.pos = (x, y)
 
+    def _mission_cb(self, msg: String):
+        try:
+            data = json.loads(msg.data)
+        except Exception:
+            return
+
+        ns = data.get('robot', '')
+        if ns not in self._trackers:
+            return
+
+        t = self._trackers[ns]
+        with t.lock:
+            t.mission_state = data.get('state', 'IDLE')
+            pose = data.get('pose')
+            if pose and len(pose) >= 2:
+                yaw_deg = float(pose[2]) if len(pose) > 2 else 0.0
+                t.active_goal_pose = self._make_pose(float(pose[0]), float(pose[1]), yaw_deg)
+            if t.mission_state in ('DONE', 'FAILED', 'IDLE'):
+                t.active_goal_handle = None
+
+    def _make_pose(self, x: float, y: float, yaw_deg: float) -> PoseStamped:
+        pose = PoseStamped()
+        pose.header.frame_id = 'map'
+        pose.header.stamp = self.get_clock().now().to_msg()
+        yaw = math.radians(yaw_deg)
+        pose.pose.position.x = x
+        pose.pose.position.y = y
+        pose.pose.orientation.z = math.sin(yaw / 2.0)
+        pose.pose.orientation.w = math.cos(yaw / 2.0)
+        return pose
+
     # ── Progress check ────────────────────────────────────────────────────────
 
     def _check_all(self):
         for ns, t in self._trackers.items():
             with t.lock:
                 if t.recovering:
+                    continue
+                if t.mission_state != 'NAVIGATING' and t.active_goal_handle is None:
+                    t.last_progress_pos = t.pos
+                    t.last_progress_time = time.monotonic()
                     continue
                 cx, cy = t.pos
                 lx, ly = t.last_progress_pos
@@ -240,7 +273,10 @@ def main():
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':

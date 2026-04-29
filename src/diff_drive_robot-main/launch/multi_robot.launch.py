@@ -420,6 +420,22 @@ def _build_all(context, pkg_share: str):
             actions=[
                 Node(
                     package='diff_drive_robot',
+                    executable='mission_server.py',
+                    name='mission_server',
+                    output='screen'),
+                Node(
+                    package='diff_drive_robot',
+                    executable='task_allocator.py',
+                    name='task_allocator',
+                    output='screen',
+                    parameters=[{'robots': robot_ns_list}]),
+                Node(
+                    package='diff_drive_robot',
+                    executable='fleet_health.py',
+                    name='fleet_health_monitor',
+                    output='screen'),
+                Node(
+                    package='diff_drive_robot',
                     executable='priority_collision_avoidance.py',
                     name='priority_collision_avoidance',
                     output='screen',
@@ -432,7 +448,7 @@ def _build_all(context, pkg_share: str):
                     parameters=[{'robot_namespaces': robot_ns_list}]),
             ]))
         actions.append(LogInfo(
-            msg=f'[multi_robot] fleet_mgmt nodes will start at t=15s for {robot_ns_list}'))
+            msg=f'[multi_robot] fleet_mgmt stack will start at t=15s for {robot_ns_list}'))
 
     # ── RViz ─────────────────────────────────────────────────────────────────
     if not headless:

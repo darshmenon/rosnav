@@ -55,6 +55,7 @@ import uuid
 
 import rclpy
 from rclpy.node import Node
+from rclpy.utilities import remove_ros_args
 from nav_msgs.msg import Odometry
 from std_msgs.msg import String
 
@@ -119,6 +120,7 @@ def _hungarian(cost: list[list[float]]) -> list[tuple[int, int]]:
 PENDING  = 'pending'
 ASSIGNED = 'assigned'
 DONE     = 'done'
+FAILED   = 'failed'
 
 
 class TaskAllocator(Node):
@@ -126,12 +128,14 @@ class TaskAllocator(Node):
         super().__init__('task_allocator')
 
         self.declare_parameter('robots', '')          # comma-sep list; '' = auto-discover
+        self.declare_parameter('max_retries', 3)
 
         robots_param = self.get_parameter('robots').value
         self._explicit_robots = (
             [r.strip() for r in robots_param.split(',') if r.strip()]
             if robots_param else []
         )
+        self._max_retries = int(self.get_parameter('max_retries').value)
 
         self._lock         = threading.Lock()
         self._tasks: list[dict]        = []   # [{id, x, y, yaw, label, status, robot}]
@@ -170,6 +174,7 @@ class TaskAllocator(Node):
             'label':  data.get('label', ''),
             'status': PENDING,
             'robot':  '',
+            'retries': 0,
         }
         with self._lock:
             self._tasks.append(task)
@@ -199,13 +204,32 @@ class TaskAllocator(Node):
             prev = self._robot_states.get(robot, '')
             self._robot_states[robot] = state
 
-            # If robot just finished (DONE/FAILED/IDLE), mark its task done
+            # Reconcile any assigned task when a mission finishes or is interrupted.
             if prev == 'NAVIGATING' and state in ('DONE', 'FAILED', 'IDLE'):
                 for t in self._tasks:
                     if t['robot'] == robot and t['status'] == ASSIGNED:
-                        t['status'] = DONE
-                        self.get_logger().info(
-                            f'Task {t["id"]} marked {DONE} (robot={robot}, nav={state})')
+                        if state == 'DONE':
+                            t['status'] = DONE
+                            self.get_logger().info(
+                                f'Task {t["id"]} marked {DONE} (robot={robot})')
+                        elif state == 'FAILED':
+                            t['retries'] += 1
+                            if t['retries'] >= self._max_retries:
+                                t['status'] = FAILED
+                                self.get_logger().warn(
+                                    f'Task {t["id"]} marked {FAILED} after '
+                                    f'{t["retries"]} attempt(s)')
+                            else:
+                                t['status'] = PENDING
+                                self.get_logger().warn(
+                                    f'Task {t["id"]} re-queued after mission failure '
+                                    f'(attempt {t["retries"]}/{self._max_retries})')
+                            t['robot'] = ''
+                        else:
+                            t['status'] = PENDING
+                            t['robot'] = ''
+                            self.get_logger().info(
+                                f'Task {t["id"]} returned to queue after cancel/idle')
 
     # ── Allocation tick ───────────────────────────────────────────────────────
 
@@ -331,8 +355,9 @@ def _status(node: Node):
             for t in tasks:
                 robot = f' → {t["robot"]}' if t['robot'] else ''
                 label = f' [{t["label"]}]' if t['label'] else ''
+                retry = f' retries={t["retries"]}' if t.get('retries') else ''
                 print(f'  {t["id"]}  ({t["x"]:.2f},{t["y"]:.2f},{t["yaw"]:.0f}°)'
-                      f'{label}  {t["status"]}{robot}')
+                      f'{label}  {t["status"]}{robot}{retry}')
         else:
             print('  (empty)')
         print('\n── Robot States ──────────────────────────────────')
@@ -349,7 +374,7 @@ def _usage():
 
 
 def main():
-    argv = sys.argv[1:]
+    argv = remove_ros_args(args=sys.argv)[1:]
 
     if not argv or argv[0] == '--daemon':
         rclpy.init()
@@ -360,7 +385,10 @@ def main():
             pass
         finally:
             node.destroy_node()
-            rclpy.shutdown()
+            try:
+                rclpy.shutdown()
+            except Exception:
+                pass
         return
 
     rclpy.init()
@@ -391,7 +419,10 @@ def main():
         _usage()
 
     node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.shutdown()
+    except Exception:
+        pass
 
 
 if __name__ == '__main__':
