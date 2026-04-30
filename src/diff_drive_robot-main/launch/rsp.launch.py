@@ -42,7 +42,6 @@ def generate_launch_description():
         package='robot_state_publisher',
         executable='robot_state_publisher',
         namespace=namespace,
-        remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')],
         output='screen',
         parameters=[{
             'use_sim_time': use_sim_time,

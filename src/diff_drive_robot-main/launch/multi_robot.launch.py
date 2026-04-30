@@ -63,7 +63,7 @@ from launch.actions import (
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node, PushRosNamespace
+from launch_ros.actions import Node
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -161,7 +161,6 @@ def _build_all(context, pkg_share: str):
     headless     = LaunchConfiguration('headless').perform(context).strip().lower() in ('true', '1', 'yes')
     fleet_mgmt   = LaunchConfiguration('fleet_mgmt').perform(context).strip().lower() in ('true', '1', 'yes')
 
-    nav2_bringup = get_package_share_directory('nav2_bringup')
     slam_pkg     = get_package_share_directory('slam_toolbox')
     ros_gz       = get_package_share_directory('ros_gz_sim')
 
@@ -205,6 +204,16 @@ def _build_all(context, pkg_share: str):
         executable='parameter_bridge',
         name='clock_bridge',
         arguments=['/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock'],
+        output='screen'))
+
+    # Bridge Gazebo's global TF exactly once. The Gazebo /tf stream already
+    # contains all spawned robots, so duplicating this bridge per-robot causes
+    # repeated transforms and cross-namespace contamination.
+    actions.append(Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='tf_bridge_global',
+        arguments=['/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V'],
         output='screen'))
 
     # ── Shared map source ─────────────────────────────────────────────────────
@@ -298,40 +307,12 @@ def _build_all(context, pkg_share: str):
             ],
             output='screen')
 
-        # TF bridge A: Gazebo global /tf → ROS /tf
-        # Needed by SLAM toolbox and other root-namespace nodes.
-        tf_bridge_global = Node(
-            package='ros_gz_bridge',
-            executable='parameter_bridge',
-            name=f'tf_bridge_global_{ns}',
-            namespace=ns,
-            arguments=['/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V'],
-            output='screen')
-
-        # TF bridge B: Gazebo global /tf → ROS /{ns}/tf
-        # Needed by Nav2 nodes (navigation_launch.py remaps /tf → tf = /{ns}/tf).
-        tf_bridge_ns = Node(
-            package='ros_gz_bridge',
-            executable='parameter_bridge',
-            name=f'tf_bridge_ns_{ns}',
-            namespace=ns,
-            arguments=['/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V'],
-            remappings=[('/tf', f'/{ns}/tf')],
-            output='screen')
-
         odom_tf = Node(
             package='diff_drive_robot',
             executable='odom_tf_broadcaster.py',
             namespace=ns,
             name='odom_tf_broadcaster',
-            remappings=[('/tf', 'tf')],
-            output='screen')
-
-        tf_static_relay = Node(
-            package='diff_drive_robot',
-            executable='tf_static_relay.py',
-            namespace=ns,
-            name='tf_static_relay',
+            parameters=[{'use_sim_time': True}],
             output='screen')
 
         # AMCL — localises against /map (shared).
@@ -342,10 +323,10 @@ def _build_all(context, pkg_share: str):
             name='amcl',
             namespace=ns,
             output='screen',
-            parameters=[robot_params],
+            parameters=[robot_params, {'use_sim_time': True}],
             remappings=[
-                ('/tf', 'tf'),
-                ('/tf_static', 'tf_static'),
+                ('tf', '/tf'),
+                ('tf_static', '/tf_static'),
                 ('map', '/map'),
                 ('/map', '/map'),
             ])
@@ -367,7 +348,7 @@ def _build_all(context, pkg_share: str):
         # /robot1/controller_server find its parameters. MPPI critics survive yaml.dump.
         nav2 = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
-                os.path.join(nav2_bringup, 'launch', 'navigation_launch.py')),
+                os.path.join(pkg_share, 'launch', 'nav2_navigation_global_tf.launch.py')),
             launch_arguments={
                 'use_sim_time': 'true',
                 'params_file': robot_params,
@@ -375,15 +356,14 @@ def _build_all(context, pkg_share: str):
             }.items())
 
         # Assemble per-robot actions
-        per_robot = [rsp, spawn, bridge, tf_bridge_global, tf_bridge_ns, odom_tf, tf_static_relay]
+        nav2_group = nav2
+
+        per_robot = [rsp, spawn, bridge, odom_tf]
 
         if is_slam_robot:
             # robot1 in explore mode: SLAM handles localisation
             per_robot += [
-                TimerAction(period=10.0, actions=[GroupAction([
-                    PushRosNamespace(ns),
-                    nav2,
-                ])]),
+                TimerAction(period=10.0, actions=[nav2_group]),
             ]
         elif explore:
             # Other robots in explore mode: need AMCL to localise on SLAM map.
@@ -394,10 +374,7 @@ def _build_all(context, pkg_share: str):
                     amcl_lc,
                 ]),
                 TimerAction(period=16.0, actions=[_initial_pose_pub(ns, x, y, yaw)]),
-                TimerAction(period=19.0, actions=[GroupAction([
-                    PushRosNamespace(ns),
-                    nav2,
-                ])]),
+                TimerAction(period=19.0, actions=[nav2_group]),
             ]
         else:
             # Pre-built map mode: all robots use AMCL
@@ -407,10 +384,7 @@ def _build_all(context, pkg_share: str):
                     amcl_lc,
                 ]),
                 TimerAction(period=8.0, actions=[_initial_pose_pub(ns, x, y, yaw)]),
-                TimerAction(period=11.0, actions=[GroupAction([
-                    PushRosNamespace(ns),
-                    nav2,
-                ])]),
+                TimerAction(period=11.0, actions=[nav2_group]),
             ]
 
         actions.append(GroupAction(per_robot))
