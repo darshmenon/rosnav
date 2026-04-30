@@ -119,12 +119,19 @@ def _resolve_map_file(map_arg: str, world_path: str, pkg_share: str) -> str:
     return candidates[0]
 
 
+def _load_node_params(params_path: str, node_name: str) -> dict:
+    """Return ros__parameters for a single node from a generated YAML file."""
+    with open(params_path) as f:
+        content = yaml.safe_load(f) or {}
+    return (content.get(node_name) or {}).get('ros__parameters', {})
+
+
 def _initial_pose_pub(robot_ns: str, x: str, y: str, yaw: str) -> ExecuteProcess:
     yaw_f = float(yaw)
     qz = math.sin(yaw_f / 2.0)
     qw = math.cos(yaw_f / 2.0)
     msg = json.dumps({
-        'header': {'frame_id': 'map'},
+        'header': {'stamp': 'now', 'frame_id': 'map'},
         'pose': {
             'pose': {
                 'position': {'x': float(x), 'y': float(y), 'z': 0.0},
@@ -142,7 +149,13 @@ def _initial_pose_pub(robot_ns: str, x: str, y: str, yaw: str) -> ExecuteProcess
     })
     return ExecuteProcess(
         cmd=[
-            'ros2', 'topic', 'pub', '--once',
+            'ros2', 'topic', 'pub',
+            '--use-sim-time',
+            '--qos-reliability', 'best_effort',
+            '--wait-matching-subscriptions', '1',
+            '--rate', '1',
+            '--times', '20',
+            '--keep-alive', '1.0',
             f'/{robot_ns}/initialpose',
             'geometry_msgs/msg/PoseWithCovarianceStamped',
             msg,
@@ -307,26 +320,6 @@ def _build_all(context, pkg_share: str):
             ],
             output='screen')
 
-        odom_tf = Node(
-            package='diff_drive_robot',
-            executable='odom_tf_broadcaster.py',
-            namespace=ns,
-            name='odom_tf_broadcaster',
-            parameters=[{'use_sim_time': True}],
-            output='screen')
-
-        # Relay map→robot_ns/odom from global /tf into /{ns}/tf so Nav2 nav
-        # nodes (which subscribe to the namespaced tf bus) can build the full
-        # map→odom→base_link chain.  Critical for robot1 (SLAM) and harmless
-        # for robot2+ where AMCL already publishes directly to /{ns}/tf.
-        tf_map_relay = Node(
-            package='diff_drive_robot',
-            executable='tf_map_relay.py',
-            namespace=ns,
-            name='tf_map_relay',
-            parameters=[{'use_sim_time': True}],
-            output='screen')
-
         # AMCL — localises against /map (shared).
         # Skipped for robot1 in SLAM mode (SLAM provides the map→odom TF).
         amcl_node = Node(
@@ -335,8 +328,10 @@ def _build_all(context, pkg_share: str):
             name='amcl',
             namespace=ns,
             output='screen',
-            parameters=[robot_params, {'use_sim_time': True}],
+            parameters=[_load_node_params(robot_params, 'amcl'), {'use_sim_time': True}],
             remappings=[
+                ('tf', '/tf'),
+                ('tf_static', '/tf_static'),
                 ('map', '/map'),
                 ('/map', '/map'),
             ])
@@ -368,7 +363,7 @@ def _build_all(context, pkg_share: str):
         # Assemble per-robot actions
         nav2_group = nav2
 
-        per_robot = [rsp, spawn, bridge, odom_tf, tf_map_relay]
+        per_robot = [rsp, spawn, bridge]
 
         if is_slam_robot:
             # robot1 in explore mode: SLAM handles localisation
