@@ -124,6 +124,16 @@ assigns each robot a unique frontier — no two robots ever explore the same are
 This launch now also propagates robot namespaces cleanly into xacro/TF and Nav2,
 so each robot gets isolated `odom` and `base_link` frames in shared simulation.
 
+#### Multi-robot demo
+
+Coordinated navigation and exploration:
+
+![Multi-robot navigation and exploration](images/multi_robot_navigation_and_exploration.gif)
+
+Shared map building during exploration:
+
+![Multi-robot mapping](images/multi_robot_mapping.png)
+
 ```bash
 # SLAM + coordinated frontier exploration (default — no pre-built map needed)
 ros2 launch diff_drive_robot multi_robot.launch.py
