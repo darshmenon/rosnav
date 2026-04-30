@@ -76,13 +76,13 @@ class FrontierCoordinator(Node):
         self._visited:  list[tuple[float, float]]            = []
 
         # One Nav2 action client per robot
-        self._clients: dict[str, ActionClient] = {
+        self._nav_clients: dict[str, ActionClient] = {
             r: ActionClient(self, NavigateToPose, f'/{r}/navigate_to_pose')
             for r in self._robots
         }
 
         self.get_logger().info(f'Waiting for Nav2 servers: {self._robots}')
-        for r, client in self._clients.items():
+        for r, client in self._nav_clients.items():
             client.wait_for_server()
             self.get_logger().info(f'  /{r}/navigate_to_pose ready')
 
@@ -160,7 +160,7 @@ class FrontierCoordinator(Node):
         goal.pose.pose.position.y = y
         goal.pose.pose.orientation.w = 1.0
 
-        f = self._clients[ns].send_goal_async(goal)
+        f = self._nav_clients[ns].send_goal_async(goal)
         f.add_done_callback(lambda fut, r=ns: self._on_accepted(fut, r))
 
     def _on_accepted(self, future, ns):
@@ -261,8 +261,12 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
+        try:
+            node.destroy_node()
+        except (KeyError, Exception):
+            pass  # Humble rclpy KeyError on ActionClient cleanup
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':
