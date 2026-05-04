@@ -269,18 +269,28 @@ def _build_all(context, pkg_share: str):
         ]
 
     # ── Per-robot groups ──────────────────────────────────────────────────────
+    # SLAM map origin = robot1's odom origin = robot1's Gazebo world start position.
+    # All AMCL initial poses must be in map frame, so subtract robot1's world coords.
+    slam_x_f = float(ROBOTS[0]['x'])
+    slam_y_f = float(ROBOTS[0]['y'])
+
     for idx, robot in enumerate(ROBOTS):
         ns  = robot['name']
         x, y, z, yaw = robot['x'], robot['y'], robot['z'], robot['yaw']
         is_slam_robot = (explore and idx == 0)  # robot1 localises via SLAM
 
+        # Convert Gazebo world coords → map frame coords for AMCL.
+        # Map origin = robot1's starting world position, so offset by robot1's spawn.
+        map_x = str(float(x) - slam_x_f)
+        map_y = str(float(y) - slam_y_f)
+
         # Template → per-robot YAML (ROBOT_NS substituted)
         initial_pose = None
         if not is_slam_robot:
             initial_pose = {
-                'x': float(x),
-                'y': float(y),
-                'z': float(z),
+                'x': float(x) - slam_x_f,
+                'y': float(y) - slam_y_f,
+                'z': 0.0,
                 'yaw': float(yaw),
             }
         robot_params = _make_robot_params(template_yaml, ns, initial_pose)
@@ -378,7 +388,7 @@ def _build_all(context, pkg_share: str):
                     amcl_node,
                     amcl_lc,
                 ]),
-                TimerAction(period=16.0, actions=[_initial_pose_pub(ns, x, y, yaw)]),
+                TimerAction(period=16.0, actions=[_initial_pose_pub(ns, map_x, map_y, yaw)]),
                 TimerAction(period=19.0, actions=[nav2_group]),
             ]
         else:
@@ -388,7 +398,7 @@ def _build_all(context, pkg_share: str):
                     amcl_node,
                     amcl_lc,
                 ]),
-                TimerAction(period=8.0, actions=[_initial_pose_pub(ns, x, y, yaw)]),
+                TimerAction(period=8.0, actions=[_initial_pose_pub(ns, map_x, map_y, yaw)]),
                 TimerAction(period=11.0, actions=[nav2_group]),
             ]
 
