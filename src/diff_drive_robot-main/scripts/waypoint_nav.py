@@ -27,10 +27,20 @@ Waypoints YAML — two supported formats:
     - [2.0, 0.0, 0.0]
 
 If the file is not found, a built-in default square route is used.
+
+Patrol / loop mode
+──────────────────
+  loop        (bool)  repeat waypoints after completion (default: False)
+  loop_count  (int)   number of repeats; -1 = infinite (default: -1)
+  dwell_sec   (float) seconds to pause at each waypoint (default: 0.0)
+
+  ros2 run diff_drive_robot waypoint_nav.py --ros-args \\
+      -p loop:=true -p loop_count:=5 -p dwell_sec:=2.0
 """
 
 import math
 import os
+import time
 
 import rclpy
 from rclpy.node import Node
@@ -130,19 +140,28 @@ class WaypointNavigator(Node):
         super().__init__('waypoint_navigator')
 
         self.declare_parameter('waypoints_file', _default_waypoints_path())
-        self.declare_parameter('frame_id', 'map')
+        self.declare_parameter('frame_id',    'map')
         self.declare_parameter('action_name', 'follow_waypoints')
+        self.declare_parameter('loop',        False)
+        self.declare_parameter('loop_count',  -1)
+        self.declare_parameter('dwell_sec',   0.0)
 
         waypoints_file = self.get_parameter('waypoints_file').value
         frame_id       = self.get_parameter('frame_id').value
         action_name    = self.get_parameter('action_name').value
+        self._loop        = self.get_parameter('loop').value
+        self._loop_count  = self.get_parameter('loop_count').value
+        self._dwell_sec   = self.get_parameter('dwell_sec').value
 
-        self._waypoints = load_waypoints(waypoints_file)
-        self._frame_id  = frame_id
+        self._waypoints   = load_waypoints(waypoints_file)
+        self._frame_id    = frame_id
+        self._lap         = 0
 
         self.get_logger().info(
             f'Loaded {len(self._waypoints)} waypoints from '
-            f'{"file" if os.path.isfile(waypoints_file) else "defaults"}')
+            f'{"file" if os.path.isfile(waypoints_file) else "defaults"}'
+            + (f' | patrol loop_count={self._loop_count} dwell={self._dwell_sec}s'
+               if self._loop else ''))
 
         self._client = ActionClient(self, FollowWaypoints, action_name)
         self.get_logger().info('Waiting for FollowWaypoints server...')
@@ -150,11 +169,15 @@ class WaypointNavigator(Node):
         self._send_waypoints()
 
     def _send_waypoints(self):
-        now = self.get_clock().now().to_msg()
+        if self._dwell_sec > 0.0 and self._lap > 0:
+            time.sleep(self._dwell_sec)
+
+        now  = self.get_clock().now().to_msg()
         goal = FollowWaypoints.Goal()
         goal.poses = [make_pose(x, y, yaw, now) for x, y, yaw in self._waypoints]
 
-        self.get_logger().info(f'Sending {len(goal.poses)} waypoints...')
+        lap_label = f'lap {self._lap + 1}' if self._loop else 'run'
+        self.get_logger().info(f'Sending {len(goal.poses)} waypoints ({lap_label})...')
         future = self._client.send_goal_async(
             goal, feedback_callback=self._feedback_cb)
         future.add_done_callback(self._goal_response_cb)
@@ -163,6 +186,7 @@ class WaypointNavigator(Node):
         handle = future.result()
         if not handle.accepted:
             self.get_logger().error('Goal rejected.')
+            rclpy.shutdown()
             return
         self.get_logger().info('Goal accepted.')
         handle.get_result_async().add_done_callback(self._result_cb)
@@ -174,14 +198,28 @@ class WaypointNavigator(Node):
 
     def _result_cb(self, future):
         result = future.result()
-        if result.status == GoalStatus.STATUS_SUCCEEDED:
-            missed = list(result.result.missed_waypoints)
+        success = result.status == GoalStatus.STATUS_SUCCEEDED
+        missed  = list(result.result.missed_waypoints) if success else []
+
+        if success:
             if missed:
-                self.get_logger().warn(f'Done. Missed waypoints: {missed}')
+                self.get_logger().warn(f'Lap done. Missed waypoints: {missed}')
             else:
                 self.get_logger().info('All waypoints reached.')
         else:
-            self.get_logger().error(f'Failed. Status: {result.status}')
+            self.get_logger().error(f'Navigation failed. Status: {result.status}')
+
+        self._lap += 1
+
+        # Decide whether to loop
+        if self._loop and success:
+            repeats_done = self._lap
+            if self._loop_count < 0 or repeats_done < self._loop_count:
+                remaining = '∞' if self._loop_count < 0 else self._loop_count - repeats_done
+                self.get_logger().info(f'Patrol lap {self._lap} complete — laps remaining: {remaining}')
+                self._send_waypoints()
+                return
+
         rclpy.shutdown()
 
 
