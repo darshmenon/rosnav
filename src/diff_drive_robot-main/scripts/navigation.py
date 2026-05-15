@@ -96,7 +96,7 @@ class ReliableObstacleNavigator(Node):
 
     def scan_callback(self, msg):
         self.laser_ranges = msg.ranges
-        if not self.laser_angles:
+        if len(self.laser_angles) != len(msg.ranges):
             self.laser_angles = [
                 msg.angle_min + i * msg.angle_increment
                 for i in range(len(msg.ranges))]
@@ -202,7 +202,7 @@ class ReliableObstacleNavigator(Node):
                 twist.angular.z = self.turn_speed * float(np.clip(yaw_error, -1, 1))
 
         twist.linear.x  = float(np.clip(twist.linear.x,  -self.base_speed, self.base_speed))
-        twist.angular.z = float(np.clip(twist.angular.z, -2.0, 2.0))
+        twist.angular.z = float(np.clip(twist.angular.z, -self.turn_speed, self.turn_speed))
 
         if any(math.isnan(v) for v in [twist.linear.x, twist.angular.z]):
             twist = Twist()
