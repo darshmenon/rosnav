@@ -1,56 +1,88 @@
-# ROS 2 Navigation and SLAM with Nav2 and Gazebo Harmonic
+<div align="center">
 
-📖 **Related Blog Post**:
-👉 [*Mastering ROS 2 Navigation: From SLAM Mapping to Autonomous Obstacle Avoidance*](https://medium.com/@darshmenon02/mastering-ros-2-navigation-from-slam-mapping-to-autonomous-obstacle-avoidance-7446e4ff049a)
+# ROS 2 Autonomous Navigation Stack
 
-## Overview
+### SLAM · Nav2 · Multi-Robot · Frontier Exploration · Fleet Management
 
-Autonomous robot navigation using **Nav2**, **SLAM Toolbox**, and **Gazebo Harmonic**. Includes frontier-based exploration, waypoint following, multi-robot support, and 2D LiDAR. Works on **ROS 2 Humble and Jazzy** — distro is detected automatically at launch.
+[![ROS 2](https://img.shields.io/badge/ROS%202-Humble%20%7C%20Jazzy-blue?logo=ros)](https://docs.ros.org/en/humble/)
+[![Gazebo](https://img.shields.io/badge/Gazebo-Harmonic-orange?logo=gazebo)](https://gazebosim.org/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-green)](LICENSE)
+[![Blog](https://img.shields.io/badge/Blog-Medium-black?logo=medium)](https://medium.com/@darshmenon02/mastering-ros-2-navigation-from-slam-mapping-to-autonomous-obstacle-avoidance-7446e4ff049a)
 
-Maintained on GitHub by **@darshmenon**.
+![nav2 demo](images/nav2spedup-ezgif.com-video-to-gif-converter.gif)
 
-![alt text](images/nav2spedup-ezgif.com-video-to-gif-converter.gif)
-![alt text](images/map_demo.png)
+</div>
 
 ---
 
-## ⚠️ Humble vs Jazzy — Automatic Params Selection
+## What is this?
 
-Nav2 plugin naming differs between distros. **The launch files detect `$ROS_DISTRO` automatically** and pick the right config:
+A full autonomous robot navigation stack built on **Nav2**, **SLAM Toolbox**, and **Gazebo Harmonic**. Single command launches everything — Gazebo, SLAM, Nav2, RViz, frontier exploration. Scale from one robot to a fleet by editing a single list.
 
-| Distro | Params file used | Plugin format |
-|---|---|---|
-| **Humble** (default) | `config/nav2_params.yaml` | `nav2_behaviors/Spin` |
-| **Jazzy** | `config/nav2_params_jazzy.yaml` | `nav2_behaviors::Spin` |
+**Distro detection is automatic.** Source your ROS install and launch — no config changes needed between Humble and Jazzy.
 
-> No manual changes needed — just `source /opt/ros/<distro>/setup.bash` before launching.
-> If `$ROS_DISTRO` is missing, launch files fall back to **Humble** params.
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [All Launch Modes](#all-launch-modes)
+- [Fleet Management](#fleet-management)
+- [Worlds](#worlds)
+- [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Features
 
-- **SLAM live mapping** — SLAM Toolbox builds map while navigating
-- **Frontier exploration** — robot autonomously explores unknown areas
-- **Nav2 full stack** — MPPI controller, planner, recovery, behaviours
-- **Multi-robot (scalable)** — N robots sharing one SLAM-built map; add robots by editing one list
-- **Namespaced TF for multi-robot** — per-robot `odom` and `base_link` frame IDs, plus dedicated TF bridging for Nav2 and SLAM
-- **Coordinated frontier exploration** — single coordinator assigns each robot a unique frontier; no duplicate effort across the fleet
-- **Waypoint following** — navigate a sequence of poses
-- **2D LiDAR** — native LaserScan (`gpu_lidar`), no conversion needed for Nav2/SLAM
-- **Fleet GUI** — Tkinter dashboard: click-to-navigate on map, teleop sliders, spawn/save
-- **Fleet CLI** — `fleet_manager.py`: list, status, add, teleop, goto, explore, savemap, mission, tasks, collision, health
-- **Multi-robot teleop** — `multi_teleop.py`: WASD keyboard control with robot switcher
-- **Multiple worlds** — maze, obstacles, warehouse, corridor (all self-contained SDF)
-- **Collision Monitor** — independent safety watchdog: stop/slowdown zones from live LaserScan
-- **Mission Server** — concurrent per-robot mission layer: patrol loops, waypoint sequences, single-pose goto
-- **Velocity Smoother** — jerk-limited cmd_vel pipeline; started automatically alongside Nav2
-- **Custom Behavior Tree** — backup→spin→clear→wait recovery (replaces Nav2 default BT)
-- **Coverage Path Planner** — boustrophedon lawnmower sweep over any map
-- **Task Allocator** — multi-robot Hungarian assignment with retry-aware task queueing
-- **Dynamic Obstacle Tracker** — detects and tracks moving obstacles from consecutive LaserScan frames; publishes MarkerArray + JSON state
-- **Fleet Health Monitor** — per-robot odom/scan Hz, Nav2 node presence, collision and mission state; publishes `/fleet/health` at 1 Hz
-- **Smac Hybrid-A\* Planner** — replaces NavFn; Reeds-Shepp motion model for smooth, kinematically-feasible paths
+<table>
+<tr>
+<td width="50%">
+
+**Core Navigation**
+- SLAM Toolbox live mapping
+- Nav2 full stack (MPPI controller, Smac planner, recovery BT)
+- Frontier-based autonomous exploration
+- Waypoint following
+- Custom Behavior Tree (backup→spin→clear→wait)
+
+</td>
+<td width="50%">
+
+**Multi-Robot Fleet**
+- N robots, one SLAM-built shared map
+- Coordinated frontier assignment — no duplicate effort
+- Namespaced TF per robot (`robot1/odom`, `robot1/base_link`)
+- Headless mode for SSH / CI
+- Hungarian task allocation across idle robots
+
+</td>
+</tr>
+<tr>
+<td>
+
+**Safety Stack**
+- Collision Monitor — stop/slowdown zones from live scan
+- Priority collision avoidance between robots
+- Deadlock detection and automatic recovery
+- Dynamic obstacle tracker with MarkerArray output
+
+</td>
+<td>
+
+**Tooling**
+- Fleet CLI (`fleet_manager.py`) — list, teleop, goto, savemap, health
+- Fleet GUI (Tkinter) — click-to-navigate, velocity sliders
+- Multi-robot keyboard teleop with robot switcher
+- Coverage path planner (boustrophedon sweep)
+- Fleet health monitor at 1 Hz on `/fleet/health`
+
+</td>
+</tr>
+</table>
 
 ---
 
@@ -61,12 +93,14 @@ Nav2 plugin naming differs between distros. **The launch files detect `$ROS_DIST
 | OS | Ubuntu 22.04 | Ubuntu 24.04 |
 | Gazebo | Harmonic | Harmonic |
 
+> Nav2 plugin syntax differs between distros. Launch files detect `$ROS_DISTRO` automatically and pick the right params — no manual changes needed.
+
 ---
 
 ## Installation
 
 ```bash
-# Replace 'humble' with 'jazzy' on Ubuntu 24.04
+# Replace humble with jazzy on Ubuntu 24.04
 sudo apt install -y \
   ros-humble-ros-gz ros-humble-ros-gz-bridge \
   ros-humble-xacro ros-humble-joint-state-publisher \
@@ -75,80 +109,110 @@ sudo apt install -y \
 
 mkdir -p ~/rosnav/src && cd ~/rosnav/src
 git clone https://github.com/darshmenon/rosnav.git
-cd ~/rosnav && colcon build --symlink-install
-source ~/rosnav/install/setup.bash
+cd ~/rosnav
+colcon build --symlink-install
+source install/setup.bash
 ```
 
 ---
 
-## Running
+## Quick Start
 
-All maps are automatically saved to and loaded from `src/diff_drive_robot-main/maps/` based on the world name.
+```bash
+# Explore the maze — SLAM + Nav2 + frontier explorer in one command
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze explore:=true
 
-### Mode 1 — Autonomous frontier exploration (Auto-maps)
-Run SLAM, Gazebo, RViz, and the Frontier Explorer all in a **single command**. The robot will explore the maze and progressively save the map (`map_maze.yaml`) every 15 seconds.
+# Multi-robot fleet (2 robots, coordinated exploration)
+ros2 launch diff_drive_robot multi_robot.launch.py
+
+# Keyboard control (any terminal)
+ros2 run teleop_twist_keyboard teleop_twist_keyboard
+```
+
+Maps auto-save to `src/diff_drive_robot-main/maps/map_<world>.yaml` every 15 s during exploration.
+
+---
+
+## All Launch Modes
+
+### Single Robot
+
+#### Mode 1 — Autonomous SLAM + Frontier Exploration
+Gazebo + SLAM + Nav2 + RViz + frontier explorer. Robot maps the world on its own.
 ```bash
 ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze explore:=true
 ```
 
-### Mode 2 — SLAM live mapping + Nav2 (Manual Control)
-If you want to manually drive and build the map yourself:
+#### Mode 2 — Manual SLAM
+Drive the robot yourself to build the map.
 ```bash
 ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze
-```
-*(You can manually run `ros2 run diff_drive_robot frontier_explorer.py` later if desired)*
-
-### Maze world quick launch (recommended)
-```bash
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze rviz:=True
-```
-Notes:
-- Default robot entity name is `diff_drive`.
-- Default maze spawn is set to a safer visible area.
-- If you still do not see the robot, run with explicit spawn:
-```bash
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze \
-  spawn_x:=1.5 spawn_y:=1.0 spawn_z:=0.3 spawn_yaw:=0.0
+# Run frontier explorer later if needed:
+ros2 run diff_drive_robot frontier_explorer.py
 ```
 
-### Mode 3 — Saved map + AMCL localisation
-Once the map is saved into the `maps/` directory, you can load the environment in localisation-only mode (no SLAM). It will automatically find `map_maze.yaml` if you use `world_name:=maze`:
+#### Mode 3 — Pre-built Map + AMCL Localisation
+Load a saved map and navigate in localisation-only mode.
 ```bash
 ros2 launch diff_drive_robot robot.launch.py world:=/full/path/to/maze.world
+# Force a specific map:
+ros2 launch diff_drive_robot robot.launch.py map:=/full/path/to/my_map.yaml
 ```
 
-### Mode 4 — Multi-Robot Navigation (Scalable)
-Launch N robots sharing a single SLAM-built map. A centralized **frontier coordinator**
-assigns each robot a unique frontier — no two robots ever explore the same area.
+#### Mode 4 — Coverage Sweep
+After mapping — boustrophedon lawnmower sweep over the full free space.
+```bash
+ros2 run diff_drive_robot coverage_planner.py
+# Tighter rows for warehouse:
+ros2 run diff_drive_robot coverage_planner.py --ros-args -p sweep_spacing:=0.4
+```
 
-This launch now also propagates robot namespaces cleanly into xacro/TF and Nav2,
-so each robot gets isolated `odom` and `base_link` frames in shared simulation.
+#### Mode 5 — 3-Tier Autonomy (Mission + Nav + Safety)
+```
+Mission Layer  ←  mission_server.py   patrol / sequence / goto
+Nav Layer      ←  Nav2 BT + MPPI      path planning + control
+Safety Layer   ←  collision_monitor   stop / slowdown from scan
+```
+```bash
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze safety:=true
 
-#### Multi-robot demo
+# Separate terminal — start mission server
+ros2 run diff_drive_robot mission_server.py
 
-Coordinated navigation and exploration:
+# Send missions
+ros2 run diff_drive_robot mission_server.py patrol robot1 1,2,0 3,4,90 0,0,180
+ros2 run diff_drive_robot mission_server.py goto robot1 3.0 -1.0 45
+ros2 run diff_drive_robot mission_server.py status
+ros2 run diff_drive_robot mission_server.py cancel
+```
+
+---
+
+### Multi-Robot
 
 ![Multi-robot navigation and exploration](images/multi_robot_navigation_and_exploration.gif)
 
-Shared map building during exploration:
-
-![Multi-robot mapping](images/multi_robot_mapping.png)
+`robot1` runs SLAM and shares the map. All other robots use AMCL on that map. A single `frontier_coordinator` assigns unique frontiers — no two robots explore the same area.
 
 ```bash
-# SLAM + coordinated frontier exploration (default — no pre-built map needed)
+# SLAM + coordinated exploration (default)
 ros2 launch diff_drive_robot multi_robot.launch.py
 
-# Pre-built map mode (no exploration)
+# Pre-built map mode
 ros2 launch diff_drive_robot multi_robot.launch.py explore:=false
 
 # Different world
 ros2 launch diff_drive_robot multi_robot.launch.py world:=warehouse
 
-# Different world, pre-built map
-ros2 launch diff_drive_robot multi_robot.launch.py world:=warehouse explore:=false
+# Headless (SSH / CI)
+ros2 launch diff_drive_robot multi_robot.launch.py headless:=true
+
+# Full fleet management stack
+ros2 launch diff_drive_robot multi_robot.launch.py fleet_mgmt:=true
 ```
 
-To add more robots, edit only the `ROBOTS` list in `multi_robot.launch.py`:
+#### Adding robots
+Edit only the `ROBOTS` list in `multi_robot.launch.py`:
 ```python
 ROBOTS = [
     {'name': 'robot1', 'x': '-2.0', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
@@ -156,298 +220,140 @@ ROBOTS = [
     {'name': 'robot3', 'x':  '0.5', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
 ]
 ```
-The coordinator picks up the new robot automatically — no other files change.
+Everything else — TF, Nav2 params, frontier coordinator — picks up the new robot automatically.
 
-**How coordinated exploration works:**
-- `frontier_coordinator.py` starts as a single node at t=20s (after all Nav2 stacks are up)
-- It reads `/map`, finds all frontier clusters, and assigns the nearest unassigned frontier to each idle robot
-- When a robot reaches its frontier it is immediately assigned the next one
-- If a robot fails, the frontier is freed for another robot to retry
-
-#### Multi-robot launch arguments
+#### Launch arguments
 
 | Argument | Default | Description |
 |---|---|---|
-| `world` | `maze` | World name (`maze`, `warehouse`, `house`, `corridor`, `obstacles`) or full `.world` path |
-| `explore` | `true` | `true` = SLAM + frontier exploration; `false` = pre-built map + AMCL |
-| `headless` | `false` | `true` = Gazebo server only — no GUI, no RViz (CI / SSH-friendly) |
-| `fleet_mgmt` | `false` | `true` = also start mission server, task allocator, fleet health, priority collision avoidance, and deadlock recovery |
-| `rviz` | `True` | `false` = skip RViz (automatically skipped when `headless:=true`) |
-| `map` | *(auto)* | Path to pre-built map yaml; only used when `explore:=false` |
+| `world` | `maze` | World name or full `.world` path |
+| `explore` | `true` | `true` = SLAM + frontier; `false` = pre-built map + AMCL |
+| `headless` | `false` | No Gazebo GUI or RViz |
+| `fleet_mgmt` | `false` | Start mission server, task allocator, health monitor, collision avoidance, deadlock recovery |
+| `rviz` | `true` | Skip RViz |
+| `map` | *(auto)* | Path to map YAML — only used when `explore:=false` |
 
-#### Headless mode (no GUI — SSH / CI friendly)
+#### Shared map building
 
+![Multi-robot mapping](images/multi_robot_mapping.png)
+
+#### Verify multi-robot
 ```bash
-# Headless SLAM + frontier exploration
-ros2 launch diff_drive_robot multi_robot.launch.py headless:=true
-
-# Headless pre-built map navigation
-ros2 launch diff_drive_robot multi_robot.launch.py headless:=true explore:=false
-
-# Headless + fleet management
-ros2 launch diff_drive_robot multi_robot.launch.py headless:=true fleet_mgmt:=true
-
-# Headless warehouse, pre-built map
-ros2 launch diff_drive_robot multi_robot.launch.py headless:=true explore:=false world:=warehouse
-```
-
-Verify navigation from CLI when headless:
-
-```bash
-# Robots publishing scan
-ros2 topic list | grep scan
-
-# Nav2 action server ready
-ros2 action list | grep navigate_to_pose
-
-# Send goal to robot1
-ros2 action send_goal /robot1/navigate_to_pose nav2_msgs/action/NavigateToPose \
-  "{pose: {header: {frame_id: map}, pose: {position: {x: -1.5, y: -0.5}, orientation: {w: 1.0}}}}"
-
-# Watch goal status
-ros2 action send_goal --feedback /robot1/navigate_to_pose nav2_msgs/action/NavigateToPose \
-  "{pose: {header: {frame_id: map}, pose: {position: {x: 0.0, y: -0.5}, orientation: {w: 1.0}}}}"
-
-# Monitor odom
-ros2 topic echo /robot1/odom --once
-ros2 topic echo /robot2/odom --once
-```
-
-#### Fleet management layer (optional)
-
-```bash
-# Enable the fleet-management stack alongside exploration
-ros2 launch diff_drive_robot multi_robot.launch.py fleet_mgmt:=true
-
-# Headless + fleet management + warehouse
-ros2 launch diff_drive_robot multi_robot.launch.py headless:=true fleet_mgmt:=true world:=warehouse
-```
-
-When `fleet_mgmt:=true`, the launch starts:
-- `mission_server.py`
-- `task_allocator.py`
-- `fleet_health.py`
-- `priority_collision_avoidance.py`
-- `deadlock_recovery.py`
-
-Notes:
-- This repo uses per-robot Nav2 plus reactive fleet coordination. It does not include a full CBS planner.
-- Task allocation is distance-based Hungarian matching across idle robots and pending tasks.
-- Mission state is published per robot on `/mission/state`.
-
-### 3D LiDAR Setup
-The robot URDF supports both 2D and 3D LiDARs. To use the 3D LiDAR:
-1. Edit `urdf/robot.urdf.xacro` and change `<xacro:include filename="lidar.xacro" />` to `<xacro:include filename="lidar3d.xacro" />`.
-2. Since Nav2 expects 2D `LaserScan` messages on `/scan`, but the 3D LiDAR outputs `PointCloud2` on `/points`, you must run the `pointcloud_to_laserscan` node converter alongside your launch files:
-```bash
-sudo apt install ros-$ROS_DISTRO-pointcloud-to-laserscan
-ros2 run pointcloud_to_laserscan pointcloud_to_laserscan_node \
-    --ros-args -r cloud_in:=/points -r scan:=/scan \
-    -p min_height:=0.1 -p max_height:=1.0 -p angle_min:=-1.57 -p angle_max:=1.57
-```
-
-### Custom maps
-To force load a custom map file:
-```bash
-ros2 launch diff_drive_robot robot.launch.py map:=/full/path/to/my_custom_map.yaml
-```
-To use a custom world file and optionally specify a map save prefix:
-```bash
-ros2 launch diff_drive_robot slam_nav.launch.py world:=/full/path/to/world.world map_prefix:=/tmp/custom_map
-```
-
-### Mode 5 — Fleet GUI (click-to-navigate)
-```bash
-ros2 run diff_drive_robot fleet_gui.py
-```
-Features: live robot list, click on map to send goals, velocity sliders for teleop,
-spawn new robots, save SLAM map — all in a graphical window.
-
-### Mode 6 — Fleet CLI (terminal)
-```bash
-ros2 run diff_drive_robot fleet_manager.py list          # list robots
-ros2 run diff_drive_robot fleet_manager.py status        # SLAM/Nav2/map status
-ros2 run diff_drive_robot fleet_manager.py add robot3 1.0 2.0   # spawn robot
-ros2 run diff_drive_robot fleet_manager.py teleop robot1 # keyboard drive
-ros2 run diff_drive_robot fleet_manager.py goto robot2 3.0 -1.0 # send goal
-ros2 run diff_drive_robot fleet_manager.py explore robot2        # frontier nav
-ros2 run diff_drive_robot fleet_manager.py savemap src/diff_drive_robot-main/maps/map_maze
-# Mission commands (mission server must be running):
-ros2 run diff_drive_robot fleet_manager.py mission robot1 patrol 1,2,0 3,4,90 0,0,180
-ros2 run diff_drive_robot fleet_manager.py mission robot1 goto 3.0 -1.0 45
-ros2 run diff_drive_robot fleet_manager.py mission robot1 status
-ros2 run diff_drive_robot fleet_manager.py mission robot1 cancel
-ros2 run diff_drive_robot fleet_manager.py tasks add 2.0 1.5 0 pickup_A
-ros2 run diff_drive_robot fleet_manager.py tasks status
-ros2 run diff_drive_robot fleet_manager.py tasks clear
-ros2 run diff_drive_robot fleet_manager.py collision robot1  # safety state
-ros2 run diff_drive_robot fleet_manager.py health            # per-robot health
-```
-
-### Mode 7 — 3-Tier Autonomy Stack (Mission + Safety)
-
-The stack now has three layers:
-```
-Mission Layer  ← mission_server.py  (patrol/sequence/goto missions)
-Nav Layer      ← Nav2 BT + MPPI     (path planning + control)
-Safety Layer   ← collision_monitor  (stop/slowdown zones from scan)
-```
-
-Launch with safety enabled (default):
-```bash
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze safety:=true
-```
-
-Start the mission server daemon in a separate terminal:
-```bash
-ros2 run diff_drive_robot mission_server.py
-```
-
-Send missions directly:
-```bash
-# Patrol loop — robot1 visits three waypoints repeatedly
-ros2 run diff_drive_robot mission_server.py patrol robot1 1,2,0 3,4,90 0,0,180
-
-# One-shot sequence
-ros2 run diff_drive_robot mission_server.py sequence robot1 2,0,0 2,2,90 0,2,180
-
-# Single goal
-ros2 run diff_drive_robot mission_server.py goto robot1 3.0 -1.0 45
-
-# Check state
-ros2 run diff_drive_robot mission_server.py status
-
-# Check one robot
-ros2 run diff_drive_robot mission_server.py status robot1
-
-# Cancel
-ros2 run diff_drive_robot mission_server.py cancel
-```
-
-Monitor the collision safety layer:
-```bash
-ros2 topic echo /collision_monitor/state
-```
-
-### Mode 9 — Coverage sweep (map the whole free space)
-```bash
-# After mapping is done:
-ros2 run diff_drive_robot coverage_planner.py
-# Tighter sweep for warehouse world:
-ros2 run diff_drive_robot coverage_planner.py --ros-args -p sweep_spacing:=0.4
-```
-
-### Mode 10 — Multi-robot task queue
-```bash
-# Start daemon (or use multi_robot.launch.py fleet_mgmt:=true):
-ros2 run diff_drive_robot task_allocator.py
-
-# Queue tasks — allocator solves a Hungarian assignment across idle robots:
-ros2 run diff_drive_robot fleet_manager.py tasks add 2.0 1.5 0 pickup_A
-ros2 run diff_drive_robot fleet_manager.py tasks add 4.0 -1.0 90 dock_B
-ros2 run diff_drive_robot fleet_manager.py tasks status
-```
-
-### Mode 11 — Dynamic Obstacle Tracker
-```bash
-ros2 run diff_drive_robot obstacle_tracker.py
-# Visualise in RViz: add MarkerArray on /obstacle_tracker/markers
-# Raw JSON state:
-ros2 topic echo /obstacle_tracker/state
-```
-Detects moving obstacles by comparing consecutive LaserScan frames.
-Clusters closing range rays via single-linkage and transforms them to the map frame.
-Tunable params: `lookback` (frames to compare, default 3), `delta_threshold` (m, default 0.05), `cluster_dist` (m, default 0.3).
-
-### Mode 12 — Fleet Health Monitor
-```bash
-ros2 run diff_drive_robot fleet_health.py
-# Live health dashboard:
-ros2 topic echo /fleet/health
-# Or via fleet CLI:
-ros2 run diff_drive_robot fleet_manager.py health
-```
-Tracks per-robot odom/scan publish rate (Hz), Nav2 node presence, collision monitor state, and mission state.
-Reports `ERROR` if Hz = 0, `WARN` if below threshold or Nav2 is down, `OK` otherwise.
-Publishes a JSON summary to `/fleet/health` once per second.
-
-### Mode 13 — Multi-robot keyboard teleop
-```bash
-ros2 run diff_drive_robot multi_teleop.py
-# → interactive menu: select robot, WASD to drive, R to switch, N to spawn new
-```
-
-### Available worlds
-| World | Description | Launch arg |
-|---|---|---|
-| `maze` | Enclosed maze for exploration | `world:=maze` |
-| `obstacles` | Open field with barrels | `world:=obstacles` |
-| `warehouse` | 24×20m warehouse — 5 double shelf-rows, loading dock, staging zone, pillars, pallet stacks | `world:=warehouse` |
-| `house` | 16×12m house — living room, kitchen, hallway, 2 bedrooms, bathroom, furniture | `world:=house` |
-| `corridor` | Narrow corridor with rooms | `world:=corridor` |
-
-All worlds use only SDF primitives — no external model downloads, instant load.
-
-#### Single-robot in any world
-```bash
-# Explore + SLAM
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=warehouse explore:=true
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=house explore:=true
-
-# Pre-built map (after saving one)
-ros2 launch diff_drive_robot robot.launch.py world:=/full/path/to/warehouse.world
-```
-
-#### Multi-robot in any world
-```bash
-ros2 launch diff_drive_robot multi_robot.launch.py world:=warehouse
-ros2 launch diff_drive_robot multi_robot.launch.py world:=house
-ros2 launch diff_drive_robot multi_robot.launch.py world:=corridor explore:=false
-```
-
-### Verify multi-robot
-```bash
-# Both robots spawned
+# Topics per robot
 ros2 topic list | grep -E "/robot1|/robot2"
 
-# Shared map (SLAM or map_server)
-ros2 topic hz /map
-
-# Send goals to individual robots
+# Send goals
 ros2 action send_goal /robot1/navigate_to_pose nav2_msgs/action/NavigateToPose \
   "{pose: {header: {frame_id: map}, pose: {position: {x: -1.5, y: -0.5}, orientation: {w: 1.0}}}}"
 
 ros2 action send_goal /robot2/navigate_to_pose nav2_msgs/action/NavigateToPose \
   "{pose: {header: {frame_id: map}, pose: {position: {x: 0.0, y: -0.5}, orientation: {w: 1.0}}}}"
-```
 
-### 3D LiDAR test (PointCloud2 + Nav2 compatibility)
-This project publishes 3D LiDAR on `/points` (PointCloud2). Nav2 needs `/scan` (LaserScan), so run conversion:
-```bash
-ros2 run pointcloud_to_laserscan pointcloud_to_laserscan_node \
-  --ros-args -r cloud_in:=/points -r scan:=/scan \
-  -p target_frame:=base_link -p min_height:=0.0 -p max_height:=1.0
-```
-Useful tuning params from `pointcloud_to_laserscan`: `angle_min`, `angle_max`, `angle_increment`, `range_min`, `range_max`, `transform_tolerance`.
-
-Smoke test commands:
-```bash
-# Check point cloud stream exists
-ros2 topic hz /points
-
-# Inspect one point cloud message
-ros2 topic echo /points --once
-
-# After conversion, confirm scan exists for Nav2/SLAM
-ros2 topic hz /scan
+# Watch odom
+ros2 topic echo /robot1/odom --once
 ```
 
 ---
 
-## Keyboard Control
+## Fleet Management
+
+### CLI
 
 ```bash
-ros2 run teleop_twist_keyboard teleop_twist_keyboard
+ros2 run diff_drive_robot fleet_manager.py list               # list active robots
+ros2 run diff_drive_robot fleet_manager.py status             # SLAM / Nav2 / map state
+ros2 run diff_drive_robot fleet_manager.py add robot3 1.0 2.0 # spawn robot at (1,2)
+ros2 run diff_drive_robot fleet_manager.py teleop robot1      # keyboard drive
+ros2 run diff_drive_robot fleet_manager.py goto robot2 3.0 -1.0
+ros2 run diff_drive_robot fleet_manager.py explore robot2
+ros2 run diff_drive_robot fleet_manager.py savemap src/diff_drive_robot-main/maps/map_maze
+ros2 run diff_drive_robot fleet_manager.py health             # per-robot health report
+
+# Missions (mission_server must be running)
+ros2 run diff_drive_robot fleet_manager.py mission robot1 patrol 1,2,0 3,4,90 0,0,180
+ros2 run diff_drive_robot fleet_manager.py mission robot1 status
+ros2 run diff_drive_robot fleet_manager.py mission robot1 cancel
+
+# Task queue
+ros2 run diff_drive_robot fleet_manager.py tasks add 2.0 1.5 0 pickup_A
+ros2 run diff_drive_robot fleet_manager.py tasks add 4.0 -1.0 90 dock_B
+ros2 run diff_drive_robot fleet_manager.py tasks status
+ros2 run diff_drive_robot fleet_manager.py tasks clear
+```
+
+### GUI
+```bash
+ros2 run diff_drive_robot fleet_gui.py
+```
+Click on the map to send goals, use sliders for teleop, spawn robots, save the SLAM map — all in one window.
+
+### Multi-robot teleop
+```bash
+ros2 run diff_drive_robot multi_teleop.py
+# WASD to drive, R to switch robot, N to spawn new
+```
+
+### Dynamic obstacle tracker
+```bash
+ros2 run diff_drive_robot obstacle_tracker.py
+# Visualise in RViz: MarkerArray on /obstacle_tracker/markers
+ros2 topic echo /obstacle_tracker/state
+```
+
+### Fleet health monitor
+```bash
+ros2 run diff_drive_robot fleet_health.py
+ros2 topic echo /fleet/health
+```
+Tracks odom/scan Hz, Nav2 node presence, collision state, and mission state per robot. Reports `OK` / `WARN` / `ERROR` at 1 Hz.
+
+### Task allocator
+```bash
+ros2 run diff_drive_robot task_allocator.py  # or fleet_mgmt:=true in multi_robot
+ros2 run diff_drive_robot fleet_manager.py tasks add 2.0 1.5 0 pickup_A
+```
+Hungarian assignment across idle robots. Pure-Python — no scipy needed.
+
+---
+
+## 3D LiDAR (optional)
+
+The URDF supports both 2D and 3D LiDAR. Default is 2D (`lidar.xacro`).
+
+To switch to 3D:
+1. Edit `urdf/robot.urdf.xacro` — replace `lidar.xacro` with `lidar3d.xacro`
+2. Convert PointCloud2 → LaserScan for Nav2:
+
+```bash
+sudo apt install ros-$ROS_DISTRO-pointcloud-to-laserscan
+ros2 run pointcloud_to_laserscan pointcloud_to_laserscan_node \
+    --ros-args -r cloud_in:=/points -r scan:=/scan \
+    -p min_height:=0.1 -p max_height:=1.0 \
+    -p angle_min:=-1.57 -p angle_max:=1.57
+```
+
+---
+
+## Worlds
+
+| World | Size | Description |
+|---|---|---|
+| `maze` | — | Enclosed maze, ideal for exploration |
+| `obstacles` | — | Open field with barrel obstacles |
+| `warehouse` | 24×20 m | 5 shelf rows, loading dock, staging zone, pillars, pallet stacks |
+| `house` | 16×12 m | Living room, kitchen, hallway, 2 bedrooms, bathroom, furniture |
+| `corridor` | — | Narrow corridor with branching rooms |
+
+All worlds use SDF primitives only — no external model downloads, instant load.
+
+```bash
+# Single robot, any world
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=warehouse explore:=true
+
+# Multi-robot, any world
+ros2 launch diff_drive_robot multi_robot.launch.py world:=warehouse
+ros2 launch diff_drive_robot multi_robot.launch.py world:=house
+ros2 launch diff_drive_robot multi_robot.launch.py world:=corridor explore:=false
 ```
 
 ---
@@ -456,19 +362,45 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 
 | Symptom | Fix |
 |---|---|
-| `FATAL: plugin X does not exist` | Wrong distro params — check `$ROS_DISTRO` is sourced correctly |
-| Planner fails / `SmacPlannerHybrid` not found | Install: `sudo apt install ros-$ROS_DISTRO-nav2-smac-planner` |
-| Map not saving correctly | Ensure `explore:=true` is set. Maps save to `src/diff_drive_robot-main/maps/` |
-| Frontier says `No frontiers` repeatedly | Check SLAM logs for `TF_OLD_DATA` / dropped scans and kill stale Gazebo/ROS processes before relaunch |
-| Robot not moving | Run `ros2 topic hz /cmd_vel` — if 0, Nav2 lifecycle failed; check node list |
-| Multi-robot robots not visible in Gazebo | Ensure you have sourced and rebuilt after the latest fixes (`colcon build --symlink-install`) |
-| Coordinator logs `goal rejected` immediately | Nav2 for that robot hasn't finished starting — coordinator will retry on next poll cycle (every 2s) |
-| All robots go to same area | Old per-robot `frontier_explorer` nodes still running — kill them; only `frontier_coordinator` should run |
-| Multi-robot TF errors | Confirm RSP `frame_prefix` fix is applied (`rsp.launch.py`). Run `ros2 run tf2_tools view_frames` to inspect the tree |
-| RViz GLSL errors | Cosmetic only, can be ignored |
+| `FATAL: plugin X does not exist` | Check `$ROS_DISTRO` is sourced correctly — wrong distro params loaded |
+| `SmacPlannerHybrid` not found | `sudo apt install ros-$ROS_DISTRO-nav2-smac-planner` |
+| Map not saving | Confirm `explore:=true`; maps write to `src/diff_drive_robot-main/maps/` |
+| `No frontiers` in explorer logs | Check for `TF_OLD_DATA` / dropped scans; kill stale Gazebo/ROS processes |
+| Robot not moving | `ros2 topic hz /cmd_vel` — if 0, Nav2 lifecycle failed; check node list |
+| Robots not visible in Gazebo | Rebuild: `colcon build --symlink-install` then `source install/setup.bash` |
+| `goal rejected` immediately | Nav2 still starting — coordinator retries every 2 s automatically |
+| All robots go to same area | Old per-robot `frontier_explorer` nodes running — kill them; only `frontier_coordinator` should run |
+| Multi-robot TF errors | Run `ros2 run tf2_tools view_frames` to inspect the tree; confirm `rsp.launch.py` frame_prefix fix is applied |
+| RViz GLSL errors | Cosmetic — safe to ignore |
 
 ---
 
-## Contributing
+## Architecture
 
-Issues and pull requests welcome.
+```
+┌─────────────────────────────────────────────────────┐
+│                  Fleet Management                    │
+│  mission_server · task_allocator · fleet_health      │
+│  priority_collision_avoidance · deadlock_recovery    │
+└──────────────────────┬──────────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────────┐
+│                  Per-Robot Stack                     │
+│  Nav2 (MPPI + Smac + BT)  ·  AMCL / SLAM Toolbox    │
+│  velocity_smoother  ·  collision_monitor             │
+└──────────────────────┬──────────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────────┐
+│                   Simulation                         │
+│          Gazebo Harmonic  ·  ros-gz-bridge           │
+│          LaserScan  ·  Odometry  ·  TF               │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+<div align="center">
+
+Made by [@darshmenon](https://github.com/darshmenon) · [Blog post](https://medium.com/@darshmenon02/mastering-ros-2-navigation-from-slam-mapping-to-autonomous-obstacle-avoidance-7446e4ff049a)
+
+</div>
