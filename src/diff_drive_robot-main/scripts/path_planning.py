@@ -1,4 +1,7 @@
 import heapq
+import math
+
+import rclpy
 import numpy as np
 from rclpy.node import Node
 from nav_msgs.msg import Path
@@ -93,4 +96,56 @@ class ImprovedAStar(Node):
             
         self.path_pub.publish(msg)
 
-    # Add visualization and coordinate conversion methods
+    def world_to_grid(self, x: float, y: float) -> tuple[int, int]:
+        res = self.get_parameter('resolution').value
+        return (int(x / res), int(y / res))
+
+    def grid_to_world(self, gx: int, gy: int) -> Point:
+        res = self.get_parameter('resolution').value
+        p = Point()
+        p.x = gx * res
+        p.y = gy * res
+        return p
+
+    def reconstruct_path(self, came_from: dict, current: tuple) -> list:
+        path = [current]
+        while current in came_from:
+            current = came_from[current]
+            path.append(current)
+        path.reverse()
+        return path
+
+    def publish_obstacles(self):
+        res = self.get_parameter('resolution').value
+        marker = Marker()
+        marker.header.stamp = self.get_clock().now().to_msg()
+        marker.header.frame_id = 'map'
+        marker.ns = 'obstacles'
+        marker.type = Marker.POINTS
+        marker.action = Marker.ADD
+        marker.scale.x = res
+        marker.scale.y = res
+        marker.color.r = 1.0
+        marker.color.a = 1.0
+        for gx, gy in self.obstacles:
+            p = Point()
+            p.x = gx * res
+            p.y = gy * res
+            marker.points.append(p)
+        self.marker_pub.publish(marker)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = ImprovedAStar()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
