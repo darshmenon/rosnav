@@ -177,13 +177,16 @@ class ObstacleTracker(Node):
         for i in range(len(pts)):
             if assigned[i] >= 0:
                 continue
+            queue = [i]
             assigned[i] = cid
-            for j in range(i + 1, len(pts)):
-                if assigned[j] >= 0:
-                    continue
-                d = math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1])
-                if d < self._cluster_r:
-                    assigned[j] = cid
+            while queue:
+                cur = queue.pop()
+                for j in range(len(pts)):
+                    if assigned[j] >= 0:
+                        continue
+                    if math.hypot(pts[cur][0] - pts[j][0], pts[cur][1] - pts[j][1]) < self._cluster_r:
+                        assigned[j] = cid
+                        queue.append(j)
             cid += 1
 
         clusters = []
