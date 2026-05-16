@@ -22,7 +22,7 @@ from launch.actions import (
     OpaqueFunction,
     TimerAction,
 )
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -55,6 +55,7 @@ def _build_runtime_actions(context, pkg_share: str):
     world_name_arg = LaunchConfiguration('world_name').perform(context)
     world_arg = LaunchConfiguration('world').perform(context)
     rviz = LaunchConfiguration('rviz')
+    headless = LaunchConfiguration('headless')
     explore = LaunchConfiguration('explore')
     robot_name = LaunchConfiguration('robot_name')
     spawn_x = LaunchConfiguration('spawn_x')
@@ -85,11 +86,14 @@ def _build_runtime_actions(context, pkg_share: str):
         }.items(),
     )
 
-    gazebo_client = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(get_package_share_directory('ros_gz_sim'), 'launch', 'gz_sim.launch.py')
-        ),
-        launch_arguments={'gz_args': '-g'}.items(),
+    gazebo_client = GroupAction(
+        condition=UnlessCondition(headless),
+        actions=[IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(get_package_share_directory('ros_gz_sim'), 'launch', 'gz_sim.launch.py')
+            ),
+            launch_arguments={'gz_args': '-g'}.items(),
+        )],
     )
 
     spawn_robot = Node(
@@ -195,11 +199,13 @@ def _build_runtime_actions(context, pkg_share: str):
     # ── RViz ──────────────────────────────────────────────────────────────
     rviz2 = GroupAction(
         condition=IfCondition(rviz),
-        actions=[Node(
-            package='rviz2',
-            executable='rviz2',
-            arguments=['-d', os.path.join(pkg_share, 'rviz', 'bot.rviz')],
-            output='screen')])
+        actions=[GroupAction(
+            condition=UnlessCondition(headless),
+            actions=[Node(
+                package='rviz2',
+                executable='rviz2',
+                arguments=['-d', os.path.join(pkg_share, 'rviz', 'bot.rviz')],
+                output='screen')])])
 
     # ── Safety Layer: Collision Monitor ───────────────────────────────────
     safety = LaunchConfiguration('safety')
@@ -307,5 +313,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             name='safety', default_value='true',
             description='Launch collision monitor safety layer'),
+        DeclareLaunchArgument(
+            name='headless', default_value='false',
+            description='Skip Gazebo GUI and RViz (server + nav only)'),
         OpaqueFunction(function=_build_runtime_actions, args=[pkg_share]),
     ])

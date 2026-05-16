@@ -182,6 +182,7 @@ class LLMNavigator(Node):
         threading.Thread(target=self._load_whisper, daemon=True).start()
 
         self._busy = False
+        self._busy_lock = threading.Lock()
 
         self.get_logger().info(
             f'LLM nav ready.  ollama={self._ollama_model}  '
@@ -274,6 +275,11 @@ class LLMNavigator(Node):
         return None
 
     def _send_goal(self, x: float, y: float, yaw_deg: float):
+        # Run in a background thread so we never block the ROS executor.
+        threading.Thread(
+            target=self._send_goal_thread, args=(x, y, yaw_deg), daemon=True).start()
+
+    def _send_goal_thread(self, x: float, y: float, yaw_deg: float):
         waited = 0.0
         while not self._nav_client.wait_for_server(timeout_sec=5.0):
             waited += 5.0
@@ -282,7 +288,8 @@ class LLMNavigator(Node):
             if waited >= 60.0:
                 self.get_logger().error(
                     'NavigateToPose server did not come up after 60s — is Nav2 running?')
-                self._busy = False
+                with self._busy_lock:
+                    self._busy = False
                 return
 
         pose = PoseStamped()
@@ -321,7 +328,8 @@ class LLMNavigator(Node):
         handle = future.result()
         if not handle.accepted:
             self.get_logger().error('Goal rejected by Nav2.')
-            self._busy = False
+            with self._busy_lock:
+                self._busy = False
             return
         handle.get_result_async().add_done_callback(self._result_cb)
 
@@ -343,7 +351,8 @@ class LLMNavigator(Node):
             self.get_logger().warn(
                 f'Navigation ended with status {status}  |  '
                 f'time: {elapsed:.1f}s  |  recoveries: {self._recovery_count}')
-        self._busy = False
+        with self._busy_lock:
+            self._busy = False
 
     # ── entry points ──────────────────────────────────────────────────────────
 
@@ -352,7 +361,9 @@ class LLMNavigator(Node):
 
     def handle_voice(self):
         """Called from UI thread when user presses Enter."""
-        if self._busy:
+        with self._busy_lock:
+            busy = self._busy
+        if busy:
             print('Still navigating — wait or say "stop".', flush=True)
             return
         text = self._transcribe()
@@ -360,7 +371,9 @@ class LLMNavigator(Node):
             self._process(text)
 
     def handle_typed(self, text: str):
-        if self._busy:
+        with self._busy_lock:
+            busy = self._busy
+        if busy:
             print('Still navigating — wait or say "stop".', flush=True)
             return
         self._process(text)
@@ -374,7 +387,8 @@ class LLMNavigator(Node):
         self.get_logger().info(f'LLM parsed: {parsed}')
         goal = self._resolve_goal(parsed)
         if goal:
-            self._busy = True
+            with self._busy_lock:
+                self._busy = True
             self._send_goal(*goal)
 
 
