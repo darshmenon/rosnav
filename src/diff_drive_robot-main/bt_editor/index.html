@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Nav2 BT Editor</title>
+<style>
+:root {
+  --bg:#0f172a; --surf:#1e293b; --surf2:#334155; --bdr:#475569;
+  --txt:#f1f5f9; --txt2:#94a3b8;
+  --blue:#3b82f6; --amber:#f59e0b; --green:#10b981; --red:#ef4444; --purple:#8b5cf6;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--txt);font-family:monospace;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+/* ── header ── */
+#hdr{background:var(--surf);border-bottom:1px solid var(--bdr);padding:7px 14px;display:flex;align-items:center;gap:10px;flex-shrink:0}
+#hdr h1{font-size:13px;font-weight:700;letter-spacing:.5px}
+.badge{padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600}
+.badge-blue{background:var(--blue);color:#fff}
+.badge-gray{background:var(--surf2);color:var(--txt2)}
+#hdr-hint{margin-left:auto;font-size:11px;color:var(--txt2)}
+
+/* ── main layout ── */
+#main{display:flex;flex:1;overflow:hidden}
+
+/* ── palette ── */
+#palette{width:185px;background:var(--surf);border-right:1px solid var(--bdr);overflow-y:auto;padding:8px 6px;flex-shrink:0}
+.pal-sec{margin-bottom:10px}
+.pal-sec h3{font-size:9px;text-transform:uppercase;color:var(--txt2);padding:3px 4px;letter-spacing:1.2px}
+.pbt{display:block;width:100%;text-align:left;padding:4px 7px;margin:2px 0;border:1px solid var(--bdr);background:var(--surf2);color:var(--txt);cursor:pointer;border-radius:4px;font-size:11px;font-family:monospace;transition:border-color .1s}
+.pbt:hover{border-color:#60a5fa}
+.pbt.active{background:var(--blue);border-color:var(--blue);color:#fff}
+.pbt[data-c="control"]{border-left:3px solid var(--blue)}
+.pbt[data-c="decorator"]{border-left:3px solid var(--amber)}
+.pbt[data-c="action"]{border-left:3px solid var(--green)}
+.pbt[data-c="condition"]{border-left:3px solid var(--red)}
+
+/* ── center ── */
+#center{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+#tbar{background:var(--surf);border-bottom:1px solid var(--bdr);padding:5px 10px;display:flex;gap:6px;align-items:center;flex-shrink:0}
+.tb{background:var(--surf2);color:var(--txt);border:1px solid var(--bdr);padding:3px 9px;cursor:pointer;border-radius:4px;font-size:11px;font-family:monospace}
+.tb:hover{border-color:var(--blue)}
+.tb.red:hover{border-color:var(--red);color:var(--red)}
+.tb.amber:hover{border-color:var(--amber)}
+#sel-info{margin-left:auto;font-size:11px;color:var(--txt2)}
+
+#cvwrap{flex:1;overflow:hidden;position:relative;background:var(--bg)}
+#cvwrap svg{width:100%;height:100%;display:block}
+
+/* ── props ── */
+#props{background:var(--surf);border-top:1px solid var(--bdr);padding:8px 12px;height:130px;overflow-y:auto;flex-shrink:0}
+#props h3{font-size:9px;text-transform:uppercase;color:var(--txt2);margin-bottom:6px;letter-spacing:1px}
+.pr{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.pr label{font-size:11px;color:var(--txt2);width:170px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pr input{flex:1;background:var(--surf2);border:1px solid var(--bdr);color:var(--txt);padding:2px 6px;font-size:11px;font-family:monospace;border-radius:3px;min-width:0}
+.pr input:focus{outline:none;border-color:var(--blue)}
+
+/* ── XML panel ── */
+#xml-panel{width:270px;background:var(--surf);border-left:1px solid var(--bdr);display:flex;flex-direction:column;flex-shrink:0}
+#xbar{padding:6px 8px;border-bottom:1px solid var(--bdr);display:flex;gap:5px;flex-wrap:wrap}
+#xml-out{flex:1;background:#0b1221;color:#93c5fd;border:none;padding:10px;font-size:10.5px;font-family:monospace;resize:none;overflow:auto;outline:none;line-height:1.5}
+.fmt-toggle{margin-left:auto;display:flex;align-items:center;gap:4px;font-size:10px;color:var(--txt2)}
+.fmt-toggle select{background:var(--surf2);color:var(--txt);border:1px solid var(--bdr);padding:1px 4px;font-size:10px;font-family:monospace;border-radius:3px}
+
+/* ── context menu ── */
+#ctx{position:fixed;background:var(--surf);border:1px solid var(--bdr);border-radius:5px;padding:4px 0;z-index:100;display:none;min-width:140px}
+.ctx-item{padding:5px 14px;font-size:12px;cursor:pointer;font-family:monospace}
+.ctx-item:hover{background:var(--surf2)}
+.ctx-item.danger:hover{color:var(--red)}
+.ctx-sep{height:1px;background:var(--bdr);margin:3px 0}
+</style>
+</head>
+<body>
+
+<div id="hdr">
+  <h1>Nav2 BT Editor</h1>
+  <span class="badge badge-blue">BehaviorTree.CPP</span>
+  <span class="badge badge-gray">ROS 2</span>
+  <span id="hdr-hint">Click palette item → click tree node to add child &nbsp;|&nbsp; Right-click node for options</span>
+</div>
+
+<div id="main">
+
+  <!-- palette -->
+  <div id="palette">
+    <div class="pal-sec" id="ps-control"><h3>▶ Control</h3></div>
+    <div class="pal-sec" id="ps-decorator"><h3>◈ Decorator</h3></div>
+    <div class="pal-sec" id="ps-action"><h3>⚡ Action</h3></div>
+    <div class="pal-sec" id="ps-condition"><h3>? Condition</h3></div>
+  </div>
+
+  <!-- center -->
+  <div id="center">
+    <div id="tbar">
+      <button class="tb" onclick="undo()">↩ Undo</button>
+      <button class="tb amber" onclick="mvSibling(-1)">← Move</button>
+      <button class="tb amber" onclick="mvSibling(1)">Move →</button>
+      <button class="tb red" onclick="delSelected()">✕ Delete</button>
+      <button class="tb" onclick="clearAll()">⊘ Clear</button>
+      <button class="tb" onclick="fitView()">⊡ Fit</button>
+      <button class="tb" onclick="loadDefaultTree()">Nav2 Default</button>
+      <span id="sel-info">nothing selected</span>
+    </div>
+    <div id="cvwrap">
+      <svg id="cv" xmlns="http://www.w3.org/2000/svg"></svg>
+    </div>
+    <div id="props">
+      <h3>Node Properties</h3>
+      <div id="props-body"><span style="color:var(--txt2);font-size:11px">Select a node to edit its attributes.</span></div>
+    </div>
+  </div>
+
+  <!-- xml panel -->
+  <div id="xml-panel">
+    <div id="xbar">
+      <button class="tb" onclick="copyXML()">Copy</button>
+      <button class="tb" onclick="exportXML()">Export</button>
+      <button class="tb" onclick="importClick()">Import</button>
+      <button class="tb" onclick="saveToServer()">→ Nav2</button>
+      <div class="fmt-toggle">
+        fmt: <select id="fmt-sel" onchange="updateXML()">
+          <option value="humble">Humble</option>
+          <option value="v4">BTCPP v4</option>
+        </select>
+      </div>
+    </div>
+    <textarea id="xml-out" readonly></textarea>
+  </div>
+
+</div>
+
+<!-- context menu -->
+<div id="ctx">
+  <div class="ctx-item" onclick="ctxAddChild()">Add child…</div>
+  <div class="ctx-item" onclick="ctxWrapWith()">Wrap with…</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" onclick="mvSibling(-1)">Move left</div>
+  <div class="ctx-item" onclick="mvSibling(1)">Move right</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item danger" onclick="delSelected()">Delete subtree</div>
+</div>
+
+<input type="file" id="fInput" accept=".xml" style="display:none" onchange="importFile(event)">
+
+<script>
+// ════════════════════════════════════════════════════════════════════════════
+// CATALOG  — all Nav2/BT.CPP node types
+// maxCh: -1 = unlimited, 0 = leaf, N = exactly N children
+// ════════════════════════════════════════════════════════════════════════════
+const CAT = {
+  control:[
+    {n:'Sequence',          maxCh:-1, p:{}},
+    {n:'Fallback',          maxCh:-1, p:{}},
+    {n:'Parallel',          maxCh:-1, p:{success_threshold:'1',failure_threshold:'1'}},
+    {n:'ReactiveSequence',  maxCh:-1, p:{}},
+    {n:'ReactiveFallback',  maxCh:-1, p:{}},
+    {n:'PipelineSequence',  maxCh:-1, p:{name:''}},
+    {n:'RoundRobin',        maxCh:-1, p:{name:''}},
+    {n:'RecoveryNode',      maxCh:2,  p:{number_of_retries:'1',name:''}},
+  ],
+  decorator:[
+    {n:'Inverter',                   maxCh:1, p:{}},
+    {n:'ForceSuccess',               maxCh:1, p:{}},
+    {n:'ForceFailure',               maxCh:1, p:{}},
+    {n:'KeepRunningUntilFailure',    maxCh:1, p:{}},
+    {n:'SingleTrigger',              maxCh:1, p:{}},
+    {n:'Repeat',                     maxCh:1, p:{num_cycles:'1'}},
+    {n:'Retry',                      maxCh:1, p:{num_attempts:'3'}},
+    {n:'RateController',             maxCh:1, p:{hz:'10.0'}},
+    {n:'DistanceController',         maxCh:1, p:{distance:'0.5'}},
+    {n:'SpeedController',            maxCh:1, p:{min_rate:'0.1',max_rate:'1.0',min_speed:'0.0',max_speed:'0.5',filter_duration:'0.3'}},
+    {n:'GoalUpdater',                maxCh:1, p:{input_goal:'{goal}',output_goal:'{updated_goal}'}},
+    {n:'TruncatePath',               maxCh:1, p:{distance:'1.0',input:'{path}',output:'{path}'}},
+  ],
+  action:[
+    {n:'NavigateToPose',         maxCh:0, p:{goal:'{goal}',behavior_tree:''}},
+    {n:'NavigateThroughPoses',   maxCh:0, p:{goals:'{goals}',behavior_tree:''}},
+    {n:'ComputePathToPose',      maxCh:0, p:{goal:'{goal}',planner_id:'GridBased',path:'{path}'}},
+    {n:'ComputePathThroughPoses',maxCh:0, p:{goals:'{goals}',planner_id:'GridBased',path:'{path}'}},
+    {n:'FollowPath',             maxCh:0, p:{path:'{path}',controller_id:'FollowPath',goal_checker_id:''}},
+    {n:'SmoothPath',             maxCh:0, p:{unsmoothed_path:'{path}',smoothed_path:'{path}',smoother_id:''}},
+    {n:'Spin',                   maxCh:0, p:{spin_dist:'1.57',time_allowance:'10.0'}},
+    {n:'Wait',                   maxCh:0, p:{wait_duration:'1.0'}},
+    {n:'BackUp',                 maxCh:0, p:{backup_dist:'0.15',backup_speed:'0.025',time_allowance:'10.0'}},
+    {n:'AssistedTeleop',         maxCh:0, p:{time_allowance:'10.0'}},
+    {n:'ClearEntireCostmap',     maxCh:0, p:{name:'',service_name:'local_costmap/clear_entirely_local_costmap'}},
+    {n:'PlannerSelector',        maxCh:0, p:{default_planner:'GridBased',topic:'planner_selector'}},
+    {n:'ControllerSelector',     maxCh:0, p:{default_controller:'FollowPath',topic:'controller_selector'}},
+  ],
+  condition:[
+    {n:'GoalReached',         maxCh:0, p:{goal:'{goal}',robot_base_frame:'base_link'}},
+    {n:'GoalUpdated',         maxCh:0, p:{}},
+    {n:'GloballyUpdatedGoal', maxCh:0, p:{}},
+    {n:'IsStuck',             maxCh:0, p:{}},
+    {n:'IsBatteryLow',        maxCh:0, p:{min_battery:'0.1',battery_topic:'battery_status',is_voltage:'false'}},
+    {n:'IsBatteryCharging',   maxCh:0, p:{battery_topic:'battery_status'}},
+    {n:'TransformAvailable',  maxCh:0, p:{child:'base_link',parent:'map'}},
+    {n:'TimeExpired',         maxCh:0, p:{seconds:'5.0'}},
+    {n:'DistanceTraveled',    maxCh:0, p:{distance:'0.5',global_frame:'map',robot_base_frame:'base_link'}},
+    {n:'InitialPoseReceived', maxCh:0, p:{}},
+  ],
+}
+const COL={control:'#3b82f6',decorator:'#f59e0b',action:'#10b981',condition:'#ef4444'}
+
+function catOf(name){
+  for(const[c,arr]of Object.entries(CAT))if(arr.find(e=>e.n===name))return c
+  return null
+}
+function entryOf(name){
+  for(const arr of Object.values(CAT)){const e=arr.find(e=>e.n===name);if(e)return e}
+  return null
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// DATA MODEL
+// ════════════════════════════════════════════════════════════════════════════
+let root=null, selId=null, pendType=null
+let uid=0, undoStack=[]
+let vx=0, vy=0            // pan offset
+let dragging=false, dx0=0, dy0=0
+
+function mkId(){return 'n'+(++uid)}
+function mkNode(type){
+  const e=entryOf(type)
+  return{id:mkId(),type,params:e?{...e.p}:{},children:[]}
+}
+function find(id,node=root){
+  if(!node)return null
+  if(node.id===id)return node
+  for(const c of node.children){const r=find(id,c);if(r)return r}
+  return null
+}
+function findParent(id,node=root,par=null){
+  if(!node)return null
+  if(node.id===id)return par
+  for(const c of node.children){const r=findParent(id,c,node);if(r!==null)return r}
+  return null
+}
+function snap(){undoStack.push(JSON.stringify({root,selId}));if(undoStack.length>60)undoStack.shift()}
+function undo(){
+  if(!undoStack.length)return
+  const s=JSON.parse(undoStack.pop())
+  root=s.root;selId=s.selId;render()
+}
+function clearAll(){snap();root=null;selId=null;pendType=null;syncPal();render()}
+
+// ════════════════════════════════════════════════════════════════════════════
+// LAYOUT
+// ════════════════════════════════════════════════════════════════════════════
+const NW=168,NH=46,HG=22,VG=62,MAR=36
+
+function layout(n,depth,x0){
+  n.y=MAR+depth*(NH+VG)
+  if(!n.children.length){n.cx=x0+NW/2;n.tw=NW+HG;return}
+  let x=x0
+  for(const c of n.children){layout(c,depth+1,x);x+=c.tw}
+  n.tw=x-x0
+  n.cx=x0+n.tw/2
+}
+
+function allNodes(n=root,out=[]){if(!n)return out;out.push(n);n.children.forEach(c=>allNodes(c,out));return out}
+
+// ════════════════════════════════════════════════════════════════════════════
+// RENDER
+// ════════════════════════════════════════════════════════════════════════════
+function render(){
+  const svg=document.getElementById('cv')
+  svg.innerHTML=''
+  updateXML()
+  updateSelInfo()
+
+  if(!root){
+    const t=mkSvg('text')
+    t.setAttribute('x','50%');t.setAttribute('y','50%')
+    t.setAttribute('dominant-baseline','middle');t.setAttribute('text-anchor','middle')
+    t.setAttribute('fill','#334155');t.setAttribute('font-size','14');t.setAttribute('font-family','monospace')
+    t.textContent='Click a palette item to place the root node'
+    svg.appendChild(t)
+    renderProps()
+    return
+  }
+
+  layout(root,0,MAR)
+
+  const g=mkSvg('g')
+  g.id='tg'
+  g.setAttribute('transform',`translate(${vx},${vy})`)
+  svg.appendChild(g)
+
+  const eL=mkSvg('g'),nL=mkSvg('g')
+  g.appendChild(eL);g.appendChild(nL)
+
+  function drawEdge(p,c){
+    const x1=p.cx,y1=p.y+NH,x2=c.cx,y2=c.y,cy=(y1+y2)/2
+    const path=mkSvg('path')
+    path.setAttribute('d',`M${x1},${y1} C${x1},${cy} ${x2},${cy} ${x2},${y2}`)
+    path.setAttribute('fill','none');path.setAttribute('stroke','#334155');path.setAttribute('stroke-width','1.5')
+    eL.appendChild(path)
+  }
+
+  function drawNode(n){
+    const cat=catOf(n.type)||'control'
+    const col=COL[cat]||'#475569'
+    const sel=n.id===selId
+    const rx=n.cx-NW/2
+
+    if(sel){
+      const gl=mkSvg('rect')
+      gl.setAttribute('x',rx-4);gl.setAttribute('y',n.y-4)
+      gl.setAttribute('width',NW+8);gl.setAttribute('height',NH+8)
+      gl.setAttribute('rx','8');gl.setAttribute('fill',col);gl.setAttribute('opacity','0.25')
+      nL.appendChild(gl)
+    }
+
+    const rect=mkSvg('rect')
+    rect.setAttribute('x',rx);rect.setAttribute('y',n.y)
+    rect.setAttribute('width',NW);rect.setAttribute('height',NH);rect.setAttribute('rx','5')
+    rect.setAttribute('fill',sel?col:'#1e293b')
+    rect.setAttribute('stroke',col);rect.setAttribute('stroke-width',sel?'2':'1.5')
+    nL.appendChild(rect)
+
+    // category stripe at top
+    const stripe=mkSvg('rect')
+    stripe.setAttribute('x',rx+1);stripe.setAttribute('y',n.y+1)
+    stripe.setAttribute('width',NW-2);stripe.setAttribute('height','3');stripe.setAttribute('rx','4')
+    stripe.setAttribute('fill',col);stripe.setAttribute('opacity',sel?'0':'0.5')
+    nL.appendChild(stripe)
+
+    // type name
+    const t=mkSvg('text')
+    t.setAttribute('x',n.cx);t.setAttribute('y',n.y+18)
+    t.setAttribute('text-anchor','middle')
+    t.setAttribute('fill',sel?'#fff':col)
+    t.setAttribute('font-size','12');t.setAttribute('font-family','monospace');t.setAttribute('font-weight','600')
+    t.setAttribute('pointer-events','none')
+    t.textContent=n.type
+    nL.appendChild(t)
+
+    // params preview
+    const pStr=Object.entries(n.params).filter(([,v])=>v&&v!=='').map(([k,v])=>`${k}=${v}`).join(' ')
+    if(pStr){
+      const pt=mkSvg('text')
+      pt.setAttribute('x',n.cx);pt.setAttribute('y',n.y+33)
+      pt.setAttribute('text-anchor','middle');pt.setAttribute('fill','#64748b')
+      pt.setAttribute('font-size','9');pt.setAttribute('font-family','monospace');pt.setAttribute('pointer-events','none')
+      const trunc=pStr.length>30?pStr.substring(0,29)+'…':pStr
+      pt.textContent=trunc
+      nL.appendChild(pt)
+    }
+
+    // invisible hit area
+    const hit=mkSvg('rect')
+    hit.setAttribute('x',rx);hit.setAttribute('y',n.y)
+    hit.setAttribute('width',NW);hit.setAttribute('height',NH);hit.setAttribute('rx','5')
+    hit.setAttribute('fill','transparent');hit.setAttribute('cursor','pointer')
+    hit.dataset.nid=n.id
+    hit.addEventListener('click',e=>{e.stopPropagation();onNodeClick(n.id)})
+    hit.addEventListener('contextmenu',e=>{e.preventDefault();e.stopPropagation();onNodeCtx(n.id,e)})
+    nL.appendChild(hit)
+
+    for(const c of n.children){drawEdge(n,c);drawNode(c)}
+  }
+
+  drawNode(root)
+  renderProps()
+}
+
+function mkSvg(tag){return document.createElementNS('http://www.w3.org/2000/svg',tag)}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PROPERTIES PANEL
+// ════════════════════════════════════════════════════════════════════════════
+function renderProps(){
+  const body=document.getElementById('props-body')
+  if(!selId||!root){body.innerHTML='<span style="color:var(--txt2);font-size:11px">Select a node to edit its attributes.</span>';return}
+  const n=find(selId)
+  if(!n){body.innerHTML='';return}
+  if(!Object.keys(n.params).length){body.innerHTML='<span style="color:var(--txt2);font-size:11px">No attributes for this node type.</span>';return}
+  body.innerHTML=''
+  for(const[k,v]of Object.entries(n.params)){
+    const row=document.createElement('div');row.className='pr'
+    const lbl=document.createElement('label');lbl.textContent=k;lbl.title=k
+    const inp=document.createElement('input');inp.type='text';inp.value=v
+    inp.dataset.key=k;inp.dataset.nid=n.id
+    inp.addEventListener('change',()=>{
+      snap()
+      const nd=find(inp.dataset.nid)
+      if(nd){nd.params[inp.dataset.key]=inp.value;render()}
+    })
+    row.appendChild(lbl);row.appendChild(inp);body.appendChild(row)
+  }
+}
+
+function updateSelInfo(){
+  const el=document.getElementById('sel-info')
+  if(pendType){el.textContent=`placing: ${pendType} — click a node to add as child`;return}
+  if(!selId||!root){el.textContent='nothing selected';return}
+  const n=find(selId)
+  if(n)el.textContent=`selected: ${n.type} (${catOf(n.type)||'?'})`
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// INTERACTION
+// ════════════════════════════════════════════════════════════════════════════
+function onNodeClick(id){
+  if(pendType){addChildTo(id,pendType);pendType=null;syncPal()}
+  else{selId=(selId===id?null:id);render()}
+}
+
+function onNodeCtx(id,e){
+  selId=id;render()
+  const ctx=document.getElementById('ctx')
+  ctx.style.display='block'
+  ctx.style.left=e.clientX+'px'
+  ctx.style.top=e.clientY+'px'
+}
+
+function hideCtx(){document.getElementById('ctx').style.display='none'}
+document.addEventListener('click',hideCtx)
+document.addEventListener('contextmenu',hideCtx)
+
+function ctxAddChild(){
+  hideCtx()
+  const type=prompt('Node type to add as child:')
+  if(type)addChildTo(selId,type.trim())
+}
+
+function ctxWrapWith(){
+  hideCtx()
+  const type=prompt('Wrap selected node with (e.g. Inverter, Retry):')
+  if(!type||!root||!selId)return
+  snap()
+  const child=find(selId)
+  if(!child)return
+  const wrapper=mkNode(type.trim())
+  wrapper.children=[child]
+  if(selId===root.id){root=wrapper;selId=wrapper.id;render();return}
+  const par=findParent(selId)
+  if(par){
+    const idx=par.children.indexOf(child)
+    par.children[idx]=wrapper
+    selId=wrapper.id
+    render()
+  }
+}
+
+function addChildTo(parentId,type){
+  snap()
+  const e=entryOf(type)
+  if(!e&&!confirm(`"${type}" is not in the catalog. Add anyway?`))return
+
+  if(!root){
+    root=mkNode(type);selId=root.id;render();fitView();return
+  }
+  const par=find(parentId)
+  if(!par)return
+  const pe=entryOf(par.type)
+  const mc=pe?pe.maxCh:-1
+  if(mc===0){alert(`${par.type} is a leaf — it cannot have children.`);return}
+  if(mc>0&&par.children.length>=mc){alert(`${par.type} already has its max ${mc} child${mc>1?'ren':''}.`);return}
+  const child=mkNode(type)
+  par.children.push(child)
+  selId=child.id
+  render()
+}
+
+function delSelected(){
+  if(!selId||!root)return
+  snap()
+  if(root.id===selId){root=null;selId=null;render();return}
+  const par=findParent(selId)
+  if(par){par.children=par.children.filter(c=>c.id!==selId);selId=par.id}
+  render()
+}
+
+function mvSibling(dir){
+  if(!selId||!root)return
+  const par=findParent(selId)
+  if(!par)return
+  const i=par.children.findIndex(c=>c.id===selId)
+  const j=i+dir
+  if(j<0||j>=par.children.length)return
+  snap()
+  ;[par.children[i],par.children[j]]=[par.children[j],par.children[i]]
+  render()
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PALETTE
+// ════════════════════════════════════════════════════════════════════════════
+function setupPalette(){
+  const secs={control:'ps-control',decorator:'ps-decorator',action:'ps-action',condition:'ps-condition'}
+  for(const[cat,nds]of Object.entries(CAT)){
+    const sec=document.getElementById(secs[cat])
+    for(const e of nds){
+      const btn=document.createElement('button')
+      btn.className='pbt';btn.dataset.type=e.n;btn.dataset.c=cat
+      btn.textContent=e.n
+      btn.title=`max children: ${e.maxCh===-1?'∞':e.maxCh}`
+      btn.addEventListener('click',()=>{
+        if(!root){
+          snap();root=mkNode(e.n);selId=root.id;pendType=null;syncPal();render();fitView();return
+        }
+        pendType=(pendType===e.n?null:e.n)
+        syncPal()
+        updateSelInfo()
+      })
+      sec.appendChild(btn)
+    }
+  }
+}
+
+function syncPal(){
+  document.querySelectorAll('.pbt').forEach(b=>{
+    b.classList.toggle('active',b.dataset.type===pendType)
+  })
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// XML EXPORT / IMPORT
+// ════════════════════════════════════════════════════════════════════════════
+function nodeToXml(n,ind='        '){
+  const attrs=Object.entries(n.params).filter(([,v])=>v!==undefined).map(([k,v])=>`${k}="${v}"`).join(' ')
+  const tag=n.type
+  if(!n.children.length)return`${ind}<${tag}${attrs?' '+attrs:''}/>`
+  const ch=n.children.map(c=>nodeToXml(c,ind+'    ')).join('\n')
+  return`${ind}<${tag}${attrs?' '+attrs:''}>\n${ch}\n${ind}</${tag}>`
+}
+
+function generateXML(){
+  if(!root)return'<!-- empty tree -->'
+  const fmt=document.getElementById('fmt-sel').value
+  const body=nodeToXml(root,'        ')
+  if(fmt==='v4'){
+    return`<?xml version="1.0"?>\n<root BTCPP_format="4">\n    <BehaviorTree ID="MainTree">\n${body}\n    </BehaviorTree>\n</root>`
+  }
+  return`<root main_tree_to_execute="MainTree">\n  <BehaviorTree ID="MainTree">\n${body}\n  </BehaviorTree>\n</root>`
+}
+
+function updateXML(){
+  document.getElementById('xml-out').value=generateXML()
+}
+
+function copyXML(){
+  const xml=generateXML()
+  if(navigator.clipboard){navigator.clipboard.writeText(xml).then(()=>toast('Copied!')).catch(()=>fallbackCopy(xml))}
+  else fallbackCopy(xml)
+}
+function fallbackCopy(s){const ta=document.getElementById('xml-out');ta.select();document.execCommand('copy');toast('Copied!')}
+
+function exportXML(){
+  const xml=generateXML()
+  const a=document.createElement('a')
+  a.href=URL.createObjectURL(new Blob([xml],{type:'text/xml'}))
+  a.download='behavior_tree.xml';a.click()
+}
+
+function importClick(){document.getElementById('fInput').click()}
+
+function importFile(ev){
+  const f=ev.target.files[0];if(!f)return
+  const r=new FileReader()
+  r.onload=e=>{
+    const n=parseXML(e.target.result)
+    if(n){snap();root=n;selId=null;vx=0;vy=0;render();fitView()}
+    else alert('Failed to parse BT XML.')
+  }
+  r.readAsText(f);ev.target.value=''
+}
+
+function parseXML(xmlStr){
+  const parser=new DOMParser()
+  const doc=parser.parseFromString(xmlStr,'text/xml')
+  if(doc.querySelector('parsererror'))return null
+  const btEl=doc.querySelector('BehaviorTree')
+  if(!btEl||!btEl.children.length)return null
+  return parseEl(btEl.children[0])
+}
+
+function parseEl(el){
+  const n={id:mkId(),type:el.tagName,params:{},children:[]}
+  for(const a of el.attributes)n.params[a.name]=a.value
+  for(const c of el.children)n.children.push(parseEl(c))
+  return n
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// FIT / PAN
+// ════════════════════════════════════════════════════════════════════════════
+function fitView(){
+  if(!root)return
+  const wrap=document.getElementById('cvwrap')
+  const ww=wrap.clientWidth,wh=wrap.clientHeight
+  const nodes=allNodes()
+  const minX=Math.min(...nodes.map(n=>n.cx-NW/2))
+  const maxX=Math.max(...nodes.map(n=>n.cx+NW/2))
+  const minY=Math.min(...nodes.map(n=>n.y))
+  const maxY=Math.max(...nodes.map(n=>n.y+NH))
+  vx=Math.round((ww-(maxX-minX))/2-minX)
+  vy=Math.round((wh-(maxY-minY))/2-minY)
+  const tg=document.getElementById('tg')
+  if(tg)tg.setAttribute('transform',`translate(${vx},${vy})`)
+}
+
+function setupPan(){
+  const svg=document.getElementById('cv')
+  svg.addEventListener('mousedown',e=>{
+    if(e.target===svg||e.target.tagName==='svg'){
+      dragging=true;dx0=e.clientX-vx;dy0=e.clientY-vy
+      if(pendType){pendType=null;syncPal();updateSelInfo()}
+      if(selId){selId=null;renderProps();updateSelInfo()}
+    }
+  })
+  window.addEventListener('mousemove',e=>{
+    if(!dragging)return
+    vx=e.clientX-dx0;vy=e.clientY-dy0
+    const tg=document.getElementById('tg')
+    if(tg)tg.setAttribute('transform',`translate(${vx},${vy})`)
+  })
+  window.addEventListener('mouseup',()=>{dragging=false})
+  window.addEventListener('keydown',e=>{
+    const tag=document.activeElement.tagName
+    if(tag==='INPUT'||tag==='TEXTAREA')return
+    if(e.key==='Delete'||e.key==='Backspace')delSelected()
+    if((e.ctrlKey||e.metaKey)&&e.key==='z')undo()
+    if(e.key==='Escape'){pendType=null;syncPal();updateSelInfo()}
+    if(e.key==='f'||e.key==='F')fitView()
+  })
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SERVER API  (bt_server.py must be running)
+// ════════════════════════════════════════════════════════════════════════════
+async function saveToServer(){
+  const xml=generateXML()
+  const name=prompt('Save as (filename without .xml):','custom_bt')||'custom_bt'
+  try{
+    const r=await fetch('http://localhost:8080/save?name='+encodeURIComponent(name),{
+      method:'POST',headers:{'Content-Type':'text/xml'},body:xml
+    })
+    if(r.ok){const j=await r.json();toast('Saved → '+j.path)}
+    else toast('Save failed (server error)')
+  }catch{toast('bt_server.py not running — use Export instead')}
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// DEFAULT TREE  (matches navigate_w_recovery.xml structure)
+// ════════════════════════════════════════════════════════════════════════════
+function loadDefaultTree(){
+  snap()
+  const outer=mkNode('RecoveryNode')
+  outer.params={number_of_retries:'6',name:'NavigateRecovery'}
+
+  const pipe=mkNode('PipelineSequence')
+  pipe.params={name:'NavigateWithReplanning'}
+
+  const rate=mkNode('RateController');rate.params={hz:'1.0'}
+  const cpRec=mkNode('RecoveryNode');cpRec.params={number_of_retries:'1',name:'ComputePathRecovery'}
+  const cp=mkNode('ComputePathToPose');cp.params={goal:'{goal}',path:'{path}',planner_id:'GridBased'}
+  const clrG=mkNode('ClearEntireCostmap')
+  clrG.params={name:'ClearGlobal-Replanning',service_name:'global_costmap/clear_entirely_global_costmap'}
+  cpRec.children=[cp,clrG];rate.children=[cpRec]
+
+  const fpRec=mkNode('RecoveryNode');fpRec.params={number_of_retries:'1',name:'FollowPathRecovery'}
+  const fp=mkNode('FollowPath');fp.params={path:'{path}',controller_id:'FollowPath',goal_checker_id:''}
+  const clrL=mkNode('ClearEntireCostmap')
+  clrL.params={name:'ClearLocal-Following',service_name:'local_costmap/clear_entirely_local_costmap'}
+  fpRec.children=[fp,clrL]
+
+  pipe.children=[rate,fpRec]
+
+  const rfb=mkNode('ReactiveFallback');rfb.params={name:'RecoveryFallback'}
+  const gu=mkNode('GoalUpdated')
+  const rr=mkNode('RoundRobin');rr.params={name:'RecoveryActions'}
+  const bu=mkNode('BackUp');bu.params={backup_dist:'0.20',backup_speed:'0.05',time_allowance:'10.0'}
+  const sp=mkNode('Spin');sp.params={spin_dist:'1.57',time_allowance:'10.0'}
+  const clrSeq=mkNode('Sequence');clrSeq.params={name:'ClearBothCostmaps'}
+  const clrL2=mkNode('ClearEntireCostmap');clrL2.params={name:'ClearLocal',service_name:'local_costmap/clear_entirely_local_costmap'}
+  const clrG2=mkNode('ClearEntireCostmap');clrG2.params={name:'ClearGlobal',service_name:'global_costmap/clear_entirely_global_costmap'}
+  clrSeq.children=[clrL2,clrG2]
+  const wt=mkNode('Wait');wt.params={wait_duration:'3'}
+  rr.children=[bu,sp,clrSeq,wt]
+  rfb.children=[gu,rr]
+
+  outer.children=[pipe,rfb]
+  root=outer;selId=null;vx=0;vy=0
+  render();fitView()
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// TOAST
+// ════════════════════════════════════════════════════════════════════════════
+function toast(msg){
+  let t=document.getElementById('_toast')
+  if(!t){t=document.createElement('div');t.id='_toast'
+    Object.assign(t.style,{position:'fixed',bottom:'20px',right:'20px',background:'#1e293b',
+      color:'#f1f5f9',border:'1px solid #475569',padding:'8px 16px',borderRadius:'6px',
+      fontFamily:'monospace',fontSize:'12px',zIndex:'999',transition:'opacity .3s'})
+    document.body.appendChild(t)}
+  t.textContent=msg;t.style.opacity='1'
+  clearTimeout(t._tid);t._tid=setTimeout(()=>{t.style.opacity='0'},2500)
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════════════════════════════════════
+setupPalette()
+setupPan()
+loadDefaultTree()
+</script>
+</body>
+</html>

@@ -15,6 +15,7 @@ install(
     scripts/navigation.py
     scripts/pid_controller.py
     scripts/llm_nav.py
+    scripts/bt_server.py
     scripts/path_planning.py
     scripts/waypoint_nav.py
     scripts/frontier_explorer.py
@@ -38,7 +39,7 @@ install(
   DESTINATION lib/${PROJECT_NAME}
 )
 install(
-  DIRECTORY launch urdf config worlds rviz maps
+  DIRECTORY launch urdf config worlds rviz maps bt_editor
   DESTINATION share/${PROJECT_NAME}
 )
 if(BUILD_TESTING)
