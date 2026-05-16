@@ -44,7 +44,7 @@ from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.executors import MultiThreadedExecutor
 from std_msgs.msg import String
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 from nav2_msgs.action import NavigateToPose
 
 
@@ -168,6 +168,14 @@ class LLMNavigator(Node):
         self.create_subscription(String, '/llm_nav/command',
                                  self._text_cmd_cb, 10)
 
+        # pose tracking for accuracy reporting
+        self._current_pose: tuple[float, float] | None = None
+        self._goal_xy: tuple[float, float] | None = None
+        self._nav_start_time: float | None = None
+        self._recovery_count = 0
+        self.create_subscription(
+            PoseWithCovarianceStamped, '/amcl_pose', self._amcl_cb, 10)
+
         # lazy-load Whisper (takes a few seconds)
         self._whisper = None
         self._whisper_lock = threading.Lock()
@@ -289,6 +297,9 @@ class LLMNavigator(Node):
         goal = NavigateToPose.Goal()
         goal.pose = pose
 
+        self._goal_xy = (x, y)
+        self._nav_start_time = time.time()
+        self._recovery_count = 0
         self.get_logger().info(
             f'Navigating to ({x:.2f}, {y:.2f}, yaw={yaw_deg:.0f}°)…')
 
@@ -296,8 +307,13 @@ class LLMNavigator(Node):
             goal, feedback_callback=self._feedback_cb)
         future.add_done_callback(self._goal_accepted_cb)
 
+    def _amcl_cb(self, msg: PoseWithCovarianceStamped):
+        p = msg.pose.pose.position
+        self._current_pose = (p.x, p.y)
+
     def _feedback_cb(self, fb):
         dist = fb.feedback.distance_remaining
+        self._recovery_count = fb.feedback.number_of_recoveries
         if dist > 0.0:
             self.get_logger().info(f'  distance remaining: {dist:.2f}m', throttle_duration_sec=3.0)
 
@@ -312,10 +328,21 @@ class LLMNavigator(Node):
     def _result_cb(self, future):
         from action_msgs.msg import GoalStatus
         status = future.result().status
+        elapsed = time.time() - self._nav_start_time if self._nav_start_time else 0.0
+
         if status == GoalStatus.STATUS_SUCCEEDED:
             self.get_logger().info('Goal reached!')
+            if self._goal_xy and self._current_pose:
+                gx, gy = self._goal_xy
+                rx, ry = self._current_pose
+                err = math.hypot(rx - gx, ry - gy)
+                self.get_logger().info(
+                    f'  Accuracy: {err:.3f} m from target  |  '
+                    f'time: {elapsed:.1f}s  |  recoveries: {self._recovery_count}')
         else:
-            self.get_logger().warn(f'Navigation ended with status {status}.')
+            self.get_logger().warn(
+                f'Navigation ended with status {status}  |  '
+                f'time: {elapsed:.1f}s  |  recoveries: {self._recovery_count}')
         self._busy = False
 
     # ── entry points ──────────────────────────────────────────────────────────
