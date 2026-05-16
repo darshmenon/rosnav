@@ -186,6 +186,41 @@ ros2 run diff_drive_robot mission_server.py status
 ros2 run diff_drive_robot mission_server.py cancel
 ```
 
+#### Mode 6 — LLM Voice Navigation
+Speak or type plain-English commands; Whisper transcribes, ollama parses, Nav2 executes.
+
+```
+Mic → Whisper STT → ollama LLM → NavigateToPose → Nav2
+```
+```bash
+# Start nav stack first
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze
+
+# Separate terminal — start LLM navigator
+ros2 run diff_drive_robot llm_nav.py
+
+# Press Enter to speak, or type directly:
+# > go to room_b
+# > go to 2.5 1.0
+# > stop
+
+# Text-only (no mic):
+ros2 topic pub /llm_nav/command std_msgs/msg/String "data: 'go to room_a'" --once
+```
+
+Named locations are defined in `config/locations.yaml` (origin, room_a–c, hallway, charging_dock).
+The node retries for up to 60 s if Nav2 is still starting up.
+
+**Override defaults:**
+```bash
+ros2 run diff_drive_robot llm_nav.py --ros-args \
+    -p whisper_model:=small \
+    -p ollama_model:=llama2 \
+    -p record_seconds:=6.0
+```
+
+**Requirements:** `ollama serve` running with a model pulled (`ollama pull llama2`).
+
 ---
 
 ### Multi-Robot

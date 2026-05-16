@@ -266,9 +266,16 @@ class LLMNavigator(Node):
         return None
 
     def _send_goal(self, x: float, y: float, yaw_deg: float):
-        if not self._nav_client.wait_for_server(timeout_sec=3.0):
-            self.get_logger().error('NavigateToPose server not available.')
-            return
+        waited = 0.0
+        while not self._nav_client.wait_for_server(timeout_sec=5.0):
+            waited += 5.0
+            self.get_logger().warn(
+                f'Waiting for NavigateToPose server… ({waited:.0f}s)')
+            if waited >= 60.0:
+                self.get_logger().error(
+                    'NavigateToPose server did not come up after 60s — is Nav2 running?')
+                self._busy = False
+                return
 
         pose = PoseStamped()
         pose.header.frame_id = self._frame_id
