@@ -14,6 +14,7 @@ install(
   PROGRAMS
     scripts/navigation.py
     scripts/pid_controller.py
+    scripts/llm_nav.py
     scripts/path_planning.py
     scripts/waypoint_nav.py
     scripts/frontier_explorer.py
