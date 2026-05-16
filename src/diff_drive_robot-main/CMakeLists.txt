@@ -13,6 +13,7 @@ find_package(ament_cmake REQUIRED)
 install(
   PROGRAMS
     scripts/navigation.py
+    scripts/pid_controller.py
     scripts/path_planning.py
     scripts/waypoint_nav.py
     scripts/frontier_explorer.py

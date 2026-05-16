@@ -1,7 +1,7 @@
 import os
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from ament_index_python.packages import get_package_share_directory
 from launch.substitutions import LaunchConfiguration
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -78,6 +78,7 @@ def generate_launch_description():
     # Launch configurations
     world    = LaunchConfiguration('world')
     rviz     = LaunchConfiguration('rviz')
+    headless = LaunchConfiguration('headless')
     robot_name = LaunchConfiguration('robot_name')
     spawn_x    = LaunchConfiguration('spawn_x')
     spawn_y    = LaunchConfiguration('spawn_y')
@@ -95,6 +96,11 @@ def generate_launch_description():
         name='rviz',
         default_value='True',
         description='Open RViz if True')
+
+    declare_headless = DeclareLaunchArgument(
+        name='headless',
+        default_value='False',
+        description='Skip Gazebo GUI client (server still runs)')
 
     declare_map = DeclareLaunchArgument(
         name='map',
@@ -147,12 +153,13 @@ def generate_launch_description():
         }.items()
     )
 
-    # Gazebo client (GUI)
+    # Gazebo client (GUI) — skipped when headless:=true
     gazebo_client = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(get_package_share_directory('ros_gz_sim'), 'launch', 'gz_sim.launch.py')
         ),
-        launch_arguments={'gz_args': '-g'}.items()
+        launch_arguments={'gz_args': '-g'}.items(),
+        condition=UnlessCondition(headless),
     )
 
     # Spawn robot
@@ -218,11 +225,22 @@ def generate_launch_description():
     #     name='path_planning',
     #     output='screen'
     # )
+    # PID goal controller (no Nav2 required — pure stdlib PID)
+    #   tune gains: heading_kp/ki/kd, set goal_x/goal_y
+    # pid_controller_node = Node(
+    #     package='diff_drive_robot',
+    #     executable='pid_controller.py',
+    #     name='pid_goal_controller',
+    #     output='screen',
+    #     parameters=[{'goal_x': 3.0, 'goal_y': 3.0,
+    #                  'heading_kp': 2.5, 'heading_ki': 0.01, 'heading_kd': 0.35}]
+    # )
 
     return LaunchDescription([
         # ── Declare ALL arguments first (BUG FIX: these were missing) ──
         declare_world,
         declare_rviz,
+        declare_headless,
         declare_map,
         declare_robot_name,
         declare_spawn_x,
