@@ -48,6 +48,12 @@ try:
 except ImportError:
     HAS_TF = False
 
+try:
+    from scipy.ndimage import binary_erosion as _scipy_erosion
+    HAS_SCIPY = True
+except ImportError:
+    HAS_SCIPY = False
+
 
 def _make_pose(x: float, y: float, yaw: float, stamp, frame: str) -> PoseStamped:
     p = PoseStamped()
@@ -140,9 +146,17 @@ class CoveragePlanner(Node):
 
         # Erode free space by robot_radius to ensure clearance from walls
         r_cells = max(1, int(math.ceil(self._radius / res)))
-        from scipy.ndimage import binary_erosion
         struct  = np.ones((2 * r_cells + 1, 2 * r_cells + 1), dtype=bool)
-        padded  = binary_erosion(free, structure=struct)
+        if HAS_SCIPY:
+            padded = _scipy_erosion(free, structure=struct)
+        else:
+            # Fallback: simple min-filter erosion using numpy sliding windows
+            from numpy.lib.stride_tricks import sliding_window_view
+            s = 2 * r_cells + 1
+            pad = r_cells
+            padded_free = np.pad(free, pad, constant_values=False)
+            windows = sliding_window_view(padded_free, (s, s))
+            padded = windows.all(axis=(-2, -1))
 
         # Bounding box of navigable cells
         rows, cols = np.where(padded)
@@ -209,7 +223,6 @@ class CoveragePlanner(Node):
 
     def _feedback_cb(self, fb):
         idx = fb.feedback.current_waypoint
-        total = len(self._map.data) if self._map else '?'
         self.get_logger().info(f'Coverage: waypoint {idx + 1} reached.')
 
     def _goal_resp_cb(self, future):

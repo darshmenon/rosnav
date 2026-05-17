@@ -395,7 +395,7 @@ class FleetNode(Node):
                 if not tasks:
                     print('  (empty)')
                 print('\n── Robots ────────────────────────────────────────')
-                for ns, st in (bots.items() if bots else {}).items():
+                for ns, st in (bots or {}).items():
                     print(f'  {ns}: {st}')
                 print('──────────────────────────────────────────────────\n')
             else:

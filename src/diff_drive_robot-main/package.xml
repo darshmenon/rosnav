@@ -26,6 +26,11 @@
   <!-- Navigation dependencies -->
   <depend>nav2_msgs</depend>
   <depend>nav2_common</depend>
+
+  <!-- Python runtime dependencies -->
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>python3-scipy</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
   
   <!-- Gazebo dependencies – gz-sim7/common4/transport11 = Humble (GZ Garden)  -->
   <!--                         gz-sim8/common5/transport13 = Jazzy  (GZ Harmonic) -->
