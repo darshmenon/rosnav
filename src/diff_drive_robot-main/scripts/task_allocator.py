@@ -142,11 +142,13 @@ class TaskAllocator(Node):
         self._robot_states: dict[str, str]  = {}   # ns → mission state string
         self._robot_poses:  dict[str, tuple] = {}  # ns → (x, y)
         self._odom_subs:    dict[str, object] = {}
+        self._failed_robots: set[str] = set()
 
         # Subscriptions
         self.create_subscription(String, '/task_queue/add',   self._add_cb,     10)
         self.create_subscription(String, '/task_queue/clear', self._clear_cb,   10)
         self.create_subscription(String, '/mission/state',    self._mission_cb, 10)
+        self.create_subscription(String, '/fleet/health',     self._health_cb,  10)
 
         # Publishers
         self._state_pub   = self.create_publisher(String, '/task_queue/state',   10)
@@ -231,6 +233,33 @@ class TaskAllocator(Node):
                             self.get_logger().info(
                                 f'Task {t["id"]} returned to queue after cancel/idle')
 
+    # ── Health monitoring ─────────────────────────────────────────────────────
+
+    def _health_cb(self, msg: String):
+        try:
+            data = json.loads(msg.data)
+        except json.JSONDecodeError as e:
+            self.get_logger().error(f'Bad health JSON: {e}')
+            return
+
+        with self._lock:
+            for ns, info in data.items():
+                overall = info.get('overall', '')
+                if overall == 'ERROR' and ns not in self._failed_robots:
+                    self._failed_robots.add(ns)
+                    reclaimed = 0
+                    for t in self._tasks:
+                        if t['robot'] == ns and t['status'] == ASSIGNED:
+                            t['status'] = PENDING
+                            t['robot'] = ''
+                            reclaimed += 1
+                    self.get_logger().warn(
+                        f'Robot {ns} entered ERROR state; '
+                        f'{reclaimed} task(s) returned to queue')
+                elif overall != 'ERROR' and ns in self._failed_robots:
+                    self._failed_robots.discard(ns)
+                    self.get_logger().info(f'Robot {ns} recovered from ERROR state')
+
     # ── Allocation tick ───────────────────────────────────────────────────────
 
     def _tick(self):
@@ -275,6 +304,7 @@ class TaskAllocator(Node):
                 if st in ('IDLE', 'DONE', 'FAILED')
                 and not any(t['robot'] == ns and t['status'] == ASSIGNED
                             for t in self._tasks)
+                and ns not in self._failed_robots
             ]
             if not idle_robots:
                 return
@@ -314,8 +344,9 @@ class TaskAllocator(Node):
     def _publish_state(self):
         with self._lock:
             payload = {
-                'tasks':        self._tasks,
-                'robot_states': self._robot_states,
+                'tasks':         self._tasks,
+                'robot_states':  self._robot_states,
+                'failed_robots': list(self._failed_robots),
             }
         msg      = String()
         msg.data = json.dumps(payload)
@@ -363,6 +394,11 @@ def _status(node: Node):
         print('\n── Robot States ──────────────────────────────────')
         for ns, st in (bots.items() if bots else []):
             print(f'  {ns}: {st}')
+        failed = s.get('failed_robots', [])
+        if failed:
+            print('\n── Failed Robots ─────────────────────────────────')
+            for ns in failed:
+                print(f'  {ns}')
         print('──────────────────────────────────────────────────\n')
     else:
         print('No task_allocator found (is it running?)')

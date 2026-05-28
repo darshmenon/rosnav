@@ -77,12 +77,22 @@ class CoveragePlanner(Node):
         self.declare_parameter('start_from_robot', True)
         self.declare_parameter('action_name',      'follow_waypoints')
 
+        self.declare_parameter('region_x_min', -1e9)
+        self.declare_parameter('region_x_max',  1e9)
+        self.declare_parameter('region_y_min', -1e9)
+        self.declare_parameter('region_y_max',  1e9)
+
         ns             = self.get_parameter('robot_ns').value
         self._spacing  = self.get_parameter('sweep_spacing').value
         self._radius   = self.get_parameter('robot_radius').value
         map_topic      = self.get_parameter('map_topic').value
         self._from_bot = self.get_parameter('start_from_robot').value
         action_ns      = self.get_parameter('action_name').value
+
+        self._rx_min   = self.get_parameter('region_x_min').value
+        self._rx_max   = self.get_parameter('region_x_max').value
+        self._ry_min   = self.get_parameter('region_y_min').value
+        self._ry_max   = self.get_parameter('region_y_max').value
 
         pre = f'/{ns}' if ns else ''
 
@@ -168,6 +178,16 @@ class CoveragePlanner(Node):
 
         r_min, r_max = int(rows.min()), int(rows.max())
         c_min, c_max = int(cols.min()), int(cols.max())
+
+        # Clip bounding box to assigned region
+        ox, oy, res = info.origin.position.x, info.origin.position.y, info.resolution
+        c_min = max(c_min, int((self._rx_min - ox) / res))
+        c_max = min(c_max, int((self._rx_max - ox) / res))
+        r_min = max(r_min, int((self._ry_min - oy) / res))
+        r_max = min(r_max, int((self._ry_max - oy) / res))
+        if c_min >= c_max or r_min >= r_max:
+            self.get_logger().warn('Region is empty — no waypoints.')
+            return []
 
         spacing_cells = max(1, int(round(self._spacing / res)))
         waypoints: list[tuple[float, float, float]] = []
