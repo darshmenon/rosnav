@@ -36,6 +36,8 @@ install(
     scripts/frontier_coordinator.py
     scripts/priority_collision_avoidance.py
     scripts/deadlock_recovery.py
+    scripts/bt_executor.py
+    scripts/multi_coverage.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(

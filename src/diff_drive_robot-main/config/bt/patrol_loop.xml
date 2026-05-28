@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<!--
+  patrol_loop.xml — Repeat navigate-to-goal until explicitly cancelled.
+  Used by bt_executor.py patrol — the Python layer cycles through waypoints
+  and re-sends goals; this BT handles per-goal navigation with recovery.
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="3" name="PatrolGoalRecovery">
+      <PipelineSequence name="PatrolNav">
+        <RateController hz="1.0">
+          <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+        </RateController>
+        <FollowPath path="{path}" controller_id="FollowPath"/>
+      </PipelineSequence>
+      <SequenceWithMemory name="PatrolRecovery">
+        <ClearEntireCostmap name="ClearLocal" service_name="local_costmap/clear_entirely_local_costmap"/>
+        <Spin spin_dist="1.57"/>
+        <BackUp backup_dist="0.20" backup_speed="0.05"/>
+      </SequenceWithMemory>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>
