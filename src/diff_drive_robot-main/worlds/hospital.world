@@ -1,0 +1,173 @@
+<?xml version="1.0" ?>
+<!--
+  hospital.world — Hospital floor for multi-robot navigation testing.
+  All primitives, no external downloads. Layout inspired by AWS RoboMaker hospital.
+
+  Layout (26 m × 18 m, x: -13 to +13, y: -9 to +9):
+    Entry door      : West wall gap  y = -1.5 to +1.5
+    Main corridor   : y = -2 to +2  (4 m wide — fits 2 robots side-by-side)
+    North wing:
+      Room N1 (patient) : x = -13 to -7   (6 m)
+      Room N2 (patient) : x =  -7 to -1   (6 m)
+      Room N3 (patient) : x =  -1 to +5   (6 m)
+      Nurse station     : x =  +5 to +13  (8 m, open to corridor)
+    South wing:
+      Room S1 (patient) : x = -13 to -7   (6 m)
+      Room S2 (patient) : x =  -7 to -1   (6 m)
+      Room S3 (patient) : x =  -1 to +5   (6 m)
+      Storage / supply  : x =  +5 to +13  (8 m)
+
+  Robot spawn: corridor west end, x = -10 to -4, y = -0.5 to +0.5
+
+  Launch:
+    ros2 launch diff_drive_robot multi_robot.launch.py world:=hospital
+    ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital explore:=true
+-->
+<sdf version='1.8'>
+  <world name='hospital'>
+
+    <physics name='1ms' type='ignored'>
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system"
+            name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system"
+            name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system"
+            name="ignition::gazebo::systems::SceneBroadcaster"/>
+    <plugin filename="ignition-gazebo-sensors-system"
+            name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="ignition-gazebo-contact-system"
+            name="ignition::gazebo::systems::Contact"/>
+
+    <light name='sun' type='directional'>
+      <pose>0 0 20 0 0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>-0.1 0.1 -0.95</direction>
+      <diffuse>1.0 0.99 0.97 1</diffuse>
+      <specular>0.3 0.3 0.3 1</specular>
+    </light>
+    <light name='light_w' type='point'>
+      <pose>-7 0 4 0 0 0</pose>
+      <diffuse>0.95 0.95 1.0 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>20</range><linear>0.04</linear></attenuation>
+    </light>
+    <light name='light_e' type='point'>
+      <pose>7 0 4 0 0 0</pose>
+      <diffuse>0.95 0.95 1.0 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>20</range><linear>0.04</linear></attenuation>
+    </light>
+
+    <!-- Ground plane -->
+    <model name='ground_plane'>
+      <static>true</static>
+      <link name='link'>
+        <collision name='c'>
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+        </collision>
+        <visual name='v'>
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+          <material><ambient>0.84 0.84 0.86 1</ambient><diffuse>0.84 0.84 0.86 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ── Floor zone pads (h=0.005 m) ───────────────────────────────────── -->
+    <!-- Corridor: neutral grey -->
+    <model name='zone_corridor'><static>true</static><pose>0 0 0.003 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>26 4 0.005</size></box></geometry></collision><visual name='v'><geometry><box><size>26 4 0.005</size></box></geometry><material><ambient>0.80 0.80 0.83 0.8</ambient><diffuse>0.80 0.80 0.83 0.8</diffuse></material></visual></link></model>
+    <!-- North patient rooms: light clinical blue -->
+    <model name='zone_n1'><static>true</static><pose>-10 5.5 0.003 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>6 7 0.005</size></box></geometry></collision><visual name='v'><geometry><box><size>6 7 0.005</size></box></geometry><material><ambient>0.85 0.92 0.96 0.7</ambient><diffuse>0.85 0.92 0.96 0.7</diffuse></material></visual></link></model>
+    <model name='zone_n2'><static>true</static><pose>-4 5.5 0.003 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>6 7 0.005</size></box></geometry></collision><visual name='v'><geometry><box><size>6 7 0.005</size></box></geometry><material><ambient>0.85 0.92 0.96 0.7</ambient><diffuse>0.85 0.92 0.96 0.7</diffuse></material></visual></link></model>
+    <model name='zone_n3'><static>true</static><pose>2 5.5 0.003 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>6 7 0.005</size></box></geometry></collision><visual name='v'><geometry><box><size>6 7 0.005</size></box></geometry><material><ambient>0.85 0.92 0.96 0.7</ambient><diffuse>0.85 0.92 0.96 0.7</diffuse></material></visual></link></model>
+    <!-- Nurse station: warm white -->
+    <model name='zone_nurse'><static>true</static><pose>9 5.5 0.003 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>8 7 0.005</size></box></geometry></collision><visual name='v'><geometry><box><size>8 7 0.005</size></box></geometry><material><ambient>0.94 0.94 0.90 0.7</ambient><diffuse>0.94 0.94 0.90 0.7</diffuse></material></visual></link></model>
+    <!-- South patient rooms -->
+    <model name='zone_s1'><static>true</static><pose>-10 -5.5 0.003 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>6 7 0.005</size></box></geometry></collision><visual name='v'><geometry><box><size>6 7 0.005</size></box></geometry><material><ambient>0.85 0.92 0.96 0.7</ambient><diffuse>0.85 0.92 0.96 0.7</diffuse></material></visual></link></model>
+    <model name='zone_s2'><static>true</static><pose>-4 -5.5 0.003 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>6 7 0.005</size></box></geometry></collision><visual name='v'><geometry><box><size>6 7 0.005</size></box></geometry><material><ambient>0.85 0.92 0.96 0.7</ambient><diffuse>0.85 0.92 0.96 0.7</diffuse></material></visual></link></model>
+    <model name='zone_s3'><static>true</static><pose>2 -5.5 0.003 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>6 7 0.005</size></box></geometry></collision><visual name='v'><geometry><box><size>6 7 0.005</size></box></geometry><material><ambient>0.85 0.92 0.96 0.7</ambient><diffuse>0.85 0.92 0.96 0.7</diffuse></material></visual></link></model>
+    <!-- Storage: utilitarian grey -->
+    <model name='zone_storage'><static>true</static><pose>9 -5.5 0.003 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>8 7 0.005</size></box></geometry></collision><visual name='v'><geometry><box><size>8 7 0.005</size></box></geometry><material><ambient>0.72 0.72 0.74 0.7</ambient><diffuse>0.72 0.72 0.74 0.7</diffuse></material></visual></link></model>
+
+    <!-- ── Outer walls (26 m × 18 m, 3 m tall) ───────────────────────────── -->
+    <model name='wall_north'><static>true</static><pose>0 9 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>26.4 0.2 3</size></box></geometry></collision><visual name='v'><geometry><box><size>26.4 0.2 3</size></box></geometry><material><ambient>0.90 0.90 0.90 1</ambient><diffuse>0.90 0.90 0.90 1</diffuse></material></visual></link></model>
+    <model name='wall_south'><static>true</static><pose>0 -9 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>26.4 0.2 3</size></box></geometry></collision><visual name='v'><geometry><box><size>26.4 0.2 3</size></box></geometry><material><ambient>0.90 0.90 0.90 1</ambient><diffuse>0.90 0.90 0.90 1</diffuse></material></visual></link></model>
+    <model name='wall_east'><static>true</static><pose>13 0 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.2 18 3</size></box></geometry></collision><visual name='v'><geometry><box><size>0.2 18 3</size></box></geometry><material><ambient>0.90 0.90 0.90 1</ambient><diffuse>0.90 0.90 0.90 1</diffuse></material></visual></link></model>
+    <!-- West wall: 3 m entry gap at y = -1.5 to +1.5 -->
+    <model name='wall_west_n'><static>true</static><pose>-13 5.25 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.2 7.5 3</size></box></geometry></collision><visual name='v'><geometry><box><size>0.2 7.5 3</size></box></geometry><material><ambient>0.90 0.90 0.90 1</ambient><diffuse>0.90 0.90 0.90 1</diffuse></material></visual></link></model>
+    <model name='wall_west_s'><static>true</static><pose>-13 -5.25 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.2 7.5 3</size></box></geometry></collision><visual name='v'><geometry><box><size>0.2 7.5 3</size></box></geometry><material><ambient>0.90 0.90 0.90 1</ambient><diffuse>0.90 0.90 0.90 1</diffuse></material></visual></link></model>
+
+    <!-- ── North corridor wall (y=+2) — 3 doors 1.5 m wide, open at nurse stn ── -->
+    <!-- N1 door at x=-10 ±0.75: gap x=-10.75 to -9.25 -->
+    <!-- N2 door at x=-4  ±0.75: gap x=-4.75  to -3.25 -->
+    <!-- N3 door at x=+2  ±0.75: gap x=+1.25  to +2.75 -->
+    <!-- Nurse station (x=+5 to +13): no wall — open to corridor -->
+    <model name='ncw_1'><static>true</static><pose>-11.875 2 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.25 0.2 3</size></box></geometry></collision><visual name='v'><geometry><box><size>2.25 0.2 3</size></box></geometry><material><ambient>0.82 0.82 0.82 1</ambient><diffuse>0.82 0.82 0.82 1</diffuse></material></visual></link></model>
+    <model name='ncw_2'><static>true</static><pose>-7.0 2 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>4.5 0.2 3</size></box></geometry></collision><visual name='v'><geometry><box><size>4.5 0.2 3</size></box></geometry><material><ambient>0.82 0.82 0.82 1</ambient><diffuse>0.82 0.82 0.82 1</diffuse></material></visual></link></model>
+    <model name='ncw_3'><static>true</static><pose>-1.0 2 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>4.5 0.2 3</size></box></geometry></collision><visual name='v'><geometry><box><size>4.5 0.2 3</size></box></geometry><material><ambient>0.82 0.82 0.82 1</ambient><diffuse>0.82 0.82 0.82 1</diffuse></material></visual></link></model>
+    <model name='ncw_4'><static>true</static><pose>3.875 2 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.25 0.2 3</size></box></geometry></collision><visual name='v'><geometry><box><size>2.25 0.2 3</size></box></geometry><material><ambient>0.82 0.82 0.82 1</ambient><diffuse>0.82 0.82 0.82 1</diffuse></material></visual></link></model>
+
+    <!-- ── South corridor wall (y=-2) — 4 doors 1.5 m wide ──────────────── -->
+    <!-- S1 door at x=-10, S2 at x=-4, S3 at x=+2, Storage at x=+9 -->
+    <model name='scw_1'><static>true</static><pose>-11.875 -2 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.25 0.2 3</size></box></geometry></collision><visual name='v'><geometry><box><size>2.25 0.2 3</size></box></geometry><material><ambient>0.82 0.82 0.82 1</ambient><diffuse>0.82 0.82 0.82 1</diffuse></material></visual></link></model>
+    <model name='scw_2'><static>true</static><pose>-7.0 -2 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>4.5 0.2 3</size></box></geometry></collision><visual name='v'><geometry><box><size>4.5 0.2 3</size></box></geometry><material><ambient>0.82 0.82 0.82 1</ambient><diffuse>0.82 0.82 0.82 1</diffuse></material></visual></link></model>
+    <model name='scw_3'><static>true</static><pose>-1.0 -2 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>4.5 0.2 3</size></box></geometry></collision><visual name='v'><geometry><box><size>4.5 0.2 3</size></box></geometry><material><ambient>0.82 0.82 0.82 1</ambient><diffuse>0.82 0.82 0.82 1</diffuse></material></visual></link></model>
+    <model name='scw_4'><static>true</static><pose>5.5 -2 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>5.5 0.2 3</size></box></geometry></collision><visual name='v'><geometry><box><size>5.5 0.2 3</size></box></geometry><material><ambient>0.82 0.82 0.82 1</ambient><diffuse>0.82 0.82 0.82 1</diffuse></material></visual></link></model>
+    <model name='scw_5'><static>true</static><pose>11.375 -2 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>3.25 0.2 3</size></box></geometry></collision><visual name='v'><geometry><box><size>3.25 0.2 3</size></box></geometry><material><ambient>0.82 0.82 0.82 1</ambient><diffuse>0.82 0.82 0.82 1</diffuse></material></visual></link></model>
+
+    <!-- ── North wing room dividers (y = +2 to +9) ───────────────────────── -->
+    <model name='ndiv_n1_n2'><static>true</static><pose>-7 5.5 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.2 7 3</size></box></geometry></collision><visual name='v'><geometry><box><size>0.2 7 3</size></box></geometry><material><ambient>0.82 0.82 0.82 1</ambient><diffuse>0.82 0.82 0.82 1</diffuse></material></visual></link></model>
+    <model name='ndiv_n2_n3'><static>true</static><pose>-1 5.5 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.2 7 3</size></box></geometry></collision><visual name='v'><geometry><box><size>0.2 7 3</size></box></geometry><material><ambient>0.82 0.82 0.82 1</ambient><diffuse>0.82 0.82 0.82 1</diffuse></material></visual></link></model>
+    <model name='ndiv_n3_nrs'><static>true</static><pose>5 5.5 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.2 7 3</size></box></geometry></collision><visual name='v'><geometry><box><size>0.2 7 3</size></box></geometry><material><ambient>0.82 0.82 0.82 1</ambient><diffuse>0.82 0.82 0.82 1</diffuse></material></visual></link></model>
+
+    <!-- ── South wing room dividers (y = -9 to -2) ───────────────────────── -->
+    <model name='sdiv_s1_s2'><static>true</static><pose>-7 -5.5 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.2 7 3</size></box></geometry></collision><visual name='v'><geometry><box><size>0.2 7 3</size></box></geometry><material><ambient>0.82 0.82 0.82 1</ambient><diffuse>0.82 0.82 0.82 1</diffuse></material></visual></link></model>
+    <model name='sdiv_s2_s3'><static>true</static><pose>-1 -5.5 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.2 7 3</size></box></geometry></collision><visual name='v'><geometry><box><size>0.2 7 3</size></box></geometry><material><ambient>0.82 0.82 0.82 1</ambient><diffuse>0.82 0.82 0.82 1</diffuse></material></visual></link></model>
+    <model name='sdiv_s3_sto'><static>true</static><pose>5 -5.5 1.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.2 7 3</size></box></geometry></collision><visual name='v'><geometry><box><size>0.2 7 3</size></box></geometry><material><ambient>0.82 0.82 0.82 1</ambient><diffuse>0.82 0.82 0.82 1</diffuse></material></visual></link></model>
+
+    <!-- ── Patient beds (2 per room, against back wall) ──────────────────── -->
+    <!-- Room N1: x=-13 to -7 -->
+    <model name='bed_n1_a'><static>true</static><pose>-11.5 7.5 0.3 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.9 2.0 0.6</size></box></geometry></collision><visual name='v'><geometry><box><size>0.9 2.0 0.6</size></box></geometry><material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual></link></model>
+    <model name='bed_n1_b'><static>true</static><pose>-8.5 7.5 0.3 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.9 2.0 0.6</size></box></geometry></collision><visual name='v'><geometry><box><size>0.9 2.0 0.6</size></box></geometry><material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual></link></model>
+    <!-- Room N2: x=-7 to -1 -->
+    <model name='bed_n2_a'><static>true</static><pose>-5.5 7.5 0.3 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.9 2.0 0.6</size></box></geometry></collision><visual name='v'><geometry><box><size>0.9 2.0 0.6</size></box></geometry><material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual></link></model>
+    <model name='bed_n2_b'><static>true</static><pose>-2.5 7.5 0.3 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.9 2.0 0.6</size></box></geometry></collision><visual name='v'><geometry><box><size>0.9 2.0 0.6</size></box></geometry><material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual></link></model>
+    <!-- Room N3: x=-1 to +5 -->
+    <model name='bed_n3_a'><static>true</static><pose>0.5 7.5 0.3 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.9 2.0 0.6</size></box></geometry></collision><visual name='v'><geometry><box><size>0.9 2.0 0.6</size></box></geometry><material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual></link></model>
+    <model name='bed_n3_b'><static>true</static><pose>3.5 7.5 0.3 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.9 2.0 0.6</size></box></geometry></collision><visual name='v'><geometry><box><size>0.9 2.0 0.6</size></box></geometry><material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual></link></model>
+    <!-- Room S2: x=-7 to -1 -->
+    <model name='bed_s2_a'><static>true</static><pose>-5.5 -7.5 0.3 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.9 2.0 0.6</size></box></geometry></collision><visual name='v'><geometry><box><size>0.9 2.0 0.6</size></box></geometry><material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual></link></model>
+    <model name='bed_s2_b'><static>true</static><pose>-2.5 -7.5 0.3 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.9 2.0 0.6</size></box></geometry></collision><visual name='v'><geometry><box><size>0.9 2.0 0.6</size></box></geometry><material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual></link></model>
+    <!-- Room S3: x=-1 to +5 -->
+    <model name='bed_s3_a'><static>true</static><pose>0.5 -7.5 0.3 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.9 2.0 0.6</size></box></geometry></collision><visual name='v'><geometry><box><size>0.9 2.0 0.6</size></box></geometry><material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual></link></model>
+    <model name='bed_s3_b'><static>true</static><pose>3.5 -7.5 0.3 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.9 2.0 0.6</size></box></geometry></collision><visual name='v'><geometry><box><size>0.9 2.0 0.6</size></box></geometry><material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual></link></model>
+
+    <!-- ── Nurse station counter (open to corridor) ──────────────────────── -->
+    <model name='nurse_counter'><static>true</static><pose>9 3.5 0.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>7.0 0.7 1.0</size></box></geometry></collision><visual name='v'><geometry><box><size>7.0 0.7 1.0</size></box></geometry><material><ambient>0.75 0.72 0.65 1</ambient><diffuse>0.75 0.72 0.65 1</diffuse></material></visual></link></model>
+
+    <!-- ── Storage shelves ───────────────────────────────────────────────── -->
+    <model name='shelf_sto_1'><static>true</static><pose>7 -6 0.75 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>3 0.4 1.5</size></box></geometry></collision><visual name='v'><geometry><box><size>3 0.4 1.5</size></box></geometry><material><ambient>0.52 0.48 0.42 1</ambient><diffuse>0.52 0.48 0.42 1</diffuse></material></visual></link></model>
+    <model name='shelf_sto_2'><static>true</static><pose>11 -6 0.75 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>3 0.4 1.5</size></box></geometry></collision><visual name='v'><geometry><box><size>3 0.4 1.5</size></box></geometry><material><ambient>0.52 0.48 0.42 1</ambient><diffuse>0.52 0.48 0.42 1</diffuse></material></visual></link></model>
+
+    <!-- ── Waiting chairs (west corridor, near entrance) ─────────────────── -->
+    <model name='wait_chair_n'><static>true</static><pose>-11.5 1.2 0.45 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>1.2 0.5 0.9</size></box></geometry></collision><visual name='v'><geometry><box><size>1.2 0.5 0.9</size></box></geometry><material><ambient>0.38 0.52 0.72 1</ambient><diffuse>0.38 0.52 0.72 1</diffuse></material></visual></link></model>
+    <model name='wait_chair_s'><static>true</static><pose>-11.5 -1.2 0.45 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>1.2 0.5 0.9</size></box></geometry></collision><visual name='v'><geometry><box><size>1.2 0.5 0.9</size></box></geometry><material><ambient>0.38 0.52 0.72 1</ambient><diffuse>0.38 0.52 0.72 1</diffuse></material></visual></link></model>
+
+    <!-- ── Medical equipment carts (in corridor) ─────────────────────────── -->
+    <model name='cart_1'><static>true</static><pose>0 1.5 0.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.5 0.7 1.0</size></box></geometry></collision><visual name='v'><geometry><box><size>0.5 0.7 1.0</size></box></geometry><material><ambient>0.70 0.70 0.72 1</ambient><diffuse>0.70 0.70 0.72 1</diffuse></material></visual></link></model>
+    <model name='cart_2'><static>true</static><pose>6 -1.5 0.5 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.5 0.7 1.0</size></box></geometry></collision><visual name='v'><geometry><box><size>0.5 0.7 1.0</size></box></geometry><material><ambient>0.70 0.70 0.72 1</ambient><diffuse>0.70 0.70 0.72 1</diffuse></material></visual></link></model>
+
+    <!-- ── Charging dock (in corridor, east end near nurse station) ──────── -->
+    <model name='charger'><static>true</static><pose>12 1.5 0.3 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.6 0.4 0.6</size></box></geometry></collision><visual name='v'><geometry><box><size>0.6 0.4 0.6</size></box></geometry><material><ambient>0.1 0.7 0.2 1</ambient><diffuse>0.1 0.7 0.2 1</diffuse></material></visual></link></model>
+
+    <!-- ── Room S1 supply closet (against south wall) ────────────────────── -->
+    <model name='supply_s1'><static>true</static><pose>-10 -7.5 0.75 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2 0.5 1.5</size></box></geometry></collision><visual name='v'><geometry><box><size>2 0.5 1.5</size></box></geometry><material><ambient>0.52 0.48 0.42 1</ambient><diffuse>0.52 0.48 0.42 1</diffuse></material></visual></link></model>
+
+  </world>
+</sdf>
