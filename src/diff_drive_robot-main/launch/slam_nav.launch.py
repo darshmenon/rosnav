@@ -197,6 +197,7 @@ def _build_runtime_actions(context, pkg_share: str):
                         'slowdown_distance': 0.70,
                         'front_angle_deg':   60.0,
                         'watch_all_around':  False,
+                        'use_sim_time':      True,
                     }],
                 )]
             ),
@@ -211,6 +212,7 @@ def _build_runtime_actions(context, pkg_share: str):
             executable='mission_server.py',
             name='mission_server',
             output='screen',
+            parameters=[{'use_sim_time': True}],
         )]
     )
 
@@ -218,16 +220,16 @@ def _build_runtime_actions(context, pkg_share: str):
     frontier_node = GroupAction(
         condition=IfCondition(explore),
         actions=[
-            LogInfo(msg="[slam_nav] Auto-exploration ENABLED. Starting frontier_explorer in 12s..."),
+            LogInfo(msg="[slam_nav] Auto-exploration ENABLED. Starting frontier_explorer in 20s..."),
             TimerAction(
-                period=12.0,
+                period=20.0,
                 actions=[Node(
                     package='diff_drive_robot',
                     executable='frontier_explorer.py',
                     name='frontier_explorer',
                     output='screen',
                     # Pass the computed map prefix to the explorer so it auto-saves there
-                    parameters=[{'map_save_path': map_prefix}]
+                    parameters=[{'map_save_path': map_prefix, 'use_sim_time': True}]
                 )]
             )
         ]

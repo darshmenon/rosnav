@@ -44,7 +44,7 @@ class FrontierExplorer(Node):
         self.declare_parameter('action_name',       'navigate_to_pose')
         self.declare_parameter('goal_frame',        'map')
         self.declare_parameter('base_frame',        'base_link')
-        self.declare_parameter('min_goal_distance', 0.35)
+        self.declare_parameter('min_goal_distance', 0.50)
         self.declare_parameter('map_save_path',     '')
 
         self._min_size      = self.get_parameter('min_frontier_size').value
@@ -60,7 +60,7 @@ class FrontierExplorer(Node):
         # ------------------------------------------------------------------
         # TF buffer for robot pose lookup
         # ------------------------------------------------------------------
-        self._tf_buffer   = tf2_ros.Buffer()
+        self._tf_buffer   = tf2_ros.Buffer(node=self)
         self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, self)
 
         # ------------------------------------------------------------------
@@ -69,6 +69,8 @@ class FrontierExplorer(Node):
         self._map: OccupancyGrid | None = None
         self._navigating = False
         self._visited: list[tuple[float, float]] = []
+        self._current_goal: tuple[float, float] | None = None
+        self._goal_sent_time: float = 0.0
         self._iteration = 0
         self._map_saved = False
 
@@ -106,6 +108,9 @@ class FrontierExplorer(Node):
 
         goal = self._best_frontier(frontiers)
         if goal is None:
+            if self._robot_position() is None:
+                self.get_logger().debug('TF not ready yet, retrying...')
+                return
             self.get_logger().info('All frontiers already visited. Exploration complete!')
             self._finish_exploration()
             return
@@ -120,7 +125,7 @@ class FrontierExplorer(Node):
 
         self.get_logger().info(
             f'Navigating to frontier ({goal[0]:.2f}, {goal[1]:.2f})')
-        self._visited.append(goal)
+        self._current_goal = goal
         self._send_goal(*goal)
 
     # ------------------------------------------------------------------
@@ -250,6 +255,7 @@ class FrontierExplorer(Node):
         goal_msg.pose.pose.position.y = y
         goal_msg.pose.pose.orientation.w = 1.0
 
+        self._goal_sent_time = time.monotonic()
         future = self._nav_client.send_goal_async(goal_msg)
         future.add_done_callback(self._goal_response_cb)
 
@@ -282,9 +288,16 @@ class FrontierExplorer(Node):
         handle.get_result_async().add_done_callback(self._result_cb)
 
     def _result_cb(self, future):
+        elapsed = time.monotonic() - self._goal_sent_time
         status = future.result().status
         if status == GoalStatus.STATUS_SUCCEEDED:
-            self.get_logger().info('Frontier reached. Searching for next...')
+            if elapsed < 0.5:
+                self.get_logger().warn(
+                    f'Spurious success in {elapsed:.2f}s — frontier not counted.')
+            else:
+                self.get_logger().info('Frontier reached. Searching for next...')
+                if self._current_goal is not None:
+                    self._visited.append(self._current_goal)
         else:
             self.get_logger().warn(f'Navigation failed (status={status}).')
         self._navigating = False
