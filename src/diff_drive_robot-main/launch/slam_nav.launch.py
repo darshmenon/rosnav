@@ -1,13 +1,15 @@
 """
 slam_nav.launch.py
 ==================
-One-shot launch: Gazebo + Robot + SLAM Toolbox (live mapping) + Nav2 navigation + RViz.
+One-shot launch: Gazebo + Robot + Nav2 + RViz.
 
-Default workflow (single command):
+SLAM mode (default):
   ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze explore:=true
 
-When exploration completes, the map is auto-saved to:
-  <package_share>/maps/map_<world_name>
+Nav-on-map mode (pre-built map, AMCL localization):
+  ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze slam:=false
+
+When slam:=false the launch uses map_<world_name>.yaml from the maps/ directory.
 """
 
 import os
@@ -51,12 +53,25 @@ def _resolve_map_prefix(map_prefix_arg: str, world_name: str, pkg_share: str) ->
     return os.path.join(pkg_share, 'maps', f'map_{world_name}')
 
 
+def _resolve_map_yaml(world_name: str, pkg_share: str) -> str:
+    candidates = [
+        os.path.join(pkg_share, 'maps', f'map_{world_name}.yaml'),
+        os.path.join(pkg_share, 'maps', f'{world_name}_map.yaml'),
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return candidates[0]
+
+
 def _build_runtime_actions(context, pkg_share: str):
     world_name_arg = LaunchConfiguration('world_name').perform(context)
     world_arg = LaunchConfiguration('world').perform(context)
     rviz = LaunchConfiguration('rviz')
     headless = LaunchConfiguration('headless')
     explore = LaunchConfiguration('explore')
+    slam_arg = LaunchConfiguration('slam').perform(context).lower()
+    use_slam = slam_arg in ('true', '1', 'yes')
     robot_name = LaunchConfiguration('robot_name')
     spawn_x = LaunchConfiguration('spawn_x')
     spawn_y = LaunchConfiguration('spawn_y')
@@ -67,6 +82,7 @@ def _build_runtime_actions(context, pkg_share: str):
     world_name = _resolve_world_name(world_name_arg, world_path)
     map_prefix = _resolve_map_prefix(
         LaunchConfiguration('map_prefix').perform(context).strip(), world_name, pkg_share)
+    map_yaml = _resolve_map_yaml(world_name, pkg_share)
 
     rsp = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(pkg_share, 'launch', 'rsp.launch.py')),
@@ -120,53 +136,74 @@ def _build_runtime_actions(context, pkg_share: str):
         ],
     )
 
-    slam = TimerAction(
-        period=5.0,
-        actions=[
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(
-                    os.path.join(
-                        get_package_share_directory('slam_toolbox'),
-                        'launch',
-                        'online_async_launch.py',
-                    )
-                ),
-                launch_arguments={
-                    'slam_params_file': os.path.join(pkg_share, 'config', 'mapper_params_online_async.yaml'),
-                    'use_sim_time': 'true',
-                }.items(),
-            )
-        ],
-    )
-
     # Patch the BT path placeholder before passing params to nav2.
-    # Use a fixed path so repeated launches overwrite rather than accumulate files.
-    _raw_params = os.path.join(pkg_share, 'config', _NAV2_PARAMS)
     import re as _re
+    _raw_params = os.path.join(pkg_share, 'config', _NAV2_PARAMS)
     with open(_raw_params) as _f:
         _patched = _re.sub(r'replace_with_pkg_share', pkg_share.replace('\\', '/'), _f.read())
     _params_file = f'/tmp/diff_drive_nav2_patched_{os.getpid()}.yaml'
     with open(_params_file, 'w') as _f:
         _f.write(_patched)
 
-    nav2 = TimerAction(
-        period=8.0,
-        actions=[
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(
-                    os.path.join(
-                        get_package_share_directory('nav2_bringup'),
-                        'launch',
-                        'navigation_launch.py',
-                    )
-                ),
-                launch_arguments={
-                    'use_sim_time': 'true',
-                    'params_file': _params_file,
-                }.items(),
-            )
-        ],
-    )
+    if use_slam:
+        slam_or_localization = TimerAction(
+            period=5.0,
+            actions=[
+                IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource(
+                        os.path.join(
+                            get_package_share_directory('slam_toolbox'),
+                            'launch',
+                            'online_async_launch.py',
+                        )
+                    ),
+                    launch_arguments={
+                        'slam_params_file': os.path.join(pkg_share, 'config', 'mapper_params_online_async.yaml'),
+                        'use_sim_time': 'true',
+                    }.items(),
+                )
+            ],
+        )
+        nav2 = TimerAction(
+            period=8.0,
+            actions=[
+                IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource(
+                        os.path.join(
+                            get_package_share_directory('nav2_bringup'),
+                            'launch',
+                            'navigation_launch.py',
+                        )
+                    ),
+                    launch_arguments={
+                        'use_sim_time': 'true',
+                        'params_file': _params_file,
+                    }.items(),
+                )
+            ],
+        )
+    else:
+        slam_or_localization = LogInfo(msg=f'[slam_nav] SLAM disabled — loading map: {map_yaml}')
+        nav2 = TimerAction(
+            period=8.0,
+            actions=[
+                IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource(
+                        os.path.join(
+                            get_package_share_directory('nav2_bringup'),
+                            'launch',
+                            'bringup_launch.py',
+                        )
+                    ),
+                    launch_arguments={
+                        'use_sim_time': 'true',
+                        'map': map_yaml,
+                        'params_file': _params_file,
+                        'slam': 'False',
+                    }.items(),
+                )
+            ],
+        )
 
     # ── RViz ──────────────────────────────────────────────────────────────
     rviz2 = GroupAction(
@@ -193,12 +230,17 @@ def _build_runtime_actions(context, pkg_share: str):
                     name='collision_monitor',
                     output='screen',
                     parameters=[{
-                        'stop_distance':     0.30,
-                        'slowdown_distance': 0.70,
-                        'front_angle_deg':   60.0,
+                        'stop_distance':     0.55,
+                        'slowdown_distance': 1.0,
+                        'front_angle_deg':   120.0,
                         'watch_all_around':  False,
+                        'relay_mode':        True,
                         'use_sim_time':      True,
                     }],
+                    remappings=[
+                        ('cmd_vel_nav', 'cmd_vel'),
+                        ('cmd_vel',     'cmd_vel_safe'),
+                    ],
                 )]
             ),
         ]
@@ -216,10 +258,10 @@ def _build_runtime_actions(context, pkg_share: str):
         )]
     )
 
-    # ── Frontier Explorer (Auto-run) ──────────────────────────────────────
-    frontier_node = GroupAction(
-        condition=IfCondition(explore),
-        actions=[
+    # ── Frontier Explorer (SLAM mode only) ───────────────────────────────
+    actions = []
+    if use_slam and explore.perform(context).lower() in ('true', '1', 'yes'):
+        actions = [
             LogInfo(msg="[slam_nav] Auto-exploration ENABLED. Starting frontier_explorer in 20s..."),
             TimerAction(
                 period=20.0,
@@ -228,25 +270,23 @@ def _build_runtime_actions(context, pkg_share: str):
                     executable='frontier_explorer.py',
                     name='frontier_explorer',
                     output='screen',
-                    # Pass the computed map prefix to the explorer so it auto-saves there
                     parameters=[{'map_save_path': map_prefix, 'use_sim_time': True}]
                 )]
             )
         ]
-    )
+    frontier_node = GroupAction(actions=actions) if actions else LogInfo(msg='[slam_nav] Frontier explorer disabled.')
 
+    mode = 'SLAM+frontier' if (use_slam and actions) else ('SLAM' if use_slam else f'nav-on-map ({os.path.basename(map_yaml)})')
     return [
-        LogInfo(msg=f'[slam_nav.launch] ROS_DISTRO={ROS_DISTRO}, params={_NAV2_PARAMS}'),
+        LogInfo(msg=f'[slam_nav.launch] mode={mode}, ROS_DISTRO={ROS_DISTRO}'),
         LogInfo(msg=f'[slam_nav.launch] world={world_path}'),
         LogInfo(msg=f'[slam_nav.launch] robot_name={robot_name.perform(context)}'),
-        LogInfo(msg=f'[slam_nav.launch] save map with: ros2 run nav2_map_server map_saver_cli -f {map_prefix}'),
-        LogInfo(msg=f'[slam_nav.launch] explore={explore.perform(context)}'),
         rsp,
         gazebo_server,
         gazebo_client,
         ros_gz_bridge,
         spawn_robot,
-        slam,
+        slam_or_localization,
         nav2,
         rviz2,
         collision_monitor,
@@ -281,8 +321,11 @@ def generate_launch_description():
             default_value='',
             description='Output prefix for map_saver_cli. If empty, uses <package_share>/maps/map_<world_name>'),
         DeclareLaunchArgument(
+            name='slam', default_value='true',
+            description='true=SLAM Toolbox (live mapping), false=AMCL on pre-built map'),
+        DeclareLaunchArgument(
             name='explore', default_value='false',
-            description='Auto-start frontier explorer and map saving when true'),
+            description='Auto-start frontier explorer (only valid when slam:=true)'),
         DeclareLaunchArgument(
             name='safety', default_value='true',
             description='Launch collision monitor safety layer'),
