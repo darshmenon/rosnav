@@ -136,6 +136,15 @@ def _build_runtime_actions(context, pkg_share: str):
         ],
     )
 
+    # Lidar filter chain: raw Gazebo scan (/scan_raw) in, cleaned /scan out.
+    # SLAM Toolbox, AMCL, and the costmaps below never see the unfiltered feed.
+    laser_filter = Node(
+        package='laser_filters',
+        executable='scan_to_scan_filter_chain',
+        parameters=[os.path.join(pkg_share, 'config', 'laser_filters.yaml')],
+        remappings=[('scan', 'scan_raw'), ('scan_filtered', 'scan')],
+    )
+
     # Patch the BT path placeholder before passing params to nav2.
     import re as _re
     _raw_params = os.path.join(pkg_share, 'config', _NAV2_PARAMS)
@@ -285,6 +294,7 @@ def _build_runtime_actions(context, pkg_share: str):
         gazebo_server,
         gazebo_client,
         ros_gz_bridge,
+        laser_filter,
         spawn_robot,
         slam_or_localization,
         nav2,

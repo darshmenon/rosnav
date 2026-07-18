@@ -187,6 +187,15 @@ def generate_launch_description():
         ]
     )
 
+    # Lidar filter chain: raw Gazebo scan (/scan_raw) in, cleaned /scan out.
+    # AMCL and Nav2's costmaps never see the unfiltered feed.
+    laser_filter = Node(
+        package='laser_filters',
+        executable='scan_to_scan_filter_chain',
+        parameters=[os.path.join(pkg_share, 'config', 'laser_filters.yaml')],
+        remappings=[('scan', 'scan_raw'), ('scan_filtered', 'scan')],
+    )
+
     # RViz
     rviz2 = GroupAction(
         condition=IfCondition(rviz),
@@ -253,6 +262,7 @@ def generate_launch_description():
         gazebo_server,
         gazebo_client,
         ros_gz_bridge,
+        laser_filter,
         spawn_robot,
         rviz2,
         nav2_launch,

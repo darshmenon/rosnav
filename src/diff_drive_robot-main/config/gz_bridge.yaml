@@ -32,7 +32,11 @@
   gz_type_name: "gz.msgs.IMU"
   direction: GZ_TO_ROS
 
-- ros_topic_name: "/scan"
+# Raw lidar straight from Gazebo. scan_to_scan_filter_chain (laser_filters,
+# see config/laser_filters.yaml) consumes this and republishes the cleaned
+# result on /scan, which is what AMCL, SLAM Toolbox, and the Nav2 costmaps
+# actually subscribe to.
+- ros_topic_name: "/scan_raw"
   gz_topic_name: "/scan"
   ros_type_name: "sensor_msgs/msg/LaserScan"
   gz_type_name: "gz.msgs.LaserScan"

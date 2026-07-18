@@ -1,0 +1,30 @@
+# laser_filters chain applied between the raw Gazebo lidar (/scan_raw) and
+# everything that consumes /scan downstream: AMCL, SLAM Toolbox, and the
+# Nav2 costmap obstacle layer. Run by the scan_to_scan_filter_chain node.
+#
+# filter1 (range): drops readings inside the sensor's unreliable near-range
+#   band and beyond its rated max range, replacing them with inf instead of
+#   letting them fall through as phantom close-range obstacles.
+# filter2 (shadows): removes shadow/veiling points — the mixed returns a 2D
+#   lidar produces at shallow grazing angles near corners and edges, a
+#   classic source of speckle noise in the costmap and false SLAM features.
+scan_to_scan_filter_chain:
+  ros__parameters:
+    filter1:
+      name: range
+      type: laser_filters/LaserScanRangeFilter
+      params:
+        use_message_range_limits: false
+        lower_threshold: 0.35
+        upper_threshold: 10.0
+        lower_replacement_value: .inf
+        upper_replacement_value: .inf
+
+    filter2:
+      name: shadows
+      type: laser_filters/ScanShadowsFilter
+      params:
+        min_angle: 10.0
+        max_angle: 170.0
+        neighbors: 1
+        window: 1

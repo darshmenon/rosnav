@@ -319,6 +319,9 @@ def _build_all(context, pkg_share: str):
 
         # Gazebo ↔ ROS bridge (2D lidar, odom, cmd_vel)
         # TF is handled by dedicated bridge nodes below to avoid the /{ns}/tf empty-topic problem.
+        # The gz-side lidar topic is fixed to {ns}/scan by lidar.xacro, so the bridge
+        # argument below must keep that name — the remapping is what renames the ROS-side
+        # output to scan_raw, freeing "scan" for laser_filter's cleaned republish.
         bridge = Node(
             package='ros_gz_bridge',
             executable='parameter_bridge',
@@ -328,6 +331,15 @@ def _build_all(context, pkg_share: str):
                 f'/{ns}/odom@nav_msgs/msg/Odometry[gz.msgs.Odometry',
                 f'/{ns}/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
             ],
+            remappings=[(f'/{ns}/scan', f'/{ns}/scan_raw')],
+            output='screen')
+
+        laser_filter = Node(
+            package='laser_filters',
+            executable='scan_to_scan_filter_chain',
+            namespace=ns,
+            parameters=[os.path.join(pkg_share, 'config', 'laser_filters.yaml')],
+            remappings=[('scan', 'scan_raw'), ('scan_filtered', 'scan')],
             output='screen')
 
         # AMCL — localises against /map (shared).
@@ -373,7 +385,7 @@ def _build_all(context, pkg_share: str):
         # Assemble per-robot actions
         nav2_group = nav2
 
-        per_robot = [rsp, spawn, bridge]
+        per_robot = [rsp, spawn, bridge, laser_filter]
 
         if is_slam_robot:
             # robot1 in explore mode: SLAM handles localisation
