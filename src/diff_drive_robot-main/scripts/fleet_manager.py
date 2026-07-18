@@ -213,15 +213,29 @@ class FleetNode(Node):
         else:
             print(f'  Gazebo spawn output: {r.stdout.strip() or r.stderr.strip()}')
 
-        # Bridge
+        # Bridge. Lidar lands on scan_raw; the laser_filter process below cleans
+        # it and republishes on scan — matching multi_robot.launch.py's wiring.
         subprocess.Popen([
             'ros2', 'run', 'ros_gz_bridge', 'parameter_bridge',
-            '--ros-args', '-r', f'__ns:=/{ns}', '--',
+            '--ros-args', '-r', f'__ns:=/{ns}',
+            '-r', f'/{ns}/scan:=/{ns}/scan_raw', '--',
             '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
             f'/{ns}/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist',
             f'/{ns}/odom@nav_msgs/msg/Odometry[gz.msgs.Odometry',
             f'/{ns}/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
             f'/{ns}/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        try:
+            from ament_index_python.packages import get_package_share_directory
+            share = get_package_share_directory(PKG)
+        except Exception:
+            share = os.path.join(os.path.expanduser('~'), 'rosnav', 'src', 'diff_drive_robot-main')
+        subprocess.Popen([
+            'ros2', 'run', 'laser_filters', 'scan_to_scan_filter_chain',
+            '--ros-args', '-r', f'__ns:=/{ns}',
+            '-r', 'scan:=scan_raw', '-r', 'scan_filtered:=scan',
+            '--params-file', os.path.join(share, 'config', 'laser_filters.yaml'),
         ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         print(f'  {ns} bridge started.')

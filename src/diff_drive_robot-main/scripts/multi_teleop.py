@@ -52,6 +52,14 @@ SPAWN_YAW = 0.0
 PKG       = 'diff_drive_robot'
 
 
+def _pkg_share() -> str:
+    try:
+        prefix = subprocess.check_output(['ros2', 'pkg', 'prefix', PKG], text=True).strip()
+        return os.path.join(prefix, 'share', PKG)
+    except Exception:
+        return os.path.join(os.path.expanduser('~'), 'rosnav', 'src', 'diff_drive_robot-main')
+
+
 def _get_char():
     """Read one keypress without echo."""
     fd = sys.stdin.fileno()
@@ -151,7 +159,10 @@ class MultiTeleop(Node):
             '-x', str(x), '-y', str(y), '-z', str(SPAWN_Z), '-Y', str(SPAWN_YAW),
         ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-        # Bridge (2D lidar + odom + cmd_vel + tf)
+        # Bridge (2D lidar + odom + cmd_vel + tf).
+        # Lidar lands on scan_raw; the laser_filter process below cleans it and
+        # republishes on scan — the topic Nav2/AMCL for this robot expect,
+        # matching how multi_robot.launch.py wires every other robot.
         bridge_args = [
             '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
             f'/{ns}/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist',
@@ -161,7 +172,15 @@ class MultiTeleop(Node):
         ]
         subprocess.Popen(
             ['ros2', 'run', 'ros_gz_bridge', 'parameter_bridge',
-             '--ros-args', '-r', f'__ns:=/{ns}', '--'] + bridge_args,
+             '--ros-args', '-r', f'__ns:=/{ns}',
+             '-r', f'/{ns}/scan:=/{ns}/scan_raw', '--'] + bridge_args,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        subprocess.Popen(
+            ['ros2', 'run', 'laser_filters', 'scan_to_scan_filter_chain',
+             '--ros-args', '-r', f'__ns:=/{ns}',
+             '-r', 'scan:=scan_raw', '-r', 'scan_filtered:=scan',
+             '--params-file', os.path.join(_pkg_share(), 'config', 'laser_filters.yaml')],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         print(f'{ns} spawned. Nav2 must be started separately.')
