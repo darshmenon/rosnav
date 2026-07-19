@@ -48,6 +48,7 @@ A full autonomous robot navigation stack built on **Nav2**, **SLAM Toolbox**, an
 - Frontier-based autonomous exploration
 - Waypoint following
 - Custom Behavior Tree (backup→spin→clear→wait)
+- Swappable drive base — diff-drive or holonomic mecanum (`drive_type:=mecanum`)
 
 </td>
 <td width="50%">
@@ -220,6 +221,17 @@ ros2 run diff_drive_robot llm_nav.py --ros-args \
 ```
 
 **Requirements:** `ollama serve` running with a model pulled (`ollama pull llama2`).
+
+#### Mode 7 — Holonomic (Mecanum) Drive
+Swap the standard 2-wheel diff-drive base for a 4-wheel mecanum base that can strafe sideways and move diagonally without rotating — useful in tight spaces. Works with any launch mode above via `drive_type:=mecanum`.
+```bash
+ros2 launch diff_drive_robot robot.launch.py drive_type:=mecanum
+
+# strafe sideways with no rotation:
+ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
+  "{linear: {x: 0.0, y: 0.3, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}"
+```
+Details on what changes under the hood: [concepts.md § 18](concepts.md#18-mecanum-holonomic-drive).
 
 ---
 

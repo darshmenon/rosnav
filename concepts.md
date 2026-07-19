@@ -471,11 +471,47 @@ Standalone global planner using the **A\* algorithm**:
 
 ---
 
+## 18. Mecanum (Holonomic) Drive
+
+`robot.launch.py drive_type:=mecanum` swaps the standard 2-wheel differential
+base for a 4-wheel holonomic base that can strafe sideways and move diagonally
+without rotating first.
+
+### What changes vs diff drive
+| Piece | Diff drive | Mecanum |
+|---|---|---|
+| URDF | `robot.urdf.xacro` → `robot_core.xacro` (2 driven rear wheels, 2 fixed low-friction front casters) | `robot_mecanum.urdf.xacro` → `robot_core_mecanum.xacro` (all 4 wheels driven, `continuous` joints) |
+| Gazebo plugin | `gazebo_control.xacro`, `gz::sim::systems::DiffDrive` | `gazebo_control_mecanum.xacro`, `gz::sim::systems::MecanumDrive` (native to gz-sim7/8, no custom plugin needed) |
+| Nav2 controller (Humble/DWB) | `nav2_params.yaml` — `max_vel_y: 0.0`, `vy_samples: 1` (no lateral motion), includes `RotateToGoal` critic | `nav2_params_mecanum.yaml` — `max_vel_y`/`min_vel_y` unlocked to ±0.5, `vy_samples: 10`, `RotateToGoal` dropped (holonomic robots don't need to pre-rotate) |
+| Nav2 controller (Jazzy/MPPI) | `nav2_params_jazzy.yaml` — `motion_model: "DiffDrive"` | `nav2_params_mecanum_jazzy.yaml` — `motion_model: "Omni"` |
+
+The `MecanumDrive` plugin takes `vx`/`vy`/`wz` from `cmd_vel` (via the same
+`cmd_vel_safe` bridge topic diff drive uses) and computes wheel spin
+kinematically. It doesn't simulate actual roller geometry, so wheel friction
+in `robot_core_mecanum.xacro` is tuned low-but-uniform (`mu1`/`mu2` = 0.3) as
+a compromise — enough grip to drive forward, permissive enough to strafe.
+True anisotropic roller friction (`fdir1`, full grip along the roller,
+frictionless across it) is a native-SDF technique used in Gazebo's own
+`mecanum_drive.sdf` demo world, but isn't reliably expressible through the
+`<gazebo reference="...">` URDF extension tags this repo's xacro pipeline
+uses.
+
+### Try it
+```bash
+ros2 launch diff_drive_robot robot.launch.py drive_type:=mecanum headless:=true rviz:=false
+
+# strafe sideways with no rotation:
+ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
+  "{linear: {x: 0.0, y: 0.3, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}"
+```
+
+---
+
 ## Quick Reference — Launch Files
 
 | Launch file | What it does | Key args |
 |---|---|---|
-| `robot.launch.py` | Gazebo + robot + Nav2 full bringup with saved map | `map`, `world`, `robot_name`, `spawn_x/y/z/yaw`, `rviz`, `use_sim_time` |
+| `robot.launch.py` | Gazebo + robot + Nav2 full bringup with saved map | `map`, `world`, `robot_name`, `spawn_x/y/z/yaw`, `rviz`, `use_sim_time`, `drive_type` (`diff`\|`mecanum`) |
 | `slam_nav.launch.py` | Gazebo + robot + SLAM Toolbox + Nav2 (+ optional auto frontier) | `world_name`, `world`, `explore`, `map_prefix`, `rviz`, `robot_name`, `spawn_x/y/z/yaw` |
 | `slam.launch.py` | Gazebo + robot + SLAM Toolbox mapping mode | `use_sim_time` |
 | `multi_robot.launch.py` | Two robots + shared map server + Nav2 per robot | `map`, `world`, `rviz` |

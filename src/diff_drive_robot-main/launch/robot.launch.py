@@ -3,7 +3,7 @@ from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.conditions import IfCondition, UnlessCondition
 from ament_index_python.packages import get_package_share_directory
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression, PathJoinSubstitution
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.actions import (
     DeclareLaunchArgument,
@@ -23,7 +23,12 @@ ROS_DISTRO = os.environ.get('ROS_DISTRO', 'humble')
 # Auto-select nav2 params based on distro:
 #   Humble: nav2_params.yaml  (behaviors use /Spin format)
 #   Jazzy:  nav2_params_jazzy.yaml  (behaviors use ::Spin format)
-_NAV2_PARAMS = 'nav2_params_jazzy.yaml' if ROS_DISTRO == 'jazzy' else 'nav2_params.yaml'
+# drive_type:=mecanum swaps in the holonomic-tuned variant of either file
+# (unlocked vy in DWB for Humble, motion_model:"Omni" in MPPI for Jazzy).
+def _nav2_params_filename(drive_type: str) -> str:
+    if ROS_DISTRO == 'jazzy':
+        return 'nav2_params_mecanum_jazzy.yaml' if drive_type == 'mecanum' else 'nav2_params_jazzy.yaml'
+    return 'nav2_params_mecanum.yaml' if drive_type == 'mecanum' else 'nav2_params.yaml'
 
 
 def _resolve_map_file(map_arg: str, world_path: str, home: str, pkg_share: str) -> str:
@@ -51,8 +56,9 @@ def _build_nav2_action(context, pkg_share: str, home: str):
     world_path = LaunchConfiguration('world').perform(context)
     map_arg = LaunchConfiguration('map').perform(context).strip()
     use_sim_time = LaunchConfiguration('use_sim_time').perform(context)
+    drive_type = LaunchConfiguration('drive_type').perform(context)
     map_file = _resolve_map_file(map_arg, world_path, home, pkg_share)
-    params_file = os.path.join(pkg_share, 'config', _NAV2_PARAMS)
+    params_file = os.path.join(pkg_share, 'config', _nav2_params_filename(drive_type))
 
     return [
         LogInfo(msg=f'[robot.launch] ROS_DISTRO={ROS_DISTRO}, params={os.path.basename(params_file)}'),
@@ -79,6 +85,7 @@ def generate_launch_description():
     world    = LaunchConfiguration('world')
     rviz     = LaunchConfiguration('rviz')
     headless = LaunchConfiguration('headless')
+    drive_type = LaunchConfiguration('drive_type')
     robot_name = LaunchConfiguration('robot_name')
     spawn_x    = LaunchConfiguration('spawn_x')
     spawn_y    = LaunchConfiguration('spawn_y')
@@ -101,6 +108,11 @@ def generate_launch_description():
         name='headless',
         default_value='False',
         description='Skip Gazebo GUI client (server still runs)')
+
+    declare_drive_type = DeclareLaunchArgument(
+        name='drive_type',
+        default_value='diff',
+        description='Drive base: "diff" (default) or "mecanum" (holonomic, 4 driven wheels)')
 
     declare_map = DeclareLaunchArgument(
         name='map',
@@ -131,14 +143,17 @@ def generate_launch_description():
         name='use_sim_time', default_value='true',
         description='Use simulation clock')
 
-    # Robot State Publisher
+    # Robot State Publisher — URDF picked at launch time by drive_type
+    urdf_filename = PythonExpression([
+        "'robot_mecanum.urdf.xacro' if '", drive_type, "' == 'mecanum' else 'robot.urdf.xacro'"
+    ])
     rsp = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_share, 'launch', 'rsp.launch.py')
         ),
         launch_arguments={
             'use_sim_time': use_sim_time,
-            'urdf': os.path.join(pkg_share, 'urdf', 'robot.urdf.xacro')
+            'urdf': PathJoinSubstitution([pkg_share, 'urdf', urdf_filename])
         }.items()
     )
 
@@ -250,6 +265,7 @@ def generate_launch_description():
         declare_world,
         declare_rviz,
         declare_headless,
+        declare_drive_type,
         declare_map,
         declare_robot_name,
         declare_spawn_x,

@@ -1,0 +1,43 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- namespace arg: pass the robot namespace so TF frame IDs are unique per robot -->
+  <xacro:arg name="namespace" default=""/>
+  <xacro:property name="ns" value="$(arg namespace)"/>
+
+   <gazebo>
+      <plugin filename="libgz-sim-mecanum-drive-system" name="gz::sim::systems::MecanumDrive">
+  <front_left_joint>left_front_wheel_joint</front_left_joint>
+  <front_right_joint>right_front_wheel_joint</front_right_joint>
+  <back_left_joint>left_wheel_joint</back_left_joint>
+  <back_right_joint>right_wheel_joint</back_right_joint>
+
+    <wheel_separation>0.45</wheel_separation>
+    <wheelbase>0.3</wheelbase>
+    <wheel_radius>0.1</wheel_radius>
+
+    <odom_publish_frequency>50</odom_publish_frequency>
+    <topic>${ns + '/cmd_vel' if ns else 'cmd_vel'}</topic>
+
+    <!-- Acceleration limits -->
+    <min_acceleration>-3.0</min_acceleration>
+    <max_acceleration>3.0</max_acceleration>
+
+    <odom_topic>${ns + '/odom' if ns else 'odom'}</odom_topic>
+    <!-- frame IDs include namespace prefix so they are unique across robots -->
+    <frame_id>${ns + '/odom' if ns else 'odom'}</frame_id>
+    <child_frame_id>${ns + '/base_link' if ns else 'base_link'}</child_frame_id>
+    <tf_topic>/tf</tf_topic>
+  </plugin>
+
+      <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
+         <topic>joint_states</topic>
+         <joint_name>right_wheel_joint</joint_name>
+         <joint_name>left_wheel_joint</joint_name>
+           <joint_name>left_front_wheel_joint</joint_name>
+         <joint_name>right_front_wheel_joint</joint_name>
+
+      </plugin>
+   </gazebo>
+
+</robot>
