@@ -1,4 +1,5 @@
 import os
+import xml.etree.ElementTree as ET
 from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.conditions import IfCondition, UnlessCondition
@@ -11,6 +12,7 @@ from launch.actions import (
     IncludeLaunchDescription,
     LogInfo,
     OpaqueFunction,
+    TimerAction,
 )
 from nav2_common.launch import RewrittenYaml
 
@@ -51,6 +53,46 @@ def _resolve_map_file(map_arg: str, world_path: str, home: str, pkg_share: str) 
         if os.path.exists(candidate):
             return candidate
     return candidates[0]
+
+
+def _resolve_gazebo_world_name(world_path: str) -> str:
+    fallback = os.path.splitext(os.path.basename(world_path))[0]
+    try:
+        root = ET.parse(os.path.expanduser(world_path)).getroot()
+    except (ET.ParseError, OSError):
+        return fallback
+
+    if root.tag == 'world' and root.get('name'):
+        return root.get('name')
+
+    world = root.find('world')
+    if world is not None and world.get('name'):
+        return world.get('name')
+
+    return fallback
+
+
+def _build_spawn_action(context, pkg_share: str):
+    world_path = LaunchConfiguration('world').perform(context)
+    world_name = _resolve_gazebo_world_name(world_path)
+
+    return [
+        LogInfo(msg=f'[robot.launch] gazebo world={world_name}'),
+        Node(
+            package='ros_gz_sim',
+            executable='create',
+            arguments=[
+                '-world', world_name,
+                '-topic', 'robot_description',
+                '-name', LaunchConfiguration('robot_name'),
+                '-x', LaunchConfiguration('spawn_x'),
+                '-y', LaunchConfiguration('spawn_y'),
+                '-z', LaunchConfiguration('spawn_z'),
+                '-Y', LaunchConfiguration('spawn_yaw'),
+            ],
+            output='screen',
+        ),
+    ]
 
 
 def _build_nav2_action(context, pkg_share: str, home: str):
@@ -186,21 +228,7 @@ def generate_launch_description():
     )
 
     # Spawn robot
-    world_name = PythonExpression(["\"", world, "\".split('/')[-1].rsplit('.', 1)[0]"])
-    spawn_robot = Node(
-        package='ros_gz_sim',
-        executable='create',
-        arguments=[
-            '-world',  world_name,
-            '-topic', 'robot_description',
-            '-name',  robot_name,
-            '-x',     spawn_x,
-            '-y',     spawn_y,
-            '-z',     spawn_z,
-            '-Y',     spawn_yaw,
-        ],
-        output='screen'
-    )
+    spawn_robot = OpaqueFunction(function=_build_spawn_action, args=[pkg_share])
 
     # Gazebo <-> ROS bridge
     ros_gz_bridge = Node(
@@ -233,7 +261,10 @@ def generate_launch_description():
     )
 
     # Nav2 full bringup (map_server + AMCL + planner + controller + behaviours)
-    nav2_launch = OpaqueFunction(function=_build_nav2_action, args=[pkg_share, home])
+    nav2_launch = TimerAction(
+        period=8.0,
+        actions=[OpaqueFunction(function=_build_nav2_action, args=[pkg_share, home])],
+    )
 
     # SLAM Toolbox (uncomment to build or refine a map instead of using a saved one)
     # slam_launch = IncludeLaunchDescription(

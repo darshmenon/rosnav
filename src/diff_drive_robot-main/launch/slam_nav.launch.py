@@ -13,6 +13,7 @@ When slam:=false the launch uses map_<world_name>.yaml from the maps/ directory.
 """
 
 import os
+import xml.etree.ElementTree as ET
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -37,6 +38,23 @@ def _resolve_world_name(raw_name: str, world_path: str) -> str:
     if raw_name:
         return os.path.splitext(os.path.basename(raw_name))[0]
     return os.path.splitext(os.path.basename(world_path))[0]
+
+
+def _resolve_gazebo_world_name(world_path: str) -> str:
+    fallback = os.path.splitext(os.path.basename(world_path))[0]
+    try:
+        root = ET.parse(os.path.expanduser(world_path)).getroot()
+    except (ET.ParseError, OSError):
+        return fallback
+
+    if root.tag == 'world' and root.get('name'):
+        return root.get('name')
+
+    world = root.find('world')
+    if world is not None and world.get('name'):
+        return world.get('name')
+
+    return fallback
 
 
 def _resolve_world_path(world_name_arg: str, world_arg: str, pkg_share: str) -> str:
@@ -80,6 +98,7 @@ def _build_runtime_actions(context, pkg_share: str):
 
     world_path = _resolve_world_path(world_name_arg, world_arg, pkg_share)
     world_name = _resolve_world_name(world_name_arg, world_path)
+    gazebo_world_name = _resolve_gazebo_world_name(world_path)
     map_prefix = _resolve_map_prefix(
         LaunchConfiguration('map_prefix').perform(context).strip(), world_name, pkg_share)
     map_yaml = _resolve_map_yaml(world_name, pkg_share)
@@ -116,7 +135,7 @@ def _build_runtime_actions(context, pkg_share: str):
         package='ros_gz_sim',
         executable='create',
         arguments=[
-            '-world', world_name,
+            '-world', gazebo_world_name,
             '-topic', 'robot_description',
             '-name', robot_name,
             '-x', spawn_x,

@@ -45,6 +45,7 @@ import tempfile
 import json
 import math
 import yaml
+import xml.etree.ElementTree as ET
 
 from ament_index_python.packages import get_package_share_directory
 
@@ -119,6 +120,23 @@ def _resolve_map_file(map_arg: str, world_path: str, pkg_share: str) -> str:
     return candidates[0]
 
 
+def _resolve_gazebo_world_name(world_path: str) -> str:
+    fallback = os.path.splitext(os.path.basename(world_path))[0]
+    try:
+        root = ET.parse(os.path.expanduser(world_path)).getroot()
+    except (ET.ParseError, OSError):
+        return fallback
+
+    if root.tag == 'world' and root.get('name'):
+        return root.get('name')
+
+    world = root.find('world')
+    if world is not None and world.get('name'):
+        return world.get('name')
+
+    return fallback
+
+
 def _load_node_params(params_path: str, node_name: str) -> dict:
     """Return ros__parameters for a single node from a generated YAML file."""
     with open(params_path) as f:
@@ -187,6 +205,7 @@ def _build_all(context, pkg_share: str):
         world_path = os.path.join(pkg_share, 'worlds', f'{world_name}.world')
 
     world_stem   = os.path.splitext(os.path.basename(world_path))[0]
+    gazebo_world_name = _resolve_gazebo_world_name(world_path)
     map_prefix   = os.path.join(pkg_share, 'maps', f'map_{world_stem}')
     template_yaml = os.path.join(pkg_share, 'config', _MR_PARAMS)
 
@@ -311,7 +330,7 @@ def _build_all(context, pkg_share: str):
             package='ros_gz_sim',
             executable='create',
             arguments=[
-                '-world', world_stem,
+                '-world', gazebo_world_name,
                 '-topic', f'/{ns}/robot_description',
                 '-name', ns,
                 '-x', x, '-y', y, '-z', z, '-Y', yaw,
