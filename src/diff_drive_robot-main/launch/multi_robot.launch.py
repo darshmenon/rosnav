@@ -311,6 +311,7 @@ def _build_all(context, pkg_share: str):
             package='ros_gz_sim',
             executable='create',
             arguments=[
+                '-world', world_stem,
                 '-topic', f'/{ns}/robot_description',
                 '-name', ns,
                 '-x', x, '-y', y, '-z', z, '-Y', yaw,

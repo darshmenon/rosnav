@@ -12,6 +12,7 @@ from launch.actions import (
     LogInfo,
     OpaqueFunction,
 )
+from nav2_common.launch import RewrittenYaml
 
 # ---------------------------------------------------------------------------
 # Distro-agnostic helper: works on Humble (GZ Fortress/Garden) and Jazzy (GZ Harmonic)
@@ -58,10 +59,17 @@ def _build_nav2_action(context, pkg_share: str, home: str):
     use_sim_time = LaunchConfiguration('use_sim_time').perform(context)
     drive_type = LaunchConfiguration('drive_type').perform(context)
     map_file = _resolve_map_file(map_arg, world_path, home, pkg_share)
-    params_file = os.path.join(pkg_share, 'config', _nav2_params_filename(drive_type))
+    raw_params = os.path.join(pkg_share, 'config', _nav2_params_filename(drive_type))
+    bt_xml = os.path.join(pkg_share, 'config', 'bt', 'navigate_w_recovery.xml')
+    params_file = RewrittenYaml(
+        source_file=raw_params,
+        root_key='',
+        param_rewrites={'default_nav_to_pose_bt_xml': bt_xml},
+        convert_types=True,
+    ).perform(context)
 
     return [
-        LogInfo(msg=f'[robot.launch] ROS_DISTRO={ROS_DISTRO}, params={os.path.basename(params_file)}'),
+        LogInfo(msg=f'[robot.launch] ROS_DISTRO={ROS_DISTRO}, params={os.path.basename(raw_params)}'),
         LogInfo(msg=f'[robot.launch] using map={map_file}'),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
@@ -132,7 +140,7 @@ def generate_launch_description():
         description='Robot spawn Y position')
 
     declare_spawn_z = DeclareLaunchArgument(
-        name='spawn_z', default_value='0.3',
+        name='spawn_z', default_value='0.075',
         description='Robot spawn Z position')
 
     declare_spawn_yaw = DeclareLaunchArgument(
@@ -178,10 +186,12 @@ def generate_launch_description():
     )
 
     # Spawn robot
+    world_name = PythonExpression(["\"", world, "\".split('/')[-1].rsplit('.', 1)[0]"])
     spawn_robot = Node(
         package='ros_gz_sim',
         executable='create',
         arguments=[
+            '-world',  world_name,
             '-topic', 'robot_description',
             '-name',  robot_name,
             '-x',     spawn_x,

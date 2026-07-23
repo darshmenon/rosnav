@@ -116,6 +116,7 @@ def _build_runtime_actions(context, pkg_share: str):
         package='ros_gz_sim',
         executable='create',
         arguments=[
+            '-world', world_name,
             '-topic', 'robot_description',
             '-name', robot_name,
             '-x', spawn_x,

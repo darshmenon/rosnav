@@ -14,7 +14,7 @@
 
     <wheel_separation>0.45</wheel_separation>
     <wheelbase>0.3</wheelbase>
-    <wheel_radius>0.1</wheel_radius>
+    <wheel_radius>0.075</wheel_radius>
 
     <odom_publish_frequency>50</odom_publish_frequency>
     <topic>${ns + '/cmd_vel' if ns else 'cmd_vel'}</topic>
