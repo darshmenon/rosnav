@@ -297,9 +297,9 @@ Everything else — TF, Nav2 params, frontier coordinator — picks up the new r
 | `rviz` | `true` | Skip RViz |
 | `map` | *(auto)* | Path to map YAML — only used when `explore:=false` |
 
-#### Shared map building
+<!-- #### Shared map building
 
-![Multi-robot mapping](images/multi_robot_mapping.png)
+![Multi-robot mapping](images/multi_robot_mapping.png) -->
 
 #### Verify multi-robot
 ```bash
@@ -407,8 +407,11 @@ ros2 run pointcloud_to_laserscan pointcloud_to_laserscan_node \
 | `warehouse` | 24×20 m | 5 shelf rows, loading dock, staging zone, pillars, pallet stacks |
 | `house` | 16×12 m | Living room, kitchen, hallway, 2 bedrooms, bathroom, furniture |
 | `corridor` | — | Narrow corridor with branching rooms |
+| `hospital` | 26×18 m | Central corridor, north/south patient bays, nurse station, storage |
+| `office` | 22×~12 m | Central corridor, lobby, 2 meeting rooms, kitchen |
+| `empty` | 100×100 m | Flat open ground plane, no obstacles — baseline/smoke-test world |
 
-All worlds use SDF primitives only — no external model downloads, instant load.
+All worlds use SDF primitives only — no external model downloads, instant load. All 8 work with every drive type (`diff`, `mecanum`, `ackermann` — see [Mode 7](#mode-7--holonomic-mecanum-drive) and [Mode 9](#mode-9--ackermann-car-like-drive)) and either controller (`controller:=dwb|mppi`).
 
 ```bash
 # Single robot, any world
