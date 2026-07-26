@@ -49,7 +49,7 @@ A full autonomous robot navigation stack built on **Nav2**, **SLAM Toolbox**, an
 - Frontier-based autonomous exploration
 - Waypoint following
 - Custom Behavior Tree (backup→spin→clear→wait)
-- Swappable drive base — diff-drive or holonomic mecanum (`drive_type:=mecanum`)
+- Swappable drive base — diff-drive, holonomic mecanum (`drive_type:=mecanum`), or car-like Ackermann (`drive_type:=ackermann`)
 
 </td>
 <td width="50%">
@@ -121,8 +121,8 @@ source install/setup.bash
 ## Quick Start
 
 ```bash
-# Explore the maze — SLAM + Nav2 + frontier explorer in one command
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze explore:=true
+# Explore the hospital — SLAM + Nav2 + frontier explorer in one command
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital explore:=true
 
 # Multi-robot fleet (2 robots, coordinated exploration)
 ros2 launch diff_drive_robot multi_robot.launch.py
@@ -142,21 +142,22 @@ Maps auto-save to `src/diff_drive_robot-main/maps/map_<world>.yaml` every 15 s d
 #### Mode 1 — Autonomous SLAM + Frontier Exploration
 Gazebo + SLAM + Nav2 + RViz + frontier explorer. Robot maps the world on its own.
 ```bash
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze explore:=true
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital explore:=true
 ```
 
 #### Mode 2 — Manual SLAM
 Drive the robot yourself to build the map.
 ```bash
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital
 # Run frontier explorer later if needed:
 ros2 run diff_drive_robot frontier_explorer.py
 ```
+In SLAM mode, localization comes from SLAM Toolbox (`map -> base_link`), not AMCL. RViz **2D Goal Pose** works after Nav2 reports `Managed nodes are active`; keep `safety:=true` enabled so Nav2 `/cmd_vel` is relayed to Gazebo's `/cmd_vel_safe`.
 
 #### Mode 3 — Pre-built Map + AMCL Localisation
 Load a saved map and navigate in localisation-only mode.
 ```bash
-ros2 launch diff_drive_robot robot.launch.py world:=/full/path/to/maze.world
+ros2 launch diff_drive_robot robot.launch.py world:=/full/path/to/hospital.world
 # Force a specific map:
 ros2 launch diff_drive_robot robot.launch.py map:=/full/path/to/my_map.yaml
 ```
@@ -176,7 +177,7 @@ Nav Layer      ←  Nav2 BT + MPPI      path planning + control
 Safety Layer   ←  collision_monitor   stop / slowdown from scan
 ```
 ```bash
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze safety:=true
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital safety:=true
 
 # Separate terminal — start mission server
 ros2 run diff_drive_robot mission_server.py
@@ -196,7 +197,7 @@ Mic → Whisper STT → ollama LLM → NavigateToPose → Nav2
 ```
 ```bash
 # Start nav stack first
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital
 
 # Separate terminal — start LLM navigator
 ros2 run diff_drive_robot llm_nav.py
@@ -237,7 +238,7 @@ Details on what changes under the hood: [concepts.md § 18](concepts.md#18-mecan
 #### Mode 8 — MPPI Controller (Humble)
 Swap DWB (default local controller on Humble) for `nav2_mppi_controller`. Works with any single-robot launch mode via `controller:=mppi`. Jazzy already defaults to MPPI, so this switch is a no-op there.
 ```bash
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze controller:=mppi
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital controller:=mppi
 ```
 Uses a project-tuned `nav2_params_mppi.yaml` (same costmaps/BT/footprint as the default config, DiffDrive motion model, tuned critics). Verified end-to-end in Gazebo: MPPI-driven robot reaches goals and triggers the same recovery BT on failure as DWB.
 
@@ -247,6 +248,14 @@ Uses a project-tuned `nav2_params_mppi.yaml` (same costmaps/BT/footprint as the 
 Front-steered, rear-driven base — two fixed rear wheels, two front wheels on steering knuckles. Uses Gazebo's native `AckermannSteering` system plugin and always runs MPPI (with `AckermannConstraints.min_turning_r`) since DWB has no turning-radius constraint.
 ```bash
 ros2 launch diff_drive_robot robot.launch.py drive_type:=ackermann
+```
+For mapping by driving the car-like base, use SLAM mode:
+```bash
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital drive_type:=ackermann
+```
+For the full visual launch with Gazebo GUI + RViz + working 2D Goal Pose:
+```bash
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital drive_type:=ackermann rviz:=true headless:=false safety:=true
 ```
 Details: [concepts.md § 18b](concepts.md#18b-ackermann-car-like-drive).
 
@@ -290,7 +299,7 @@ Everything else — TF, Nav2 params, frontier coordinator — picks up the new r
 
 | Argument | Default | Description |
 |---|---|---|
-| `world` | `maze` | World name or full `.world` path |
+| `world` | `hospital` | World name or full `.world` path |
 | `explore` | `true` | `true` = SLAM + frontier; `false` = pre-built map + AMCL |
 | `headless` | `false` | No Gazebo GUI or RViz |
 | `fleet_mgmt` | `false` | Start mission server, task allocator, health monitor, collision avoidance, deadlock recovery |
@@ -330,7 +339,7 @@ ros2 run diff_drive_robot fleet_manager.py add robot3 1.0 2.0 # spawn robot at (
 ros2 run diff_drive_robot fleet_manager.py teleop robot1      # keyboard drive
 ros2 run diff_drive_robot fleet_manager.py goto robot2 3.0 -1.0
 ros2 run diff_drive_robot fleet_manager.py explore robot2
-ros2 run diff_drive_robot fleet_manager.py savemap src/diff_drive_robot-main/maps/map_maze
+ros2 run diff_drive_robot fleet_manager.py savemap src/diff_drive_robot-main/maps/map_hospital
 ros2 run diff_drive_robot fleet_manager.py health             # per-robot health report
 
 # Missions (mission_server must be running)
@@ -434,6 +443,7 @@ ros2 launch diff_drive_robot multi_robot.launch.py world:=corridor explore:=fals
 | Map not saving | Confirm `explore:=true`; maps write to `src/diff_drive_robot-main/maps/` |
 | `No frontiers` in explorer logs | Check for `TF_OLD_DATA` / dropped scans; kill stale Gazebo/ROS processes |
 | Robot not moving | `ros2 topic hz /cmd_vel` — if 0, Nav2 lifecycle failed; check node list |
+| 2D Goal Pose accepted but robot does not move | Keep `safety:=true`; Gazebo subscribes to `/cmd_vel_safe`, and the safety relay forwards Nav2 `/cmd_vel` there |
 | Robots not visible in Gazebo | Rebuild: `colcon build --symlink-install` then `source install/setup.bash` |
 | `goal rejected` immediately | Nav2 still starting — coordinator retries every 2 s automatically |
 | All robots go to same area | Old per-robot `frontier_explorer` nodes running — kill them; only `frontier_coordinator` should run |

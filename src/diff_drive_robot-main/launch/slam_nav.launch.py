@@ -4,10 +4,10 @@ slam_nav.launch.py
 One-shot launch: Gazebo + Robot + Nav2 + RViz.
 
 SLAM mode (default):
-  ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze explore:=true
+  ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital explore:=true
 
 Nav-on-map mode (pre-built map, AMCL localization):
-  ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze slam:=false
+  ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital slam:=false
 
 When slam:=false the launch uses map_<world_name>.yaml from the maps/ directory.
 """
@@ -27,17 +27,21 @@ from launch.actions import (
 )
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
 
 ROS_DISTRO = os.environ.get('ROS_DISTRO', 'humble')
 
 
-def _nav2_params_filename(controller: str) -> str:
+def _nav2_params_filename(controller: str, drive_type: str) -> str:
+    if drive_type == 'ackermann':
+        return 'nav2_params_ackermann.yaml'
     # Jazzy's params file already defaults to MPPI; the dwb/mppi switch only
     # applies on Humble, which defaults to DWB.
     if ROS_DISTRO == 'jazzy':
-        return 'nav2_params_jazzy.yaml'
+        return 'nav2_params_mecanum_jazzy.yaml' if drive_type == 'mecanum' else 'nav2_params_jazzy.yaml'
+    if drive_type == 'mecanum':
+        return 'nav2_params_mecanum.yaml'
     return 'nav2_params_mppi.yaml' if controller == 'mppi' else 'nav2_params.yaml'
 
 
@@ -68,7 +72,7 @@ def _resolve_world_path(world_name_arg: str, world_arg: str, pkg_share: str) -> 
     world_arg = world_arg.strip()
     if world_arg:
         return os.path.expanduser(world_arg)
-    world_name = os.path.splitext(os.path.basename(world_name_arg.strip() or 'maze'))[0]
+    world_name = os.path.splitext(os.path.basename(world_name_arg.strip() or 'hospital'))[0]
     return os.path.join(pkg_share, 'worlds', f'{world_name}.world')
 
 
@@ -103,6 +107,7 @@ def _build_runtime_actions(context, pkg_share: str):
     spawn_z = LaunchConfiguration('spawn_z')
     spawn_yaw = LaunchConfiguration('spawn_yaw')
     controller = LaunchConfiguration('controller').perform(context).strip().lower()
+    drive_type = LaunchConfiguration('drive_type').perform(context).strip().lower()
 
     world_path = _resolve_world_path(world_name_arg, world_arg, pkg_share)
     world_name = _resolve_world_name(world_name_arg, world_path)
@@ -111,11 +116,16 @@ def _build_runtime_actions(context, pkg_share: str):
         LaunchConfiguration('map_prefix').perform(context).strip(), world_name, pkg_share)
     map_yaml = _resolve_map_yaml(world_name, pkg_share)
 
+    urdf_filename = PythonExpression([
+        "'robot_mecanum.urdf.xacro' if '", drive_type, "' == 'mecanum' "
+        "else 'robot_ackermann.urdf.xacro' if '", drive_type, "' == 'ackermann' "
+        "else 'robot.urdf.xacro'"
+    ])
     rsp = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(pkg_share, 'launch', 'rsp.launch.py')),
         launch_arguments={
             'use_sim_time': 'true',
-            'urdf': os.path.join(pkg_share, 'urdf', 'robot.urdf.xacro'),
+            'urdf': PathJoinSubstitution([pkg_share, 'urdf', urdf_filename]),
         }.items(),
     )
 
@@ -175,7 +185,7 @@ def _build_runtime_actions(context, pkg_share: str):
 
     # Patch the BT path placeholder before passing params to nav2.
     import re as _re
-    _raw_params = os.path.join(pkg_share, 'config', _nav2_params_filename(controller))
+    _raw_params = os.path.join(pkg_share, 'config', _nav2_params_filename(controller, drive_type))
     with open(_raw_params) as _f:
         _patched = _re.sub(r'replace_with_pkg_share', pkg_share.replace('\\', '/'), _f.read())
     _params_file = f'/tmp/diff_drive_nav2_patched_{os.getpid()}.yaml'
@@ -315,7 +325,7 @@ def _build_runtime_actions(context, pkg_share: str):
 
     mode = 'SLAM+frontier' if (use_slam and actions) else ('SLAM' if use_slam else f'nav-on-map ({os.path.basename(map_yaml)})')
     return [
-        LogInfo(msg=f'[slam_nav.launch] mode={mode}, ROS_DISTRO={ROS_DISTRO}, controller={controller}'),
+        LogInfo(msg=f'[slam_nav.launch] mode={mode}, ROS_DISTRO={ROS_DISTRO}, controller={controller}, drive_type={drive_type}'),
         LogInfo(msg=f'[slam_nav.launch] world={world_path}'),
         LogInfo(msg=f'[slam_nav.launch] robot_name={robot_name.perform(context)}'),
         rsp,
@@ -339,8 +349,8 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'world_name',
-            default_value='maze',
-            description='Gazebo world name in package worlds/ (example: maze or obstacles)',
+            default_value='hospital',
+            description='Gazebo world name in package worlds/ (example: hospital, corridor, maze, or obstacles)',
         ),
         DeclareLaunchArgument(
             'world',
@@ -373,5 +383,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             name='controller', default_value='dwb',
             description='Local controller: "dwb" (default) or "mppi" (nav2_mppi_controller). Humble only — ignored on Jazzy, which defaults to MPPI.'),
+        DeclareLaunchArgument(
+            name='drive_type',
+            default_value='diff',
+            description='Drive base: "diff" (default), "mecanum" (holonomic, 4 driven wheels), or "ackermann" (car-like front steering). Ackermann always uses MPPI params.'),
         OpaqueFunction(function=_build_runtime_actions, args=[pkg_share]),
     ])

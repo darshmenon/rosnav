@@ -47,12 +47,12 @@ The output is a `/map` topic (OccupancyGrid) used by Nav2.
 
 ```
 Run to build the map:
-  ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze
+  ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital
 
 Run to auto-explore and progressively save the map:
-  ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze explore:=true
+  ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital explore:=true
 
-Maps will automatically be saved to `src/diff_drive_robot-main/maps/map_maze` or `map_obstacles`.
+Maps will automatically be saved to `src/diff_drive_robot-main/maps/map_hospital` or `map_obstacles`.
 ```
 
 ---
@@ -153,7 +153,7 @@ Edit `WAYPOINTS` at the top of the script to change the route.
 
 ```bash
 # Single command — SLAM + Nav2 + frontier explorer + auto-save
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze explore:=true
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital explore:=true
 ```
 
 Recent reliability fixes in `frontier_explorer.py`:
@@ -215,7 +215,7 @@ Nav2 params (`amcl.base_frame_id`, `bt_navigator.robot_base_frame`, etc.) must
 match these prefixed names. The template file handles this automatically.
 
 ```bash
-# SLAM + frontier exploration in maze (default)
+# SLAM + frontier exploration in hospital (default)
 ros2 launch diff_drive_robot multi_robot.launch.py
 
 # Pre-built map mode
@@ -530,6 +530,9 @@ vehicle can actually steer.
 ```bash
 ros2 launch diff_drive_robot robot.launch.py drive_type:=ackermann headless:=true rviz:=false
 
+# Mapping by manually driving the car-like base:
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital drive_type:=ackermann
+
 # drive forward while turning — steering angle emerges from angular.z:
 ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
   "{linear: {x: 0.4, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.3}}"
@@ -541,8 +544,8 @@ ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
 
 | Launch file | What it does | Key args |
 |---|---|---|
-| `robot.launch.py` | Gazebo + robot + Nav2 full bringup with saved map | `map`, `world`, `robot_name`, `spawn_x/y/z/yaw`, `rviz`, `use_sim_time`, `drive_type` (`diff`\|`mecanum`) |
-| `slam_nav.launch.py` | Gazebo + robot + SLAM Toolbox + Nav2 (+ optional auto frontier) | `world_name`, `world`, `explore`, `map_prefix`, `rviz`, `robot_name`, `spawn_x/y/z/yaw` |
+| `robot.launch.py` | Gazebo + robot + Nav2 full bringup with saved map | `map`, `world`, `robot_name`, `spawn_x/y/z/yaw`, `rviz`, `use_sim_time`, `drive_type` (`diff`\|`mecanum`\|`ackermann`) |
+| `slam_nav.launch.py` | Gazebo + robot + SLAM Toolbox + Nav2 (+ optional auto frontier) | `world_name`, `world`, `explore`, `map_prefix`, `rviz`, `robot_name`, `spawn_x/y/z/yaw`, `drive_type` (`diff`\|`mecanum`\|`ackermann`), `controller` (`dwb`\|`mppi`) |
 | `slam.launch.py` | Gazebo + robot + SLAM Toolbox mapping mode | `use_sim_time` |
 | `multi_robot.launch.py` | Two robots + shared map server + Nav2 per robot | `map`, `world`, `rviz` |
 | `nav2.launch.py` | Nav2 only (attach to running Gazebo) | `map`, `world`, `use_sim_time` |
@@ -615,7 +618,7 @@ ros2 node list | grep -E "amcl|planner|controller|bt_navigator"
 ros2 topic hz /cmd_vel
 
 # Save map after SLAM mapping (world-aware naming)
-ros2 run nav2_map_server map_saver_cli -f src/diff_drive_robot-main/maps/map_maze
+ros2 run nav2_map_server map_saver_cli -f src/diff_drive_robot-main/maps/map_hospital
 ros2 run nav2_map_server map_saver_cli -f src/diff_drive_robot-main/maps/map_obstacles
 
 # Load custom waypoints
@@ -682,7 +685,7 @@ Each layer is independent — the safety layer can stop the robot regardless of 
 
 ```bash
 # Launch with slam_nav (safety:=true is default):
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze safety:=true
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital safety:=true
 
 # Or run standalone:
 ros2 run diff_drive_robot collision_monitor.py --ros-args \
