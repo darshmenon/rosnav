@@ -44,7 +44,8 @@ A full autonomous robot navigation stack built on **Nav2**, **SLAM Toolbox**, an
 
 **Core Navigation**
 - SLAM Toolbox live mapping
-- Nav2 full stack (MPPI controller, Smac planner, recovery BT)
+- Nav2 full stack, recovery BT — controller/planner defaults are distro-dependent: Humble defaults to DWB + NavFn, Jazzy defaults to MPPI + Smac Hybrid
+- Swappable local controller on Humble: `controller:=dwb` (default) or `controller:=mppi`
 - Frontier-based autonomous exploration
 - Waypoint following
 - Custom Behavior Tree (backup→spin→clear→wait)
@@ -232,6 +233,22 @@ ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
   "{linear: {x: 0.0, y: 0.3, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}"
 ```
 Details on what changes under the hood: [concepts.md § 18](concepts.md#18-mecanum-holonomic-drive).
+
+#### Mode 8 — MPPI Controller (Humble)
+Swap DWB (default local controller on Humble) for `nav2_mppi_controller`. Works with any single-robot launch mode via `controller:=mppi`. Jazzy already defaults to MPPI, so this switch is a no-op there.
+```bash
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze controller:=mppi
+```
+Uses a project-tuned `nav2_params_mppi.yaml` (same costmaps/BT/footprint as the default config, DiffDrive motion model, tuned critics). Verified end-to-end in Gazebo: MPPI-driven robot reaches goals and triggers the same recovery BT on failure as DWB.
+
+> **Tight spaces (e.g. `maze`):** MPPI noticeably outperformed DWB during frontier exploration testing — DWB repeatedly failed at the same narrow corner even after exhausting recovery retries, while MPPI cleared it on the first attempt. If frontier exploration keeps stalling at the same spot in a cluttered world, try `controller:=mppi`.
+
+#### Mode 9 — Ackermann (Car-Like) Drive
+Front-steered, rear-driven base — two fixed rear wheels, two front wheels on steering knuckles. Uses Gazebo's native `AckermannSteering` system plugin and always runs MPPI (with `AckermannConstraints.min_turning_r`) since DWB has no turning-radius constraint.
+```bash
+ros2 launch diff_drive_robot robot.launch.py drive_type:=ackermann
+```
+Details: [concepts.md § 18b](concepts.md#18b-ackermann-car-like-drive).
 
 ---
 

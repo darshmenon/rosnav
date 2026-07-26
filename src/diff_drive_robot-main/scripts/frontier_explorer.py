@@ -46,6 +46,7 @@ class FrontierExplorer(Node):
         self.declare_parameter('base_frame',        'base_link')
         self.declare_parameter('min_goal_distance', 0.50)
         self.declare_parameter('map_save_path',     '')
+        self.declare_parameter('max_frontier_retries', 2)
 
         self._min_size      = self.get_parameter('min_frontier_size').value
         self._revisit_r     = self.get_parameter('revisit_radius').value
@@ -53,6 +54,7 @@ class FrontierExplorer(Node):
         self._base_frame    = self.get_parameter('base_frame').value
         self._min_goal_dist = self.get_parameter('min_goal_distance').value
         self._map_save_path = self.get_parameter('map_save_path').value.strip()
+        self._max_retries   = self.get_parameter('max_frontier_retries').value
         map_topic           = self.get_parameter('map_topic').value
         action_name         = self.get_parameter('action_name').value
         poll_period         = self.get_parameter('poll_period').value
@@ -69,6 +71,7 @@ class FrontierExplorer(Node):
         self._map: OccupancyGrid | None = None
         self._navigating = False
         self._visited: list[tuple[float, float]] = []
+        self._fail_counts: list[list] = []  # [x, y, count] — frontiers that failed navigation
         self._current_goal: tuple[float, float] | None = None
         self._goal_sent_time: float = 0.0
         self._iteration = 0
@@ -300,7 +303,23 @@ class FrontierExplorer(Node):
                     self._visited.append(self._current_goal)
         else:
             self.get_logger().warn(f'Navigation failed (status={status}).')
+            if self._current_goal is not None:
+                self._register_failure(*self._current_goal)
         self._navigating = False
+
+    def _register_failure(self, fx, fy):
+        """Track repeated failures at (roughly) the same frontier and
+        blacklist it once it exceeds max_frontier_retries, so exploration
+        doesn't retry an unreachable point forever."""
+        for entry in self._fail_counts:
+            if math.hypot(fx - entry[0], fy - entry[1]) < self._revisit_r:
+                entry[2] += 1
+                if entry[2] >= self._max_retries:
+                    self.get_logger().warn(
+                        f'Frontier ({fx:.2f}, {fy:.2f}) failed {entry[2]}x — blacklisting.')
+                    self._visited.append((fx, fy))
+                return
+        self._fail_counts.append([fx, fy, 1])
 
 
 def main(args=None):

@@ -31,7 +31,14 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 ROS_DISTRO = os.environ.get('ROS_DISTRO', 'humble')
-_NAV2_PARAMS = 'nav2_params_jazzy.yaml' if ROS_DISTRO == 'jazzy' else 'nav2_params.yaml'
+
+
+def _nav2_params_filename(controller: str) -> str:
+    # Jazzy's params file already defaults to MPPI; the dwb/mppi switch only
+    # applies on Humble, which defaults to DWB.
+    if ROS_DISTRO == 'jazzy':
+        return 'nav2_params_jazzy.yaml'
+    return 'nav2_params_mppi.yaml' if controller == 'mppi' else 'nav2_params.yaml'
 
 
 def _resolve_world_name(raw_name: str, world_path: str) -> str:
@@ -95,6 +102,7 @@ def _build_runtime_actions(context, pkg_share: str):
     spawn_y = LaunchConfiguration('spawn_y')
     spawn_z = LaunchConfiguration('spawn_z')
     spawn_yaw = LaunchConfiguration('spawn_yaw')
+    controller = LaunchConfiguration('controller').perform(context).strip().lower()
 
     world_path = _resolve_world_path(world_name_arg, world_arg, pkg_share)
     world_name = _resolve_world_name(world_name_arg, world_path)
@@ -167,7 +175,7 @@ def _build_runtime_actions(context, pkg_share: str):
 
     # Patch the BT path placeholder before passing params to nav2.
     import re as _re
-    _raw_params = os.path.join(pkg_share, 'config', _NAV2_PARAMS)
+    _raw_params = os.path.join(pkg_share, 'config', _nav2_params_filename(controller))
     with open(_raw_params) as _f:
         _patched = _re.sub(r'replace_with_pkg_share', pkg_share.replace('\\', '/'), _f.read())
     _params_file = f'/tmp/diff_drive_nav2_patched_{os.getpid()}.yaml'
@@ -307,7 +315,7 @@ def _build_runtime_actions(context, pkg_share: str):
 
     mode = 'SLAM+frontier' if (use_slam and actions) else ('SLAM' if use_slam else f'nav-on-map ({os.path.basename(map_yaml)})')
     return [
-        LogInfo(msg=f'[slam_nav.launch] mode={mode}, ROS_DISTRO={ROS_DISTRO}'),
+        LogInfo(msg=f'[slam_nav.launch] mode={mode}, ROS_DISTRO={ROS_DISTRO}, controller={controller}'),
         LogInfo(msg=f'[slam_nav.launch] world={world_path}'),
         LogInfo(msg=f'[slam_nav.launch] robot_name={robot_name.perform(context)}'),
         rsp,
@@ -362,5 +370,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             name='headless', default_value='false',
             description='Skip Gazebo GUI and RViz (server + nav only)'),
+        DeclareLaunchArgument(
+            name='controller', default_value='dwb',
+            description='Local controller: "dwb" (default) or "mppi" (nav2_mppi_controller). Humble only — ignored on Jazzy, which defaults to MPPI.'),
         OpaqueFunction(function=_build_runtime_actions, args=[pkg_share]),
     ])

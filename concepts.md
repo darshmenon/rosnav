@@ -507,6 +507,36 @@ ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
 
 ---
 
+## 18b. Ackermann (Car-Like) Drive
+
+`robot.launch.py drive_type:=ackermann` swaps in a 4-wheel car-like base:
+two fixed rear drive wheels plus two front wheels that steer through a small
+knuckle link (`front_left_steering_link` / `front_right_steering_link`),
+each yawing about Z relative to the chassis before spinning about its own axle.
+
+| Piece | Diff drive | Ackermann |
+|---|---|---|
+| URDF | `robot.urdf.xacro` → `robot_core.xacro` | `robot_ackermann.urdf.xacro` → `robot_core_ackermann.xacro` (rear wheels: `continuous` joints on `base_link`; front wheels: `revolute` steering joint → steering link → `continuous` wheel joint) |
+| Gazebo plugin | `gazebo_control.xacro`, `gz::sim::systems::DiffDrive` | `gazebo_control_ackermann.xacro`, `gz::sim::systems::AckermannSteering` (native gz-sim system — same one used in gz-sim's own `ackermann_steering.sdf` demo world) |
+| Nav2 controller | DWB (Humble default) | Always MPPI — `nav2_params_ackermann.yaml`, `motion_model: "Ackermann"`, `AckermannConstraints.min_turning_r: 0.66` (computed from `wheel_base / tan(steering_limit)` = 0.45 / tan(0.6rad)). DWB has no car-like turning-radius constraint, so there's no DWB variant for this drive type. |
+
+The `AckermannSteering` plugin takes the same `cmd_vel` (linear.x, angular.z)
+input as `DiffDrive`/`MecanumDrive` and internally solves the steering angle
+and per-wheel speeds — Nav2 doesn't need to know about steering joints at all,
+it just needs `min_turning_r` so MPPI never plans a path tighter than the
+vehicle can actually steer.
+
+### Try it
+```bash
+ros2 launch diff_drive_robot robot.launch.py drive_type:=ackermann headless:=true rviz:=false
+
+# drive forward while turning — steering angle emerges from angular.z:
+ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
+  "{linear: {x: 0.4, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.3}}"
+```
+
+---
+
 ## Quick Reference — Launch Files
 
 | Launch file | What it does | Key args |

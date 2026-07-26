@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- namespace arg: pass the robot namespace so TF frame IDs are unique per robot -->
+  <xacro:arg name="namespace" default=""/>
+  <xacro:property name="ns" value="$(arg namespace)"/>
+
+  <gazebo>
+    <plugin filename="gz-sim-ackermann-steering-system" name="gz::sim::systems::AckermannSteering">
+      <left_joint>front_left_wheel_joint</left_joint>
+      <left_joint>rear_left_wheel_joint</left_joint>
+      <right_joint>front_right_wheel_joint</right_joint>
+      <right_joint>rear_right_wheel_joint</right_joint>
+      <left_steering_joint>front_left_steering_joint</left_steering_joint>
+      <right_steering_joint>front_right_steering_joint</right_steering_joint>
+
+      <kingpin_width>0.45</kingpin_width>
+      <steering_limit>0.6</steering_limit>
+      <wheel_base>0.45</wheel_base>
+      <wheel_separation>0.45</wheel_separation>
+      <wheel_radius>0.075</wheel_radius>
+
+      <min_velocity>-0.5</min_velocity>
+      <max_velocity>0.7</max_velocity>
+      <min_acceleration>-3.0</min_acceleration>
+      <max_acceleration>3.0</max_acceleration>
+
+      <odom_publish_frequency>50</odom_publish_frequency>
+      <topic>${ns + '/cmd_vel' if ns else 'cmd_vel'}</topic>
+      <odom_topic>${ns + '/odom' if ns else 'odom'}</odom_topic>
+      <!-- frame IDs include namespace prefix so they are unique across robots -->
+      <frame_id>${ns + '/odom' if ns else 'odom'}</frame_id>
+      <child_frame_id>${ns + '/base_link' if ns else 'base_link'}</child_frame_id>
+      <tf_topic>/tf</tf_topic>
+    </plugin>
+
+    <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
+      <topic>joint_states</topic>
+      <joint_name>rear_left_wheel_joint</joint_name>
+      <joint_name>rear_right_wheel_joint</joint_name>
+      <joint_name>front_left_wheel_joint</joint_name>
+      <joint_name>front_right_wheel_joint</joint_name>
+      <joint_name>front_left_steering_joint</joint_name>
+      <joint_name>front_right_steering_joint</joint_name>
+    </plugin>
+  </gazebo>
+
+</robot>

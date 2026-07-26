@@ -498,7 +498,7 @@ def _build_all(context, pkg_share: str):
             actions=[Node(
                 package='rviz2',
                 executable='rviz2',
-                arguments=['-d', os.path.join(pkg_share, 'rviz', 'bot.rviz')],
+                arguments=['-d', os.path.join(pkg_share, 'rviz', 'multi_robot.rviz')],
                 output='screen')]))
 
     return actions

@@ -28,7 +28,12 @@ ROS_DISTRO = os.environ.get('ROS_DISTRO', 'humble')
 #   Jazzy:  nav2_params_jazzy.yaml  (behaviors use ::Spin format)
 # drive_type:=mecanum swaps in the holonomic-tuned variant of either file
 # (unlocked vy in DWB for Humble, motion_model:"Omni" in MPPI for Jazzy).
+# drive_type:=ackermann always uses MPPI with motion_model:"Ackermann" —
+# DWB has no car-like-steering constraint, so there is no Humble/Jazzy split
+# for this drive type.
 def _nav2_params_filename(drive_type: str) -> str:
+    if drive_type == 'ackermann':
+        return 'nav2_params_ackermann.yaml'
     if ROS_DISTRO == 'jazzy':
         return 'nav2_params_mecanum_jazzy.yaml' if drive_type == 'mecanum' else 'nav2_params_jazzy.yaml'
     return 'nav2_params_mecanum.yaml' if drive_type == 'mecanum' else 'nav2_params.yaml'
@@ -162,7 +167,7 @@ def generate_launch_description():
     declare_drive_type = DeclareLaunchArgument(
         name='drive_type',
         default_value='diff',
-        description='Drive base: "diff" (default) or "mecanum" (holonomic, 4 driven wheels)')
+        description='Drive base: "diff" (default), "mecanum" (holonomic, 4 driven wheels), or "ackermann" (car-like front steering)')
 
     declare_map = DeclareLaunchArgument(
         name='map',
@@ -195,7 +200,9 @@ def generate_launch_description():
 
     # Robot State Publisher — URDF picked at launch time by drive_type
     urdf_filename = PythonExpression([
-        "'robot_mecanum.urdf.xacro' if '", drive_type, "' == 'mecanum' else 'robot.urdf.xacro'"
+        "'robot_mecanum.urdf.xacro' if '", drive_type, "' == 'mecanum' "
+        "else 'robot_ackermann.urdf.xacro' if '", drive_type, "' == 'ackermann' "
+        "else 'robot.urdf.xacro'"
     ])
     rsp = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(

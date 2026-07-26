@@ -1,0 +1,246 @@
+<?xml version="1.0"?>
+<robot name="ackermann_robot" xmlns:xacro="http://www.ros.org/wiki/xacro" xmlns:gazebo="http://gazebo.apache.org/xmlns/gazebo">
+
+  <xacro:include filename="inertial_macros.xacro" />
+
+  <!-- Base Link -->
+  <link name="base_link"/>
+  <link name="base_footprint">
+    <collision>
+      <geometry>
+        <box size="0.65 0.4 0.01"/>
+      </geometry>
+    </collision>
+    <visual>
+      <geometry>
+        <box size="0.65 0.4 0.01"/>
+      </geometry>
+      <material name="footprint_material">
+        <color rgba="0.0 0.0 1.0 0.5"/>
+      </material>
+    </visual>
+  </link>
+
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="base_footprint"/>
+    <origin xyz="0 0 -0.05"/>
+  </joint>
+
+  <!-- Chassis — longer than wide, car-like -->
+  <joint name="chassis_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="chassis"/>
+    <origin xyz="-0.15 0 0"/>
+  </joint>
+
+  <link name="chassis">
+    <visual>
+      <origin xyz="0.3 0 0.075"/>
+      <geometry>
+        <box size="0.65 0.35 0.15"/>
+      </geometry>
+      <material name="chassis_material">
+        <color rgba="0.72 0.23 0.10 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.3 0 0.075"/>
+      <geometry>
+        <box size="0.65 0.32 0.15"/>
+      </geometry>
+    </collision>
+    <xacro:inertial_box mass="0.6" x="0.65" y="0.35" z="0.15">
+      <origin xyz="0.3 0 0.075" rpy="0 0 0"/>
+    </xacro:inertial_box>
+  </link>
+
+  <!-- Rear Wheels (driven, fixed — no steering) -->
+  <joint name="rear_left_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="rear_left_wheel"/>
+    <origin xyz="0 0.225 0" rpy="-1.57 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+
+  <link name="rear_left_wheel">
+    <visual>
+      <geometry>
+        <cylinder radius="0.075" length="0.04"/>
+      </geometry>
+      <material name="wheel_material">
+        <color rgba="0 0 0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.075" length="0.04"/>
+      </geometry>
+    </collision>
+    <xacro:inertial_cylinder mass="0.1" length="0.04" radius="0.075">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </xacro:inertial_cylinder>
+  </link>
+
+  <joint name="rear_right_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="rear_right_wheel"/>
+    <origin xyz="0 -0.225 0" rpy="1.57 0 0"/>
+    <axis xyz="0 0 -1"/>
+  </joint>
+
+  <link name="rear_right_wheel">
+    <visual>
+      <geometry>
+        <cylinder radius="0.075" length="0.04"/>
+      </geometry>
+      <material name="wheel_material">
+        <color rgba="0 0 0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.075" length="0.04"/>
+      </geometry>
+    </collision>
+    <xacro:inertial_cylinder mass="0.1" length="0.04" radius="0.075">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </xacro:inertial_cylinder>
+  </link>
+
+  <!-- Front Wheels — each sits on a small steering knuckle link that yaws
+       about Z relative to the chassis. The AckermannSteering gz-sim system
+       drives both the steering joints and the wheel spin joints from cmd_vel. -->
+  <joint name="front_left_steering_joint" type="revolute">
+    <parent link="base_link"/>
+    <child link="front_left_steering_link"/>
+    <origin xyz="0.45 0.225 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-0.6" upper="0.6" effort="25" velocity="1.0"/>
+  </joint>
+
+  <link name="front_left_steering_link">
+    <visual>
+      <geometry>
+        <cylinder radius="0.03" length="0.05"/>
+      </geometry>
+      <material name="wheel_material">
+        <color rgba="0.8 0.8 0.8 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.03" length="0.05"/>
+      </geometry>
+    </collision>
+    <xacro:inertial_cylinder mass="0.05" length="0.05" radius="0.03">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </xacro:inertial_cylinder>
+  </link>
+
+  <joint name="front_left_wheel_joint" type="continuous">
+    <parent link="front_left_steering_link"/>
+    <child link="front_left_wheel"/>
+    <origin xyz="0 0 0" rpy="-1.57 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+
+  <link name="front_left_wheel">
+    <visual>
+      <geometry>
+        <cylinder radius="0.075" length="0.04"/>
+      </geometry>
+      <material name="wheel_material">
+        <color rgba="0 0 0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.075" length="0.04"/>
+      </geometry>
+    </collision>
+    <xacro:inertial_cylinder mass="0.1" length="0.04" radius="0.075">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </xacro:inertial_cylinder>
+  </link>
+
+  <joint name="front_right_steering_joint" type="revolute">
+    <parent link="base_link"/>
+    <child link="front_right_steering_link"/>
+    <origin xyz="0.45 -0.225 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-0.6" upper="0.6" effort="25" velocity="1.0"/>
+  </joint>
+
+  <link name="front_right_steering_link">
+    <visual>
+      <geometry>
+        <cylinder radius="0.03" length="0.05"/>
+      </geometry>
+      <material name="wheel_material">
+        <color rgba="0.8 0.8 0.8 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.03" length="0.05"/>
+      </geometry>
+    </collision>
+    <xacro:inertial_cylinder mass="0.05" length="0.05" radius="0.03">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </xacro:inertial_cylinder>
+  </link>
+
+  <joint name="front_right_wheel_joint" type="continuous">
+    <parent link="front_right_steering_link"/>
+    <child link="front_right_wheel"/>
+    <origin xyz="0 0 0" rpy="1.57 0 0"/>
+    <axis xyz="0 0 -1"/>
+  </joint>
+
+  <link name="front_right_wheel">
+    <visual>
+      <geometry>
+        <cylinder radius="0.075" length="0.04"/>
+      </geometry>
+      <material name="wheel_material">
+        <color rgba="0 0 0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.075" length="0.04"/>
+      </geometry>
+    </collision>
+    <xacro:inertial_cylinder mass="0.1" length="0.04" radius="0.075">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </xacro:inertial_cylinder>
+  </link>
+
+  <!-- Gazebo Parameters -->
+  <gazebo reference="chassis">
+    <mu1>1.0</mu1>
+    <mu2>1.0</mu2>
+  </gazebo>
+
+  <gazebo reference="rear_left_wheel">
+    <mu1>1.0</mu1>
+    <mu2>1.0</mu2>
+  </gazebo>
+
+  <gazebo reference="rear_right_wheel">
+    <mu1>1.0</mu1>
+    <mu2>1.0</mu2>
+  </gazebo>
+
+  <gazebo reference="front_left_wheel">
+    <mu1>1.0</mu1>
+    <mu2>1.0</mu2>
+  </gazebo>
+
+  <gazebo reference="front_right_wheel">
+    <mu1>1.0</mu1>
+    <mu2>1.0</mu2>
+  </gazebo>
+
+</robot>
