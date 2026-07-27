@@ -60,6 +60,7 @@ class MapMergeKnown(Node):
         self.declare_parameter('output_topic', '/map')
         self.declare_parameter('world_frame', 'map')
         self.declare_parameter('publish_rate', 2.0)
+        self.declare_parameter('boundary_margin_cells', 10)
 
         raw = self.get_parameter('robot_namespaces').value
         self._robots = [ns.strip() for ns in raw.split(',') if ns.strip()]
@@ -80,6 +81,7 @@ class MapMergeKnown(Node):
         output_topic = self.get_parameter('output_topic').value
         self._world_frame = self.get_parameter('world_frame').value
         publish_rate = float(self.get_parameter('publish_rate').value)
+        self._margin = max(0, int(self.get_parameter('boundary_margin_cells').value))
 
         self._maps: dict[str, OccupancyGrid] = {}
         self._res: float | None = None
@@ -133,8 +135,13 @@ class MapMergeKnown(Node):
 
         xs = [c for c, _ in cells]
         ys = [r for _, r in cells]
-        min_c, max_c = min(xs), max(xs)
-        min_r, max_r = min(ys), max(ys)
+        # Pad with a margin of UNKNOWN cells: this grid's bounding box is
+        # recomputed from scratch every publish, so it can grow between
+        # ticks. Without slack, a goal picked from a slightly newer snapshot
+        # than the one a costmap's static_layer has buffered can land just
+        # past that layer's (still shrunk) edge -> worldToMap failures.
+        min_c, max_c = min(xs) - self._margin, max(xs) + self._margin
+        min_r, max_r = min(ys) - self._margin, max(ys) + self._margin
         width = max_c - min_c + 1
         height = max_r - min_r + 1
         if width <= 0 or height <= 0 or width * height > 80_000_000:
