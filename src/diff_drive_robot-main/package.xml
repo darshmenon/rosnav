@@ -20,8 +20,11 @@
   <!-- Sensor & Message dependencies -->
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>std_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
   <exec_depend>laser_filters</exec_depend>
   
   <!-- Navigation dependencies -->

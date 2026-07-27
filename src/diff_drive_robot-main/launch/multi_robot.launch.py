@@ -4,8 +4,8 @@ multi_robot.launch.py  —  Scalable multi-robot navigation in Gazebo.
 
 Architecture
 ────────────
-• ROBOTS list is the single source of truth.  Add/remove dicts to change the
-  fleet size; the rest of the launch adapts automatically.
+• Fleet size and spawn layout are launch parameters. Use robot_count/layout
+  for generated fleets, or robots_json for exact custom poses.
 
 • When explore:=true (default):
     - A single SLAM Toolbox instance (driven by robot1) builds the shared /map.
@@ -33,11 +33,18 @@ Usage
   # Different world
   ros2 launch diff_drive_robot multi_robot.launch.py world:=obstacles
 
+  # Fuse non-SLAM robots' scans into /map_fused (opt-in; SLAM/AMCL untouched)
+  ros2 launch diff_drive_robot multi_robot.launch.py merge_scans:=true
+
+  # Swap frontier plugins without editing code
+  ros2 launch diff_drive_robot multi_robot.launch.py frontier_detector:=wfd frontier_scorer:=weighted
+
+  # Spawn more robots without editing this file
+  ros2 launch diff_drive_robot multi_robot.launch.py robot_count:=4 robot_layout:=grid
+
   # Send a nav goal to a specific robot
   ros2 action send_goal /robot1/navigate_to_pose nav2_msgs/action/NavigateToPose \\
     "{pose: {header: {frame_id: map}, pose: {position: {x: 3.0, y: 1.0}}}}"
-
-  # Add robot3: just append to ROBOTS list below — no other changes needed.
 """
 
 import os
@@ -68,19 +75,263 @@ from launch_ros.actions import Node
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Fleet configuration — ONLY thing you need to edit to add more robots.
-# ──────────────────────────────────────────────────────────────────────────────
-ROBOTS = [
-    {'name': 'robot1', 'x': '-2.0', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
-    {'name': 'robot2', 'x': '-0.8', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
-    # Add more robots here — zero other file changes required:
-    # {'name': 'robot3', 'x':  '0.5', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
-]
-
-
-# ──────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
+def _truthy(value: str) -> bool:
+    return value.strip().lower() in ('true', '1', 'yes')
+
+
+def _resolve_robots(
+    robot_count: int,
+    robot_layout: str,
+    spawn_x: float,
+    spawn_y: float,
+    spawn_z: float,
+    spawn_yaw: float,
+    spawn_spacing: float,
+    robots_json: str,
+) -> list[dict]:
+    if robots_json:
+        robots = json.loads(robots_json)
+        if not isinstance(robots, list) or not robots:
+            raise ValueError('robots_json must be a non-empty JSON list')
+        return [_normalise_robot(r, i) for i, r in enumerate(robots)]
+
+    if robot_count < 1:
+        raise ValueError('robot_count must be >= 1')
+
+    layout = robot_layout.strip().lower()
+    if layout not in ('line', 'grid', 'circle'):
+        raise ValueError('robot_layout must be one of: line, grid, circle')
+
+    robots = []
+    cols = max(1, math.ceil(math.sqrt(robot_count)))
+    radius = max(spawn_spacing, robot_count * spawn_spacing / (2.0 * math.pi))
+
+    for i in range(robot_count):
+        if layout == 'line':
+            x = spawn_x + i * spawn_spacing
+            y = spawn_y
+        elif layout == 'grid':
+            row, col = divmod(i, cols)
+            x = spawn_x + col * spawn_spacing
+            y = spawn_y + row * spawn_spacing
+        else:
+            angle = 2.0 * math.pi * i / robot_count
+            x = spawn_x + radius * math.cos(angle)
+            y = spawn_y + radius * math.sin(angle)
+        robots.append({
+            'name': f'robot{i + 1}',
+            'x': f'{x:.3f}',
+            'y': f'{y:.3f}',
+            'z': f'{spawn_z:.3f}',
+            'yaw': f'{spawn_yaw:.3f}',
+        })
+    return robots
+
+
+def _normalise_robot(robot: dict, idx: int) -> dict:
+    required = ('x', 'y')
+    for key in required:
+        if key not in robot:
+            raise ValueError(f'robots_json[{idx}] missing {key!r}')
+    return {
+        'name': str(robot.get('name', f'robot{idx + 1}')),
+        'x': str(robot['x']),
+        'y': str(robot['y']),
+        'z': str(robot.get('z', 0.3)),
+        'yaw': str(robot.get('yaw', 0.0)),
+    }
+
+
+def _world_obstacles(world_path: str) -> list[dict]:
+    try:
+        root = ET.parse(os.path.expanduser(world_path)).getroot()
+    except (ET.ParseError, OSError):
+        return []
+
+    obstacles = []
+    for model in root.findall('.//model'):
+        model_pose = _parse_pose(model.findtext('pose'))
+        model_x, model_y, _, _, _, model_yaw = model_pose
+        for collision in model.findall('.//collision'):
+            geom = collision.find('geometry')
+            if geom is None:
+                continue
+            col_pose = _parse_pose(collision.findtext('pose'))
+            x = model_x + col_pose[0]
+            y = model_y + col_pose[1]
+            yaw = model_yaw + col_pose[5]
+            box = geom.find('box')
+            cylinder = geom.find('cylinder')
+            if box is not None:
+                size = _parse_floats(box.findtext('size'), 3)
+                if size[2] < 0.1:
+                    continue
+                obstacles.append({
+                    'kind': 'box',
+                    'x': x,
+                    'y': y,
+                    'yaw': yaw,
+                    'sx': size[0],
+                    'sy': size[1],
+                })
+            elif cylinder is not None:
+                radius = float(cylinder.findtext('radius', '0'))
+                length = float(cylinder.findtext('length', '0'))
+                if length < 0.1:
+                    continue
+                obstacles.append({
+                    'kind': 'cylinder',
+                    'x': x,
+                    'y': y,
+                    'radius': radius,
+                })
+    return obstacles
+
+
+def _world_spawn_areas(world_path: str) -> list[dict]:
+    try:
+        root = ET.parse(os.path.expanduser(world_path)).getroot()
+    except (ET.ParseError, OSError):
+        return []
+
+    areas = []
+    for model in root.findall('.//model'):
+        name = model.get('name', '')
+        model_pose = _parse_pose(model.findtext('pose'))
+        model_x, model_y, _, _, _, model_yaw = model_pose
+        for collision in model.findall('.//collision'):
+            geom = collision.find('geometry')
+            box = geom.find('box') if geom is not None else None
+            if box is None:
+                continue
+            size = _parse_floats(box.findtext('size'), 3)
+            if size[2] >= 0.1 or max(size[0], size[1]) >= 99.0:
+                continue
+            if not name.startswith('zone_'):
+                continue
+            col_pose = _parse_pose(collision.findtext('pose'))
+            areas.append({
+                'kind': 'box',
+                'x': model_x + col_pose[0],
+                'y': model_y + col_pose[1],
+                'yaw': model_yaw + col_pose[5],
+                'sx': size[0],
+                'sy': size[1],
+            })
+    return areas
+
+
+def _parse_pose(text: str | None) -> list[float]:
+    values = _parse_floats(text, 6)
+    return values
+
+
+def _parse_floats(text: str | None, count: int) -> list[float]:
+    values = [float(v) for v in (text or '').split()]
+    values += [0.0] * (count - len(values))
+    return values[:count]
+
+
+def _safe_spawns(
+    robots: list[dict],
+    world_path: str,
+    validate_spawns: bool,
+    robot_clearance: float,
+    search_radius: float,
+    search_step: float,
+) -> tuple[list[dict], list[str]]:
+    if not validate_spawns:
+        return robots, []
+
+    obstacles = _world_obstacles(world_path)
+    spawn_areas = _world_spawn_areas(world_path)
+    if not obstacles:
+        return robots, ['spawn validation skipped: no parseable SDF obstacles found']
+
+    placed: list[tuple[float, float]] = []
+    adjusted = []
+    out = []
+    for robot in robots:
+        x = float(robot['x'])
+        y = float(robot['y'])
+        nx, ny = _nearest_free_spawn(
+            x, y, obstacles, spawn_areas, placed, robot_clearance,
+            search_radius, search_step)
+        if (round(nx, 4), round(ny, 4)) != (round(x, 4), round(y, 4)):
+            adjusted.append(
+                f"{robot['name']}: ({x:.2f}, {y:.2f}) -> ({nx:.2f}, {ny:.2f})")
+        placed.append((nx, ny))
+        moved = dict(robot)
+        moved['x'] = f'{nx:.3f}'
+        moved['y'] = f'{ny:.3f}'
+        out.append(moved)
+    return out, adjusted
+
+
+def _nearest_free_spawn(
+    x: float,
+    y: float,
+    obstacles: list[dict],
+    spawn_areas: list[dict],
+    placed: list[tuple[float, float]],
+    clearance: float,
+    search_radius: float,
+    search_step: float,
+) -> tuple[float, float]:
+    if _is_spawn_free(x, y, obstacles, spawn_areas, placed, clearance):
+        return x, y
+
+    step = max(0.05, search_step)
+    rings = max(1, math.ceil(search_radius / step))
+    for ring in range(1, rings + 1):
+        radius = ring * step
+        samples = max(16, ring * 12)
+        for i in range(samples):
+            angle = 2.0 * math.pi * i / samples
+            cx = x + radius * math.cos(angle)
+            cy = y + radius * math.sin(angle)
+            if _is_spawn_free(cx, cy, obstacles, spawn_areas, placed, clearance):
+                return cx, cy
+    raise RuntimeError(
+        f'No free spawn found near ({x:.2f}, {y:.2f}) within {search_radius:.2f} m')
+
+
+def _is_spawn_free(
+    x: float,
+    y: float,
+    obstacles: list[dict],
+    spawn_areas: list[dict],
+    placed: list[tuple[float, float]],
+    clearance: float,
+) -> bool:
+    if spawn_areas and not any(_point_in_box(x, y, area, -clearance) for area in spawn_areas):
+        return False
+    for px, py in placed:
+        if math.hypot(x - px, y - py) < clearance * 2.0:
+            return False
+    for obs in obstacles:
+        if obs['kind'] == 'cylinder':
+            if math.hypot(x - obs['x'], y - obs['y']) <= obs['radius'] + clearance:
+                return False
+        else:
+            if _point_in_box(x, y, obs, clearance):
+                return False
+    return True
+
+
+def _point_in_box(x: float, y: float, box: dict, margin: float) -> bool:
+    dx = x - box['x']
+    dy = y - box['y']
+    c = math.cos(-box['yaw'])
+    s = math.sin(-box['yaw'])
+    lx = c * dx - s * dy
+    ly = s * dx + c * dy
+    return (abs(lx) <= box['sx'] / 2.0 + margin and
+            abs(ly) <= box['sy'] / 2.0 + margin)
+
+
 def _make_robot_params(
     template_path: str,
     robot_ns: str,
@@ -188,9 +439,37 @@ def _initial_pose_pub(robot_ns: str, x: str, y: str, yaw: str) -> ExecuteProcess
 def _build_all(context, pkg_share: str):
     map_arg      = LaunchConfiguration('map').perform(context).strip()
     world_arg    = LaunchConfiguration('world').perform(context).strip()
-    explore      = LaunchConfiguration('explore').perform(context).strip().lower() in ('true', '1', 'yes')
-    headless     = LaunchConfiguration('headless').perform(context).strip().lower() in ('true', '1', 'yes')
-    fleet_mgmt   = LaunchConfiguration('fleet_mgmt').perform(context).strip().lower() in ('true', '1', 'yes')
+    explore      = _truthy(LaunchConfiguration('explore').perform(context))
+    headless     = _truthy(LaunchConfiguration('headless').perform(context))
+    fleet_mgmt   = _truthy(LaunchConfiguration('fleet_mgmt').perform(context))
+    merge_scans  = _truthy(LaunchConfiguration('merge_scans').perform(context))
+    frontier_detector = LaunchConfiguration('frontier_detector').perform(context).strip()
+    frontier_scorer = LaunchConfiguration('frontier_scorer').perform(context).strip()
+    distance_weight = float(LaunchConfiguration('distance_weight').perform(context).strip())
+    info_gain_weight = float(LaunchConfiguration('info_gain_weight').perform(context).strip())
+    hysteresis_radius = float(LaunchConfiguration('hysteresis_radius').perform(context).strip())
+    hysteresis_gain = float(LaunchConfiguration('hysteresis_gain').perform(context).strip())
+    frontier_clearance_radius = float(LaunchConfiguration('frontier_clearance_radius').perform(context).strip())
+    failed_goal_radius = float(LaunchConfiguration('failed_goal_radius').perform(context).strip())
+    failed_goal_cooldown = float(LaunchConfiguration('failed_goal_cooldown').perform(context).strip())
+    publish_markers = _truthy(LaunchConfiguration('publish_markers').perform(context))
+    nav_wait_warn_sec = float(LaunchConfiguration('nav_wait_warn_sec').perform(context).strip())
+    tf_wait_warn_sec = float(LaunchConfiguration('tf_wait_warn_sec').perform(context).strip())
+    robot_count = int(LaunchConfiguration('robot_count').perform(context).strip())
+    robot_layout = LaunchConfiguration('robot_layout').perform(context).strip()
+    spawn_x = float(LaunchConfiguration('spawn_x').perform(context).strip())
+    spawn_y = float(LaunchConfiguration('spawn_y').perform(context).strip())
+    spawn_z = float(LaunchConfiguration('spawn_z').perform(context).strip())
+    spawn_yaw = float(LaunchConfiguration('spawn_yaw').perform(context).strip())
+    spawn_spacing = float(LaunchConfiguration('spawn_spacing').perform(context).strip())
+    validate_spawns = _truthy(LaunchConfiguration('validate_spawns').perform(context))
+    robot_clearance = float(LaunchConfiguration('robot_clearance').perform(context).strip())
+    spawn_search_radius = float(LaunchConfiguration('spawn_search_radius').perform(context).strip())
+    spawn_search_step = float(LaunchConfiguration('spawn_search_step').perform(context).strip())
+    nav2_start_delay = float(LaunchConfiguration('nav2_start_delay').perform(context).strip())
+    robot_start_stagger = float(LaunchConfiguration('robot_start_stagger').perform(context).strip())
+    amcl_start_delay = float(LaunchConfiguration('amcl_start_delay').perform(context).strip())
+    robots_json = LaunchConfiguration('robots_json').perform(context).strip()
 
     slam_pkg     = get_package_share_directory('slam_toolbox')
     ros_gz       = get_package_share_directory('ros_gz_sim')
@@ -208,12 +487,21 @@ def _build_all(context, pkg_share: str):
     gazebo_world_name = _resolve_gazebo_world_name(world_path)
     map_prefix   = os.path.join(pkg_share, 'maps', f'map_{world_stem}')
     template_yaml = os.path.join(pkg_share, 'config', _MR_PARAMS)
+    robots = _resolve_robots(
+        robot_count, robot_layout, spawn_x, spawn_y, spawn_z, spawn_yaw,
+        spawn_spacing, robots_json)
+    robots, spawn_adjustments = _safe_spawns(
+        robots, world_path, validate_spawns, robot_clearance,
+        spawn_search_radius, spawn_search_step)
 
     actions = [
         LogInfo(msg=f'[multi_robot] world = {world_path}'),
-        LogInfo(msg=f'[multi_robot] fleet = {[r["name"] for r in ROBOTS]}'),
+        LogInfo(msg=f'[multi_robot] fleet = {[r["name"] for r in robots]}'),
+        LogInfo(msg=f'[multi_robot] spawn poses = {[(r["name"], r["x"], r["y"]) for r in robots]}'),
         LogInfo(msg=f'[multi_robot] explore = {explore}'),
     ]
+    for msg in spawn_adjustments:
+        actions.append(LogInfo(msg=f'[multi_robot] adjusted spawn: {msg}'))
 
     # ── Gazebo server + GUI ───────────────────────────────────────────────────
     actions.append(IncludeLaunchDescription(
@@ -290,10 +578,10 @@ def _build_all(context, pkg_share: str):
     # ── Per-robot groups ──────────────────────────────────────────────────────
     # SLAM map origin = robot1's odom origin = robot1's Gazebo world start position.
     # All AMCL initial poses must be in map frame, so subtract robot1's world coords.
-    slam_x_f = float(ROBOTS[0]['x'])
-    slam_y_f = float(ROBOTS[0]['y'])
+    slam_x_f = float(robots[0]['x'])
+    slam_y_f = float(robots[0]['y'])
 
-    for idx, robot in enumerate(ROBOTS):
+    for idx, robot in enumerate(robots):
         ns  = robot['name']
         x, y, z, yaw = robot['x'], robot['y'], robot['z'], robot['yaw']
         is_slam_robot = (explore and idx == 0)  # robot1 localises via SLAM
@@ -404,44 +692,87 @@ def _build_all(context, pkg_share: str):
 
         # Assemble per-robot actions
         nav2_group = nav2
+        robot_stagger = idx * robot_start_stagger
+        robot_nav2_delay = nav2_start_delay + robot_stagger
+        robot_amcl_delay = amcl_start_delay + robot_stagger
+        initial_pose_delay = robot_amcl_delay + 3.0
+        amcl_nav2_delay = robot_amcl_delay + 6.0
+        static_amcl_delay = 5.0 + robot_stagger
+        static_initial_pose_delay = static_amcl_delay + 3.0
+        static_nav2_delay = static_amcl_delay + 6.0
 
         per_robot = [rsp, spawn, bridge, laser_filter]
 
         if is_slam_robot:
             # robot1 in explore mode: SLAM handles localisation
+            actions.append(LogInfo(
+                msg=f'[multi_robot] {ns}: SLAM-localized, nav2 t={robot_nav2_delay:.1f}s'))
             per_robot += [
-                TimerAction(period=10.0, actions=[nav2_group]),
+                TimerAction(period=robot_nav2_delay, actions=[nav2_group]),
             ]
         elif explore:
             # Other robots in explore mode: need AMCL to localise on SLAM map.
-            # SLAM starts at 6s; give it 7s to publish /map before AMCL starts.
+            # Stagger each robot so Nav2 lifecycle activation does not stampede.
+            actions.append(LogInfo(
+                msg=f'[multi_robot] {ns}: AMCL t={robot_amcl_delay:.1f}s, '
+                    f'initialpose t={initial_pose_delay:.1f}s, nav2 t={amcl_nav2_delay:.1f}s'))
             per_robot += [
-                TimerAction(period=13.0, actions=[
+                TimerAction(period=robot_amcl_delay, actions=[
                     amcl_node,
                     amcl_lc,
                 ]),
-                TimerAction(period=16.0, actions=[_initial_pose_pub(ns, map_x, map_y, yaw)]),
-                TimerAction(period=19.0, actions=[nav2_group]),
+                TimerAction(period=initial_pose_delay, actions=[_initial_pose_pub(ns, map_x, map_y, yaw)]),
+                TimerAction(period=amcl_nav2_delay, actions=[nav2_group]),
             ]
         else:
             # Pre-built map mode: all robots use AMCL
+            actions.append(LogInfo(
+                msg=f'[multi_robot] {ns}: AMCL t={static_amcl_delay:.1f}s, '
+                    f'initialpose t={static_initial_pose_delay:.1f}s, nav2 t={static_nav2_delay:.1f}s'))
             per_robot += [
-                TimerAction(period=5.0, actions=[
+                TimerAction(period=static_amcl_delay, actions=[
                     amcl_node,
                     amcl_lc,
                 ]),
-                TimerAction(period=8.0, actions=[_initial_pose_pub(ns, map_x, map_y, yaw)]),
-                TimerAction(period=11.0, actions=[nav2_group]),
+                TimerAction(period=static_initial_pose_delay, actions=[_initial_pose_pub(ns, map_x, map_y, yaw)]),
+                TimerAction(period=static_nav2_delay, actions=[nav2_group]),
             ]
 
         actions.append(GroupAction(per_robot))
 
+    # ── Auxiliary-scan map fusion (opt-in, merge_scans:=true) ──────────────────
+    # robot1 drives slam_toolbox exclusively (see mapper_params_multirobot.yaml);
+    # every other robot only localises via AMCL, so its scans never reach /map.
+    # This node layers those robots' scans into cells slam_toolbox still marks
+    # unknown, publishing /map_fused for consumers that opt in — it never
+    # touches slam_toolbox, AMCL, or /map itself. Default (merge_scans:=false)
+    # leaves the existing SLAM/localisation pipeline completely untouched.
+    frontier_map_topic = '/map'
+    if explore and merge_scans:
+        aux_robots = ','.join(r['name'] for r in robots[1:])
+        frontier_map_topic = '/map_fused'
+        if aux_robots:
+            actions.append(TimerAction(
+                period=20.0,
+                actions=[Node(
+                    package='diff_drive_robot',
+                    executable='map_fusion.py',
+                    name='map_fusion',
+                    output='screen',
+                    parameters=[{
+                        'robot_namespaces': aux_robots,
+                        'base_map_topic': '/map',
+                        'output_topic': frontier_map_topic,
+                    }])]))
+            actions.append(LogInfo(
+                msg=f'[multi_robot] map_fusion will start at t=20s fusing [{aux_robots}] -> {frontier_map_topic}'))
+
     # ── Centralized frontier coordinator (explore mode only) ──────────────────
-    robot_ns_list = ','.join(r['name'] for r in ROBOTS)
+    robot_ns_list = ','.join(r['name'] for r in robots)
     if explore:
         # Start after all Nav2 stacks are up (robot1 at 10s, others at 13s)
         actions.append(TimerAction(
-            period=20.0,
+            period=21.0 if merge_scans else 20.0,
             actions=[Node(
                 package='diff_drive_robot',
                 executable='frontier_coordinator.py',
@@ -450,9 +781,24 @@ def _build_all(context, pkg_share: str):
                 parameters=[{
                     'robot_namespaces': robot_ns_list,
                     'map_save_path': map_prefix,
+                    'map_topic': frontier_map_topic,
+                    'frontier_detector': frontier_detector,
+                    'frontier_scorer': frontier_scorer,
+                    'distance_weight': distance_weight,
+                    'info_gain_weight': info_gain_weight,
+                    'hysteresis_radius': hysteresis_radius,
+                    'hysteresis_gain': hysteresis_gain,
+                    'frontier_clearance_radius': frontier_clearance_radius,
+                    'failed_goal_radius': failed_goal_radius,
+                    'failed_goal_cooldown': failed_goal_cooldown,
+                    'publish_markers': publish_markers,
+                    'nav_wait_warn_sec': nav_wait_warn_sec,
+                    'tf_wait_warn_sec': tf_wait_warn_sec,
                 }])]))
         actions.append(LogInfo(
-            msg=f'[multi_robot] frontier_coordinator will start at t=20s for {robot_ns_list}'))
+            msg=f'[multi_robot] frontier_coordinator will start at t={21.0 if merge_scans else 20.0}s '
+                f'for {robot_ns_list} (map_topic={frontier_map_topic}, '
+                f'detector={frontier_detector}, scorer={frontier_scorer})'))
 
     # ── Fleet management algorithms (optional) ────────────────────────────────
     if fleet_mgmt:
@@ -525,5 +871,94 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'fleet_mgmt', default_value='false',
             description='true = start priority collision avoidance + deadlock recovery nodes'),
+        DeclareLaunchArgument(
+            'robot_count', default_value='2',
+            description='Number of generated robots when robots_json is empty'),
+        DeclareLaunchArgument(
+            'robot_layout', default_value='line',
+            description='Generated spawn layout: line, grid, or circle'),
+        DeclareLaunchArgument(
+            'spawn_x', default_value='-2.0',
+            description='Base x position for generated robot spawns'),
+        DeclareLaunchArgument(
+            'spawn_y', default_value='-1.0',
+            description='Base y position for generated robot spawns'),
+        DeclareLaunchArgument(
+            'spawn_z', default_value='0.3',
+            description='Spawn z position for generated robot spawns'),
+        DeclareLaunchArgument(
+            'spawn_yaw', default_value='0.0',
+            description='Spawn yaw for generated robot spawns'),
+        DeclareLaunchArgument(
+            'spawn_spacing', default_value='1.2',
+            description='Spacing between generated robot spawns'),
+        DeclareLaunchArgument(
+            'validate_spawns', default_value='true',
+            description='true = parse SDF collisions and relocate spawns out of walls/obstacles'),
+        DeclareLaunchArgument(
+            'robot_clearance', default_value='0.45',
+            description='Minimum spawn clearance from walls/obstacles and other robots'),
+        DeclareLaunchArgument(
+            'spawn_search_radius', default_value='4.0',
+            description='Maximum radius to search when relocating blocked spawns'),
+        DeclareLaunchArgument(
+            'spawn_search_step', default_value='0.25',
+            description='Radial step used when searching for free spawn positions'),
+        DeclareLaunchArgument(
+            'nav2_start_delay', default_value='10.0',
+            description='Base delay before starting robot1 Nav2 in explore mode'),
+        DeclareLaunchArgument(
+            'amcl_start_delay', default_value='13.0',
+            description='Base delay before starting AMCL for non-SLAM robots in explore mode'),
+        DeclareLaunchArgument(
+            'robot_start_stagger', default_value='6.0',
+            description='Additional seconds of AMCL/Nav2 startup delay per robot index'),
+        DeclareLaunchArgument(
+            'robots_json', default_value='',
+            description='Optional exact robot list JSON, e.g. '
+                        '\'[{"name":"robot1","x":-2,"y":-1},{"name":"robot2","x":-0.8,"y":-1}]\''),
+        DeclareLaunchArgument(
+            'merge_scans', default_value='false',
+            description='true = fuse non-SLAM robots\' scans into unknown /map cells '
+                        '(published as /map_fused) so the fleet maps faster than '
+                        'robot1 alone. Opt-in; does not touch SLAM or AMCL.'),
+        DeclareLaunchArgument(
+            'frontier_detector', default_value='wfd',
+            description='Frontier detector plugin: wfd = reachable wavefront frontiers; '
+                        'classic = all free/unknown boundary cells'),
+        DeclareLaunchArgument(
+            'frontier_scorer', default_value='weighted',
+            description='Frontier scorer plugin: weighted = info gain minus distance; '
+                        'nearest = closest valid frontier'),
+        DeclareLaunchArgument(
+            'distance_weight', default_value='1.0',
+            description='Weighted scorer distance penalty'),
+        DeclareLaunchArgument(
+            'info_gain_weight', default_value='3.0',
+            description='Weighted scorer information gain reward'),
+        DeclareLaunchArgument(
+            'hysteresis_radius', default_value='2.0',
+            description='Radius for keeping a robot near its current exploration region'),
+        DeclareLaunchArgument(
+            'hysteresis_gain', default_value='1.5',
+            description='Weighted scorer bonus for current-region continuity'),
+        DeclareLaunchArgument(
+            'frontier_clearance_radius', default_value='0.30',
+            description='Minimum OccupancyGrid clearance around selected frontier goals'),
+        DeclareLaunchArgument(
+            'failed_goal_radius', default_value='0.75',
+            description='Radius for matching recently failed frontier goals'),
+        DeclareLaunchArgument(
+            'failed_goal_cooldown', default_value='45.0',
+            description='Seconds to avoid a frontier area after Nav2 reports failure'),
+        DeclareLaunchArgument(
+            'publish_markers', default_value='true',
+            description='Publish RViz debug markers on /exploration/frontiers'),
+        DeclareLaunchArgument(
+            'nav_wait_warn_sec', default_value='15.0',
+            description='Seconds between frontier coordinator warnings for missing Nav2 action servers'),
+        DeclareLaunchArgument(
+            'tf_wait_warn_sec', default_value='15.0',
+            description='Seconds between frontier coordinator warnings for missing map->base_link TF'),
         OpaqueFunction(function=_build_all, args=[pkg_share]),
     ])

@@ -303,6 +303,19 @@ Visualization Manager:
         Value: /global_costmap/costmap_updates
       Use Timestamp: true
       Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Exploration
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /exploration/frontiers
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48

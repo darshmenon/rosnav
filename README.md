@@ -282,18 +282,34 @@ ros2 launch diff_drive_robot multi_robot.launch.py headless:=true
 
 # Full fleet management stack
 ros2 launch diff_drive_robot multi_robot.launch.py fleet_mgmt:=true
+
+# Spawn more robots with SDF collision-aware placement
+ros2 launch diff_drive_robot multi_robot.launch.py robot_count:=4 robot_layout:=grid
+ros2 launch diff_drive_robot multi_robot.launch.py robot_count:=6 robot_layout:=circle spawn_spacing:=1.4
+
+# Fuse non-SLAM robots' scans into /map_fused for faster shared mapping
+ros2 launch diff_drive_robot multi_robot.launch.py merge_scans:=true
+
+# Pluggable exploration algorithms
+ros2 launch diff_drive_robot multi_robot.launch.py frontier_detector:=wfd frontier_scorer:=weighted
+ros2 launch diff_drive_robot multi_robot.launch.py frontier_detector:=classic frontier_scorer:=nearest
 ```
 
 #### Adding robots
-Edit only the `ROBOTS` list in `multi_robot.launch.py`:
-```python
-ROBOTS = [
-    {'name': 'robot1', 'x': '-2.0', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
-    {'name': 'robot2', 'x': '-0.8', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
-    {'name': 'robot3', 'x':  '0.5', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
-]
+Use `robot_count` with a generated layout, or pass exact poses with `robots_json`:
+```bash
+ros2 launch diff_drive_robot multi_robot.launch.py robot_count:=5 robot_layout:=grid
+
+ros2 launch diff_drive_robot multi_robot.launch.py \
+  robots_json:='[{"name":"robot1","x":-2,"y":-1},{"name":"robot2","x":-0.8,"y":-1},{"name":"robot3","x":0.5,"y":-1}]'
 ```
-Everything else — TF, Nav2 params, frontier coordinator — picks up the new robot automatically.
+Everything else — TF, Nav2 params, scan fusion, fleet tools, frontier coordinator — picks up the generated robot list automatically.
+
+Spawn validation is enabled by default. The launch file parses the selected
+world's SDF collision boxes/cylinders, ignores floor pads, keeps
+`robot_clearance` from obstacles and other robots, and relocates blocked spawn
+points within `spawn_search_radius`. If no free point is found, launch fails
+before Gazebo spawns robots inside a wall.
 
 #### Launch arguments
 
@@ -303,6 +319,31 @@ Everything else — TF, Nav2 params, frontier coordinator — picks up the new r
 | `explore` | `true` | `true` = SLAM + frontier; `false` = pre-built map + AMCL |
 | `headless` | `false` | No Gazebo GUI or RViz |
 | `fleet_mgmt` | `false` | Start mission server, task allocator, health monitor, collision avoidance, deadlock recovery |
+| `robot_count` | `2` | Number of generated robots when `robots_json` is empty |
+| `robot_layout` | `line` | Generated spawn layout: `line`, `grid`, or `circle` |
+| `spawn_x`, `spawn_y`, `spawn_z`, `spawn_yaw` | `-2.0`, `-1.0`, `0.3`, `0.0` | Base generated spawn pose |
+| `spawn_spacing` | `1.2` | Spacing between generated spawn poses |
+| `validate_spawns` | `true` | Parse SDF collisions and relocate spawns away from walls/obstacles |
+| `robot_clearance` | `0.45` | Minimum clearance from obstacles and other robots |
+| `spawn_search_radius` | `4.0` | Maximum relocation search radius around a blocked spawn |
+| `spawn_search_step` | `0.25` | Radial step for relocation search |
+| `nav2_start_delay` | `10.0` | Base delay before starting robot1 Nav2 in explore mode |
+| `amcl_start_delay` | `13.0` | Base delay before starting AMCL for non-SLAM robots in explore mode |
+| `robot_start_stagger` | `6.0` | Additional startup delay per robot; increase for larger fleets or slow machines |
+| `robots_json` | *(empty)* | Exact robot list JSON; overrides generated count/layout |
+| `merge_scans` | `false` | Publish `/map_fused` by layering non-SLAM robot scans into unknown cells |
+| `frontier_detector` | `wfd` | Frontier plugin: `wfd` = reachable wavefront frontiers, `classic` = all free/unknown boundaries |
+| `frontier_scorer` | `weighted` | Goal plugin: `weighted` = info gain minus distance, `nearest` = closest valid frontier |
+| `distance_weight` | `1.0` | Distance penalty used by `frontier_scorer:=weighted` |
+| `info_gain_weight` | `3.0` | Information gain reward used by `frontier_scorer:=weighted` |
+| `hysteresis_radius` | `2.0` | Radius for keeping a robot near its current exploration region |
+| `hysteresis_gain` | `1.5` | Continuity bonus inside `hysteresis_radius` |
+| `frontier_clearance_radius` | `0.30` | Minimum map clearance around selected frontier goals |
+| `failed_goal_radius` | `0.75` | Radius for matching recently failed frontier goals |
+| `failed_goal_cooldown` | `45.0` | Seconds to avoid a frontier area after Nav2 reports failure |
+| `publish_markers` | `true` | Publish RViz debug markers on `/exploration/frontiers` |
+| `nav_wait_warn_sec` | `15.0` | Seconds between coordinator warnings for missing Nav2 action servers |
+| `tf_wait_warn_sec` | `15.0` | Seconds between coordinator warnings for missing `map -> robot/base_link` TF |
 | `rviz` | `true` | Skip RViz |
 | `map` | *(auto)* | Path to map YAML — only used when `explore:=false` |
 
@@ -324,7 +365,19 @@ ros2 action send_goal /robot2/navigate_to_pose nav2_msgs/action/NavigateToPose \
 
 # Watch odom
 ros2 topic echo /robot1/odom --once
+
+# Watch exploration metrics
+ros2 topic echo /exploration/stats
 ```
+
+RViz can show frontier candidates and assigned goals by adding a `MarkerArray`
+display for `/exploration/frontiers`.
+The stats JSON includes `nav_ready`, `nav_waiting`, `tf_ready`, and
+`tf_waiting`, which is the fastest way to see whether a robot is blocked on
+Nav2 startup or localization/TF.
+If Nav2 reports `Failed to make progress` or `0 poses`, the coordinator avoids
+that frontier area for `failed_goal_cooldown` seconds and picks goals with at
+least `frontier_clearance_radius` clearance from occupied map cells.
 
 ---
 
