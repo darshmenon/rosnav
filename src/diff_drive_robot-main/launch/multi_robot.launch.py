@@ -7,13 +7,21 @@ Architecture
 • Fleet size and spawn layout are launch parameters. Use robot_count/layout
   for generated fleets, or robots_json for exact custom poses.
 
-• When explore:=true (default):
+• When explore:=true (default, slam_mode:=single):
     - A single SLAM Toolbox instance (driven by robot1) builds the shared /map.
     - robot1 uses SLAM for localisation (no AMCL needed).
     - All other robots localise on that map via their own AMCL node.
     - A single frontier_coordinator assigns unique frontiers to each robot —
       no two robots ever target the same unexplored area.
     - Map is auto-saved when exploration finishes.
+
+• When explore:=true slam_mode:=multi:
+    - Every robot runs its own slam_toolbox with a private <ns>/map frame
+      (avoids map→odom TF fights).
+    - Static map→<ns>/map TFs use known spawn offsets vs robot1.
+    - map_merge_known stitches /robotN/map grids into /map_merged in world
+      coordinates (occupied wins; survives grid growth/re-origin).
+    - Nav2 + frontier_coordinator consume /map_merged.
 
 • When explore:=false:
     - A static map_server publishes a pre-built map.
@@ -35,6 +43,9 @@ Usage
 
   # Fuse non-SLAM robots' scans into /map_fused (opt-in; SLAM/AMCL untouched)
   ros2 launch diff_drive_robot multi_robot.launch.py merge_scans:=true
+
+  # Experimental: every robot runs SLAM and maps are merged
+  ros2 launch diff_drive_robot multi_robot.launch.py slam_mode:=multi
 
   # Swap frontier plugins without editing code
   ros2 launch diff_drive_robot multi_robot.launch.py frontier_detector:=wfd frontier_scorer:=weighted
@@ -336,22 +347,64 @@ def _make_robot_params(
     template_path: str,
     robot_ns: str,
     initial_pose: dict | None = None,
+    nav_map_topic: str = '/map',
 ) -> str:
     """Substitute ROBOT_NS in the template YAML and return a temp-file path."""
     with open(template_path) as f:
         content = f.read()
     content = content.replace('ROBOT_NS', robot_ns)
+    params = yaml.safe_load(content)
     if initial_pose is not None:
-        params = yaml.safe_load(content)
         amcl_params = params.setdefault('amcl', {}).setdefault('ros__parameters', {})
         amcl_params['set_initial_pose'] = True
         amcl_params['initial_pose'] = initial_pose
-        content = yaml.safe_dump(params, sort_keys=False)
+    static_layer = (
+        params.setdefault('global_costmap', {})
+        .setdefault('global_costmap', {})
+        .setdefault('ros__parameters', {})
+        .setdefault('static_layer', {})
+    )
+    static_layer['map_topic'] = nav_map_topic
+    content = yaml.safe_dump(params, sort_keys=False)
     tmp = tempfile.NamedTemporaryFile(
         mode='w', suffix=f'_{robot_ns}.yaml', delete=False, prefix='nav2_mr_')
     tmp.write(content)
     tmp.close()
     return tmp.name
+
+
+def _make_slam_params(template_path: str, robot_ns: str) -> dict:
+    """Per-robot slam_toolbox params with a unique local map frame.
+
+    Using map_frame=<ns>/map avoids N slam nodes fighting over map→odom on /tf.
+    A static map→<ns>/map TF (spawn offset vs robot1) ties locals into one tree.
+    """
+    with open(template_path) as f:
+        content = f.read().replace('ROBOT_NS', robot_ns)
+        params = yaml.safe_load(content) or {}
+    slam_params = dict((params.get('slam_toolbox') or {}).get('ros__parameters', {}))
+    slam_params.update({
+        'odom_frame': f'{robot_ns}/odom',
+        'base_frame': f'{robot_ns}/base_link',
+        'map_frame': f'{robot_ns}/map',
+        'scan_topic': f'/{robot_ns}/scan',
+        'map_start_at_dock': True,
+        'map_start_pose': [0.0, 0.0, 0.0],
+        'use_map_saver': False,
+        'enable_interactive_mode': False,
+    })
+    return slam_params
+
+
+def _init_poses_for_merge(robots: list[dict]) -> list[dict]:
+    """Local-map origins in the global map frame (origin = robot1 spawn)."""
+    ox = float(robots[0]['x'])
+    oy = float(robots[0]['y'])
+    # Gazebo odom/map axes stay world-aligned; spawn yaw lives in base_link.
+    return [
+        {'x': float(r['x']) - ox, 'y': float(r['y']) - oy, 'yaw': 0.0}
+        for r in robots
+    ]
 
 
 def _resolve_map_file(map_arg: str, world_path: str, pkg_share: str) -> str:
@@ -443,6 +496,7 @@ def _build_all(context, pkg_share: str):
     headless     = _truthy(LaunchConfiguration('headless').perform(context))
     fleet_mgmt   = _truthy(LaunchConfiguration('fleet_mgmt').perform(context))
     merge_scans  = _truthy(LaunchConfiguration('merge_scans').perform(context))
+    slam_mode = LaunchConfiguration('slam_mode').perform(context).strip().lower()
     frontier_detector = LaunchConfiguration('frontier_detector').perform(context).strip()
     frontier_scorer = LaunchConfiguration('frontier_scorer').perform(context).strip()
     distance_weight = float(LaunchConfiguration('distance_weight').perform(context).strip())
@@ -470,6 +524,8 @@ def _build_all(context, pkg_share: str):
     robot_start_stagger = float(LaunchConfiguration('robot_start_stagger').perform(context).strip())
     amcl_start_delay = float(LaunchConfiguration('amcl_start_delay').perform(context).strip())
     robots_json = LaunchConfiguration('robots_json').perform(context).strip()
+    if slam_mode not in ('single', 'multi'):
+        raise ValueError('slam_mode must be one of: single, multi')
 
     slam_pkg     = get_package_share_directory('slam_toolbox')
     ros_gz       = get_package_share_directory('ros_gz_sim')
@@ -487,6 +543,10 @@ def _build_all(context, pkg_share: str):
     gazebo_world_name = _resolve_gazebo_world_name(world_path)
     map_prefix   = os.path.join(pkg_share, 'maps', f'map_{world_stem}')
     template_yaml = os.path.join(pkg_share, 'config', _MR_PARAMS)
+    slam_template_yaml = os.path.join(
+        pkg_share, 'config',
+        'mapper_params_per_robot.yaml' if slam_mode == 'multi'
+        else 'mapper_params_multirobot.yaml')
     robots = _resolve_robots(
         robot_count, robot_layout, spawn_x, spawn_y, spawn_z, spawn_yaw,
         spawn_spacing, robots_json)
@@ -499,6 +559,7 @@ def _build_all(context, pkg_share: str):
         LogInfo(msg=f'[multi_robot] fleet = {[r["name"] for r in robots]}'),
         LogInfo(msg=f'[multi_robot] spawn poses = {[(r["name"], r["x"], r["y"]) for r in robots]}'),
         LogInfo(msg=f'[multi_robot] explore = {explore}'),
+        LogInfo(msg=f'[multi_robot] slam_mode = {slam_mode}'),
     ]
     for msg in spawn_adjustments:
         actions.append(LogInfo(msg=f'[multi_robot] adjusted spawn: {msg}'))
@@ -537,7 +598,7 @@ def _build_all(context, pkg_share: str):
         output='screen'))
 
     # ── Shared map source ─────────────────────────────────────────────────────
-    if explore:
+    if explore and slam_mode == 'single':
         # SLAM Toolbox (robot1's 2D lidar → shared /map)
         actions += [
             LogInfo(msg=f'[multi_robot] SLAM mode — map will be auto-saved to {map_prefix}'),
@@ -551,6 +612,40 @@ def _build_all(context, pkg_share: str):
                             pkg_share, 'config', 'mapper_params_multirobot.yaml'),
                         'use_sim_time': 'true',
                     }.items())]),
+        ]
+    elif explore:
+        init_poses = _init_poses_for_merge(robots)
+        # Static map → robotN/map so Nav2 can resolve map→base_link while each
+        # slam_toolbox owns a private robotN/map→robotN/odom transform.
+        for robot, pose in zip(robots, init_poses):
+            ns = robot['name']
+            actions.append(Node(
+                package='tf2_ros',
+                executable='static_transform_publisher',
+                name=f'{ns}_global_to_local_map',
+                arguments=[
+                    str(pose['x']), str(pose['y']), '0',
+                    str(pose['yaw']), '0', '0',
+                    'map', f'{ns}/map',
+                ],
+                output='screen'))
+        actions += [
+            LogInfo(msg='[multi_robot] multi-SLAM mode — per-robot /robotN/map + known-pose merge → /map_merged'),
+            TimerAction(
+                period=12.0,
+                actions=[Node(
+                    package='diff_drive_robot',
+                    executable='map_merge_known.py',
+                    name='map_merge_known',
+                    output='screen',
+                    parameters=[{
+                        'robot_namespaces': ','.join(r['name'] for r in robots),
+                        'init_poses_json': json.dumps(init_poses),
+                        'output_topic': '/map_merged',
+                        'world_frame': 'map',
+                        'publish_rate': 2.0,
+                        'use_sim_time': True,
+                    }])]),
         ]
     else:
         # Static map_server
@@ -584,7 +679,7 @@ def _build_all(context, pkg_share: str):
     for idx, robot in enumerate(robots):
         ns  = robot['name']
         x, y, z, yaw = robot['x'], robot['y'], robot['z'], robot['yaw']
-        is_slam_robot = (explore and idx == 0)  # robot1 localises via SLAM
+        is_slam_robot = explore and (slam_mode == 'multi' or idx == 0)
 
         # Convert Gazebo world coords → map frame coords for AMCL.
         # Map origin = robot1's starting world position, so offset by robot1's spawn.
@@ -600,7 +695,8 @@ def _build_all(context, pkg_share: str):
                 'z': 0.0,
                 'yaw': float(yaw),
             }
-        robot_params = _make_robot_params(template_yaml, ns, initial_pose)
+        nav_map_topic = '/map_merged' if explore and slam_mode == 'multi' else '/map'
+        robot_params = _make_robot_params(template_yaml, ns, initial_pose, nav_map_topic)
 
         # Robot State Publisher — frame_prefix + namespace arg makes TF frames unique per robot
         rsp = IncludeLaunchDescription(
@@ -690,6 +786,20 @@ def _build_all(context, pkg_share: str):
                 'namespace': ns,
             }.items())
 
+        slam_node = Node(
+            package='slam_toolbox',
+            executable='async_slam_toolbox_node',
+            name='slam_toolbox',
+            namespace=ns,
+            output='screen',
+            parameters=[_make_slam_params(slam_template_yaml, ns), {'use_sim_time': True}],
+            remappings=[
+                ('tf', '/tf'),
+                ('tf_static', '/tf_static'),
+                ('map', f'/{ns}/map'),
+                ('/map', f'/{ns}/map'),
+            ])
+
         # Assemble per-robot actions
         nav2_group = nav2
         robot_stagger = idx * robot_start_stagger
@@ -704,10 +814,14 @@ def _build_all(context, pkg_share: str):
         per_robot = [rsp, spawn, bridge, laser_filter]
 
         if is_slam_robot:
-            # robot1 in explore mode: SLAM handles localisation
+            # SLAM handles localisation for this robot.
+            slam_actions = []
+            if slam_mode == 'multi':
+                slam_actions.append(TimerAction(period=6.0 + robot_stagger, actions=[slam_node]))
             actions.append(LogInfo(
                 msg=f'[multi_robot] {ns}: SLAM-localized, nav2 t={robot_nav2_delay:.1f}s'))
             per_robot += [
+                *slam_actions,
                 TimerAction(period=robot_nav2_delay, actions=[nav2_group]),
             ]
         elif explore:
@@ -747,8 +861,8 @@ def _build_all(context, pkg_share: str):
     # unknown, publishing /map_fused for consumers that opt in — it never
     # touches slam_toolbox, AMCL, or /map itself. Default (merge_scans:=false)
     # leaves the existing SLAM/localisation pipeline completely untouched.
-    frontier_map_topic = '/map'
-    if explore and merge_scans:
+    frontier_map_topic = '/map_merged' if explore and slam_mode == 'multi' else '/map'
+    if explore and merge_scans and slam_mode == 'single':
         aux_robots = ','.join(r['name'] for r in robots[1:])
         frontier_map_topic = '/map_fused'
         if aux_robots:
@@ -766,13 +880,16 @@ def _build_all(context, pkg_share: str):
                     }])]))
             actions.append(LogInfo(
                 msg=f'[multi_robot] map_fusion will start at t=20s fusing [{aux_robots}] -> {frontier_map_topic}'))
+    elif explore and merge_scans and slam_mode == 'multi':
+        actions.append(LogInfo(
+            msg='[multi_robot] merge_scans ignored in slam_mode:=multi; using /map_merged from map_merge_known'))
 
     # ── Centralized frontier coordinator (explore mode only) ──────────────────
     robot_ns_list = ','.join(r['name'] for r in robots)
     if explore:
         # Start after all Nav2 stacks are up (robot1 at 10s, others at 13s)
         actions.append(TimerAction(
-            period=21.0 if merge_scans else 20.0,
+            period=22.0 if slam_mode == 'multi' else (21.0 if merge_scans else 20.0),
             actions=[Node(
                 package='diff_drive_robot',
                 executable='frontier_coordinator.py',
@@ -796,7 +913,7 @@ def _build_all(context, pkg_share: str):
                     'tf_wait_warn_sec': tf_wait_warn_sec,
                 }])]))
         actions.append(LogInfo(
-            msg=f'[multi_robot] frontier_coordinator will start at t={21.0 if merge_scans else 20.0}s '
+            msg=f'[multi_robot] frontier_coordinator will start at t={22.0 if slam_mode == "multi" else (21.0 if merge_scans else 20.0)}s '
                 f'for {robot_ns_list} (map_topic={frontier_map_topic}, '
                 f'detector={frontier_detector}, scorer={frontier_scorer})'))
 
@@ -922,6 +1039,10 @@ def generate_launch_description():
             description='true = fuse non-SLAM robots\' scans into unknown /map cells '
                         '(published as /map_fused) so the fleet maps faster than '
                         'robot1 alone. Opt-in; does not touch SLAM or AMCL.'),
+        DeclareLaunchArgument(
+            'slam_mode', default_value='single',
+            description='single = robot1 SLAM + AMCL for other robots; '
+                        'multi = each robot runs namespaced SLAM and maps merge to /map_merged'),
         DeclareLaunchArgument(
             'frontier_detector', default_value='wfd',
             description='Frontier detector plugin: wfd = reachable wavefront frontiers; '

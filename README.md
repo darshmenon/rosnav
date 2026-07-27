@@ -265,51 +265,82 @@ Details: [concepts.md § 18b](concepts.md#18b-ackermann-car-like-drive).
 
 ![Multi-robot navigation and exploration](images/multi_robot_navigation_and_exploration.gif)
 
-`robot1` runs SLAM and shares the map. All other robots use AMCL on that map. A single `frontier_coordinator` assigns unique frontiers — no two robots explore the same area.
+By default, `robot1` runs SLAM and shares `/map` — other robots localize via
+AMCL on it. `slam_mode:=multi` is the experimental alternative: every robot
+runs its own namespaced SLAM (`/robotN/map`), merged into `/map_merged` by
+`map_merge_known.py`.
+
+`frontier_coordinator` assigns each robot a unique frontier, skipping robots
+whose Nav2 server isn't ready yet and avoiding recently failed goals.
 
 ```bash
 # SLAM + coordinated exploration (default)
 ros2 launch diff_drive_robot multi_robot.launch.py
-
-# Pre-built map mode
-ros2 launch diff_drive_robot multi_robot.launch.py explore:=false
 
 # Different world
 ros2 launch diff_drive_robot multi_robot.launch.py world:=warehouse
 
 # Headless (SSH / CI)
 ros2 launch diff_drive_robot multi_robot.launch.py headless:=true
+```
 
-# Full fleet management stack
-ros2 launch diff_drive_robot multi_robot.launch.py fleet_mgmt:=true
+#### Fleet size and spawn safety
+Generated fleets use `robot_count` plus a spawn layout. Spawn validation is on
+by default: the launch file parses the selected world's SDF collision
+boxes/cylinders, ignores floor pads, keeps `robot_clearance` from obstacles and
+other robots, and relocates blocked spawn points within `spawn_search_radius`.
+If no free point is found, launch fails before Gazebo spawns a robot into a wall.
 
-# Spawn more robots with SDF collision-aware placement
+```bash
 ros2 launch diff_drive_robot multi_robot.launch.py robot_count:=4 robot_layout:=grid
 ros2 launch diff_drive_robot multi_robot.launch.py robot_count:=6 robot_layout:=circle spawn_spacing:=1.4
+
+# Exact custom poses override generated count/layout
+ros2 launch diff_drive_robot multi_robot.launch.py \
+  robots_json:='[{"name":"robot1","x":-2,"y":-1},{"name":"robot2","x":-0.8,"y":-1},{"name":"robot3","x":0.5,"y":-1}]'
+```
+
+Everything else — TF, Nav2 params, scan fusion, fleet tools, frontier
+coordinator — picks up the generated robot list automatically.
+
+#### Exploration plugins
+The default exploration stack uses reachable Wavefront Frontier Detection plus
+weighted scoring. You can switch back to simpler behavior without editing code.
+
+```bash
+# Default: reachable frontiers, info gain minus travel distance
+ros2 launch diff_drive_robot multi_robot.launch.py frontier_detector:=wfd frontier_scorer:=weighted
+
+# Simpler baseline for comparison
+ros2 launch diff_drive_robot multi_robot.launch.py frontier_detector:=classic frontier_scorer:=nearest
 
 # Fuse non-SLAM robots' scans into /map_fused for faster shared mapping
 ros2 launch diff_drive_robot multi_robot.launch.py merge_scans:=true
 
-# Pluggable exploration algorithms
-ros2 launch diff_drive_robot multi_robot.launch.py frontier_detector:=wfd frontier_scorer:=weighted
-ros2 launch diff_drive_robot multi_robot.launch.py frontier_detector:=classic frontier_scorer:=nearest
+# Experimental: every robot runs SLAM, maps merge into /map_merged
+# (known-frame merge from spawn poses — not unknown-pose map matching;
+# use a dedicated map-merge backend if robots start unaligned)
+ros2 launch diff_drive_robot multi_robot.launch.py slam_mode:=multi
 ```
 
-#### Adding robots
-Use `robot_count` with a generated layout, or pass exact poses with `robots_json`:
+If Nav2 reports `Failed to make progress` or `0 poses`, the coordinator avoids
+that frontier area for `failed_goal_cooldown` seconds and selects frontier goals
+with at least `frontier_clearance_radius` clearance from occupied map cells.
+
+#### Observability
 ```bash
-ros2 launch diff_drive_robot multi_robot.launch.py robot_count:=5 robot_layout:=grid
+# Watch action/TF readiness, assignments, failures, and map progress
+ros2 topic echo /exploration/stats
 
-ros2 launch diff_drive_robot multi_robot.launch.py \
-  robots_json:='[{"name":"robot1","x":-2,"y":-1},{"name":"robot2","x":-0.8,"y":-1},{"name":"robot3","x":0.5,"y":-1}]'
+# Full fleet management stack
+ros2 launch diff_drive_robot multi_robot.launch.py fleet_mgmt:=true
 ```
-Everything else — TF, Nav2 params, scan fusion, fleet tools, frontier coordinator — picks up the generated robot list automatically.
 
-Spawn validation is enabled by default. The launch file parses the selected
-world's SDF collision boxes/cylinders, ignores floor pads, keeps
-`robot_clearance` from obstacles and other robots, and relocates blocked spawn
-points within `spawn_search_radius`. If no free point is found, launch fails
-before Gazebo spawns robots inside a wall.
+RViz can show frontier candidates, assigned goals, visited goals, and assignment
+lines by adding a `MarkerArray` display for `/exploration/frontiers`.
+The stats JSON includes `nav_ready`, `nav_waiting`, `tf_ready`, and
+`tf_waiting`, which is the fastest way to tell whether a robot is blocked on
+Nav2 startup or localization/TF.
 
 #### Launch arguments
 
@@ -317,6 +348,7 @@ before Gazebo spawns robots inside a wall.
 |---|---|---|
 | `world` | `hospital` | World name or full `.world` path |
 | `explore` | `true` | `true` = SLAM + frontier; `false` = pre-built map + AMCL |
+| `slam_mode` | `single` | `single` = robot1 SLAM + AMCL for others; `multi` = every robot SLAM + `/map_merged` |
 | `headless` | `false` | No Gazebo GUI or RViz |
 | `fleet_mgmt` | `false` | Start mission server, task allocator, health monitor, collision avoidance, deadlock recovery |
 | `robot_count` | `2` | Number of generated robots when `robots_json` is empty |
@@ -344,7 +376,7 @@ before Gazebo spawns robots inside a wall.
 | `publish_markers` | `true` | Publish RViz debug markers on `/exploration/frontiers` |
 | `nav_wait_warn_sec` | `15.0` | Seconds between coordinator warnings for missing Nav2 action servers |
 | `tf_wait_warn_sec` | `15.0` | Seconds between coordinator warnings for missing `map -> robot/base_link` TF |
-| `rviz` | `true` | Skip RViz |
+| `rviz` | `true` | Launch RViz when not headless |
 | `map` | *(auto)* | Path to map YAML — only used when `explore:=false` |
 
 <!-- #### Shared map building
@@ -369,15 +401,6 @@ ros2 topic echo /robot1/odom --once
 # Watch exploration metrics
 ros2 topic echo /exploration/stats
 ```
-
-RViz can show frontier candidates and assigned goals by adding a `MarkerArray`
-display for `/exploration/frontiers`.
-The stats JSON includes `nav_ready`, `nav_waiting`, `tf_ready`, and
-`tf_waiting`, which is the fastest way to see whether a robot is blocked on
-Nav2 startup or localization/TF.
-If Nav2 reports `Failed to make progress` or `0 poses`, the coordinator avoids
-that frontier area for `failed_goal_cooldown` seconds and picks goals with at
-least `frontier_clearance_radius` clearance from occupied map cells.
 
 ---
 

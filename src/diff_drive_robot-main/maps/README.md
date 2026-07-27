@@ -31,8 +31,11 @@ Before relaunching, stop any older stack first to avoid duplicate /clock and TF 
 
 Notes
 
-- `robot1` runs SLAM and builds the shared `/map`.
-- `robot2` localizes on that shared map with AMCL.
+- Default mode: `robot1` runs SLAM and builds the shared `/map`; other robots
+  localize on that shared map with AMCL.
+- Multi-SLAM mode: `ros2 launch diff_drive_robot multi_robot.launch.py slam_mode:=multi`
+  starts one SLAM Toolbox instance per robot and merges `/robotN/map` into
+  `/map_merged`.
 - Current launch expects a global `/tf` tree for both robots.
 
 Map generation
