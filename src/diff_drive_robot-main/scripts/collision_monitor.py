@@ -43,6 +43,7 @@ import time
 
 import rclpy
 from rclpy.node import Node
+from rcl_interfaces.msg import SetParametersResult
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
@@ -94,6 +95,7 @@ class CollisionMonitor(Node):
             self.create_subscription(Twist, f'{pre}/cmd_vel_nav', self._relay_cb, 10)
 
         self.create_timer(1.0 / hz, self._tick)
+        self.add_on_set_parameters_callback(self._on_param_update)
 
         fov_str = '360°' if self._all else f'±{math.degrees(self._half_fov):.0f}°'
         mode    = 'relay' if self._relay else 'watchdog'
@@ -132,6 +134,19 @@ class CollisionMonitor(Node):
 
     def _relay_cb(self, msg: Twist):
         self._relay_vel = msg
+
+    def _on_param_update(self, params) -> SetParametersResult:
+        """Allow stop_distance/slowdown_distance to be live-tuned (e.g. by
+        aruco_dock.py, which temporarily shrinks them below its dock
+        target_distance for the final approach, then restores them)."""
+        for p in params:
+            if p.name == 'stop_distance':
+                self._stop = p.value
+            elif p.name == 'slowdown_distance':
+                self._slow = p.value
+            elif p.name == 'slowdown_factor':
+                self._factor = p.value
+        return SetParametersResult(successful=True)
 
     # ── Timer tick ────────────────────────────────────────────────────────────
 

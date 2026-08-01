@@ -1,0 +1,17 @@
+# Per-dock visual docking settings.
+# Used by aruco_dock.py (and fleet_manager dock/undock).
+#
+# staging: location name from locations.yaml, or [x, y, yaw_degrees]
+# undock_yaw_deg: absolute map-frame heading after undock backup+spin
+# require_charge: if true, wait for BatteryState CHARGING before success
+
+docks:
+  charging_dock:
+    marker_id: 0
+    marker_length: 0.24
+    target_distance: 0.40
+    staging: charging_dock
+    undock_yaw_deg: 0.0
+    require_charge: false
+    charge_timeout: 5.0
+    max_retries: 3

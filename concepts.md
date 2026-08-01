@@ -192,19 +192,24 @@ map_server ──► /map (shared, static)
 ```
 
 ### Scalability — adding more robots
-The fleet is driven by the **ROBOTS list** at the top of `multi_robot.launch.py`.
-Nav2 params use a single **template file** (`nav2_multirobot_params.yaml`) — the
-placeholder `ROBOT_NS` is substituted at launch time. No per-robot YAML files needed.
+No file editing needed. The fleet is generated from `robot_count` + `robot_layout`
+(`line`/`grid`/`circle`), or from an exact `robots_json` list for custom poses.
+Spawn validation (on by default) relocates any robot whose generated/given pose
+falls inside a wall, other robot, or outside a `zone_*` spawn area.
 
-```python
-# multi_robot.launch.py — add one line per robot
-ROBOTS = [
-    {'name': 'robot1', 'x': '-2.0', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
-    {'name': 'robot2', 'x': '-0.8', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
-    {'name': 'robot3', 'x':  '0.5', 'y': '-1.0', 'z': '0.3', 'yaw': '0.0'},
-    # ... up to N robots
-]
+```bash
+ros2 launch diff_drive_robot multi_robot.launch.py robot_count:=4 robot_layout:=grid
+ros2 launch diff_drive_robot multi_robot.launch.py \
+  robots_json:='[{"name":"robot1","x":-2,"y":-1},{"name":"robot2","x":-0.8,"y":-1}]'
 ```
+
+Nav2 params for `drive_type:=diff` (default) come from a single hand-tuned
+**template file** (`nav2_multirobot_params.yaml`) — the placeholder `ROBOT_NS` is
+substituted at launch time. For `drive_type:=mecanum`/`ackermann` there is no
+separate fleet-tuned template; instead the same single-robot
+`nav2_params_mecanum.yaml`/`nav2_params_ackermann.yaml` used by
+`slam_nav.launch.py` is namespaced programmatically at launch time (see
+"Fleet-wide drive type" below) — one source of truth per drive type, either way.
 
 ### TF frame naming (critical for multi-robot)
 Each robot uses `frame_prefix: <ns>/` in its RSP, so TF frames are unique:
@@ -212,7 +217,11 @@ Each robot uses `frame_prefix: <ns>/` in its RSP, so TF frames are unique:
 - `robot2/base_link`, `robot2/odom`, `robot2/laser_frame`
 
 Nav2 params (`amcl.base_frame_id`, `bt_navigator.robot_base_frame`, etc.) must
-match these prefixed names. The template file handles this automatically.
+match these prefixed names. For `drive_type:=diff` the hand-tuned template file
+handles this; for `mecanum`/`ackermann`, `_common.namespace_nav2_params()`
+rewrites the single-robot params dict at launch time instead (same rule: prefix
+frame names with `<ns>/`, leave the shared `map` frame alone, absolute per-robot
+topics get `/<ns>` inserted).
 
 ```bash
 # SLAM + frontier exploration in hospital (default)
@@ -236,9 +245,27 @@ ros2 action send_goal /robot2/navigate_to_pose nav2_msgs/action/NavigateToPose \
 ### Key files
 | File | Role |
 |---|---|
-| `launch/multi_robot.launch.py` | Main launch — edit ROBOTS list to scale fleet |
-| `config/nav2_multirobot_params.yaml` | Template params (ROBOT_NS placeholder) |
+| `launch/multi_robot.launch.py` | Main launch — `robot_count`/`robot_layout`/`robots_json` scale the fleet, no editing needed |
+| `launch/_common.py` | Shared helper module (also used by `slam_nav.launch.py`): world resolution, Gazebo/RSP/laser-filter builders, nav2 params filename selection, and `namespace_nav2_params()` for fleet-wide drive types |
+| `config/nav2_multirobot_params.yaml` / `_jazzy.yaml` | Hand-tuned diff-drive fleet template (ROBOT_NS placeholder) |
+| `config/nav2_params_mecanum.yaml`, `nav2_params_ackermann.yaml`, etc. | Single-robot params, reused + auto-namespaced for `drive_type:=mecanum`/`ackermann` fleets |
 | `config/mapper_params_multirobot.yaml` | SLAM params for robot1 in explore mode |
+
+### Fleet-wide drive type
+`drive_type`/`controller` — the same choice single-robot mode offers (§18, §18b) — apply to the whole fleet:
+```bash
+ros2 launch diff_drive_robot multi_robot.launch.py drive_type:=mecanum
+ros2 launch diff_drive_robot multi_robot.launch.py drive_type:=ackermann
+```
+`diff` (default) is unchanged — it still uses the hand-tuned `nav2_multirobot_params.yaml`.
+`mecanum`/`ackermann` have no hand-tuned fleet template, so `_make_robot_params()`
+in `multi_robot.launch.py` detects that the selected file has no literal `ROBOT_NS`
+placeholder and falls back to `_common.namespace_nav2_params()`, which rewrites
+frame IDs/topics on the loaded dict and drops nodes that aren't part of the
+per-robot fleet bringup (`map_server`, `docking_server`, `loopback_simulator`).
+Footprint/controller tuning (`robot_radius`, inflation, critics, …) is whatever
+the single-robot file already has — not re-tuned for tighter fleet spacing the
+way the diff-drive template was, so treat those as a starting point.
 
 ### Bugs fixed
 - `rsp.launch.py` now declares and passes `frame_prefix` to RSP → TF frames are correctly namespaced per robot (was causing robot not visible in Gazebo)
@@ -325,6 +352,45 @@ The custom tree in `config/bt/navigate_w_recovery.xml` is still a single-robot r
 - on failure: backup, spin, clear costmaps, wait
 
 The fleet-management layer sits outside the BT. It coordinates missions and recovery around Nav2; it does not replace Nav2 with a centralized multi-robot behavior tree.
+
+---
+
+## 11b. Open-RMF Traffic Scheduling (experimental)
+
+Section 11's `priority_collision_avoidance.py` / `deadlock_recovery.py` are reactive — robots yield to each other only once a conflict is imminent, with no global schedule. `rmf_fleet.launch.py` adds real Open-RMF traffic scheduling on top of the same Nav2 stacks instead: `rmf_traffic_schedule` negotiates conflict-free itineraries across the whole fleet *before* robots move, and `rmf_task_dispatcher` assigns submitted tasks (patrol loops, for now) to whichever registered robot can do them.
+
+Open-RMF ships as system packages (`ros-humble-rmf-*`, apt-installed) — it is not a dependency of the rest of this repo, only of this optional integration.
+
+Pieces:
+
+| Piece | Package | Role |
+|---|---|---|
+| `rmf_traffic_schedule` | `rmf_traffic_ros2` | Traffic scheduler — negotiates conflict-free paths across the fleet |
+| `rmf_task_dispatcher` | `rmf_task_ros2` | Assigns submitted tasks to registered robots |
+| `rmf_fleet_adapter.py` | this package | Registers `robot1..robotN` as one RMF fleet; bridges RMF path commands to each robot's existing `/{ns}/navigate_to_pose` |
+| `rmf_submit_task.py` | this package | CLI to submit a patrol task over `/task_api_requests` |
+
+Architecture:
+- The nav graph is built at startup from `config/locations.yaml` — one RMF waypoint per named location, connected in a star topology through `hallway` (`WAYPOINT_LANES` in `rmf_fleet_adapter.py`). Edit that table (or `locations.yaml`) if a world's rooms/corridors differ.
+- `Nav2RobotCommand` (one per robot namespace) turns RMF's `follow_new_path` waypoint sequence into ordinary `NavigateToPose` action calls against that robot's Nav2 stack, and reports live position back to RMF from `/{ns}/amcl_pose`.
+- Because the graph is anchored to fixed map-frame coordinates, this only works with `multi_robot.launch.py explore:=false` (static map + AMCL) — SLAM/explore mode has no fixed map for the graph to sit on.
+- Battery/task-planner parameters are placeholders (`BATTERY_*` constants) — there is no real battery telemetry in this sim yet, so `account_for_battery_drain` is off.
+- `dock()` hands off to the configured docking plugin (`aruco` by default → `aruco_dock.py`, or `noop` for bring-up). Per-dock marker/staging/charge settings live in `config/docks.yaml`. Visual docking retries with soft reverse and Nav2 restage; `stop()` / interrupt cancel the dock subprocess.
+
+Run:
+
+```bash
+# 1. Static-map fleet (RMF's graph needs fixed map-frame coordinates)
+ros2 launch diff_drive_robot multi_robot.launch.py explore:=false robot_count:=2
+
+# 2. RMF traffic scheduling + task dispatch + fleet adapter
+ros2 launch diff_drive_robot rmf_fleet.launch.py robot_count:=2
+
+# 3. Submit a patrol task and watch the fleet negotiate shared corridor space
+ros2 run diff_drive_robot rmf_submit_task.py patrol room_a room_b --rounds 2
+```
+
+Known gap: the exact JSON shape `rmf_task_dispatcher` expects on `/task_api_requests` follows the `rmf_api_msgs` task-request schema, which isn't vendored as a local file in this ROS distro's apt packages — `rmf_submit_task.py`'s payload matches what RMF's own demos publish, but is the one part of this integration not yet confirmed against a live dispatcher. If it's rejected, `ros2 topic echo /task_api_responses` while resubmitting will show why.
 
 ---
 
@@ -421,6 +487,8 @@ ros2 run diff_drive_robot fleet_manager.py status        # map/SLAM/Nav2 status
 ros2 run diff_drive_robot fleet_manager.py add robot3 1.0 2.0   # dynamic spawn
 ros2 run diff_drive_robot fleet_manager.py teleop robot1 # keyboard control
 ros2 run diff_drive_robot fleet_manager.py goto robot2 3.0 -1.0 # nav goal
+ros2 run diff_drive_robot fleet_manager.py dock robot1           # navigate to charging_dock
+ros2 run diff_drive_robot fleet_manager.py undock robot1         # back away 0.5 m from the dock
 ros2 run diff_drive_robot fleet_manager.py explore robot2        # frontier
 ros2 run diff_drive_robot fleet_manager.py savemap /tmp/my_map   # save SLAM map
 ros2 run diff_drive_robot fleet_manager.py stop robot1           # cancel nav
@@ -547,8 +615,10 @@ ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
 | `robot.launch.py` | Gazebo + robot + Nav2 full bringup with saved map | `map`, `world`, `robot_name`, `spawn_x/y/z/yaw`, `rviz`, `use_sim_time`, `drive_type` (`diff`\|`mecanum`\|`ackermann`) |
 | `slam_nav.launch.py` | Gazebo + robot + SLAM Toolbox + Nav2 (+ optional auto frontier) | `world_name`, `world`, `explore`, `map_prefix`, `rviz`, `robot_name`, `spawn_x/y/z/yaw`, `drive_type` (`diff`\|`mecanum`\|`ackermann`), `controller` (`dwb`\|`mppi`) |
 | `slam.launch.py` | Gazebo + robot + SLAM Toolbox mapping mode | `use_sim_time` |
-| `multi_robot.launch.py` | Two robots + shared map server + Nav2 per robot | `map`, `world`, `rviz` |
+| `multi_robot.launch.py` | Scalable N-robot fleet: SLAM+frontier or shared map + Nav2 per robot | `world`, `map`, `explore`, `slam_mode`, `robot_count`, `robot_layout`, `robots_json`, `drive_type` (`diff`\|`mecanum`\|`ackermann`), `controller` (`dwb`\|`mppi`), `fleet_mgmt`, `rviz`, `headless` |
 | `nav2.launch.py` | Nav2 only (attach to running Gazebo) | `map`, `world`, `use_sim_time` |
+| `rmf_fleet.launch.py` | Open-RMF traffic scheduling on top of an already-running static-map fleet (see §11b) | `robot_count`, `robots`, `fleet_name`, `map_name`, `adapter_delay` |
+| `_common.py` | Not a launch file — shared helper module (world resolution, Gazebo/RSP/laser-filter builders, nav2 params selection + multi-robot namespacing) imported by `slam_nav.launch.py` and `multi_robot.launch.py` | — |
 
 ## Quick Reference — Scripts
 
@@ -560,6 +630,8 @@ ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
 | `frontier_explorer.py` | Autonomous map exploration via frontier detection + optional auto-save | `min_frontier_size`, `revisit_radius`, `poll_period`, `map_save_path` |
 | `check_odometry.py` | Debug odometry data | — |
 | `reset_pose.py` | Reset robot pose in simulation | `world_name`, `robot_name`, `reset_x/y/z/yaw` |
+| `rmf_fleet_adapter.py` | Registers the fleet with Open-RMF, bridges RMF path commands to Nav2 (see §11b) | `--fleet-name`, `--map-name`, `--robots` |
+| `rmf_submit_task.py` | Submits a patrol task to `rmf_task_dispatcher` to exercise traffic scheduling | `category`, `places`, `--rounds`, `--wait` |
 
 ---
 

@@ -166,6 +166,89 @@
     <!-- ── Charging dock (in corridor, east end near nurse station) ──────── -->
     <model name='charger'><static>true</static><pose>12 1.5 0.3 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.6 0.4 0.6</size></box></geometry></collision><visual name='v'><geometry><box><size>0.6 0.4 0.6</size></box></geometry><material><ambient>0.1 0.7 0.2 1</ambient><diffuse>0.1 0.7 0.2 1</diffuse></material></visual></link></model>
 
+    <!-- ── Fixed overview camera — watches the dock marker up close (not used
+         by nav/perception). Aimed at marker (-2.14, 0, 0.15), ~0.9m away so
+         the ArUco + quiet-zone backing fill the frame for visual debugging. -->
+    <model name='world_monitor_cam'>
+      <static>true</static>
+      <pose>-1.4 0.45 0.4 0 0.2810 -2.5952</pose>
+      <link name='link'>
+        <sensor name='monitor_camera' type='camera'>
+          <always_on>true</always_on>
+          <update_rate>10</update_rate>
+          <topic>world_monitor/image_raw</topic>
+          <camera>
+            <horizontal_fov>1.0</horizontal_fov>
+            <image><width>800</width><height>600</height><format>R8G8B8</format></image>
+            <clip><near>0.05</near><far>20.0</far></clip>
+          </camera>
+        </sensor>
+      </link>
+    </model>
+
+    <!-- ── Charging dock station with ArUco marker (ID 0, DICT_4X4_50) ── -->
+    <!-- Placed ~0.7m beyond the Nav2 charging_dock staging pose (-1.0, 0, 180deg)
+         so the robot's front/camera doesn't collide with the stand once docked;
+         aruco_dock.py then visually servos the last stretch to the marker.
+         Marker center is at camera height (0.15m) so it stays in-frame at close
+         range — camera vertical FOV is only ~47 deg, mounting the marker higher
+         causes it to fall out of the top of frame well before the stand-off distance.
+         Marker is a 6x6-cell grid (0.24m x 0.24m) built from primitive boxes
+         so it renders as exact black/white pixels — no texture/UV mapping.
+         Column 0 (bit-image left) is at world Y = -0.1, NOT +0.1. This was tested
+         live against Gazebo/OpenCV (not derived on paper): with col0 at -Y the
+         camera detects marker ID 0 correctly and bearing converges to 0°; with
+         col0 at +Y (the "image-left = world +Y" a-priori reasoning one might
+         expect from the -X approach heading) the pattern is mirrored into an
+         invalid/undetectable code and NOTHING is ever found. If you're about to
+         "fix" this back to +Y because the geometry argument seems right — it
+         isn't; re-verify empirically first (grab a camera frame, run
+         cv2.aruco detectMarkers on it) before changing the sign again.
+         Regenerate bits with: cv2.aruco.generateImageMarker(DICT_4X4_50, 0, 6) -->
+    <model name='charging_dock_station'><static>true</static><pose>-2.2 0 0.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.1 0.3 0.5</size></box></geometry></collision><visual name='v'><geometry><box><size>0.1 0.3 0.5</size></box></geometry><material><ambient>0.15 0.15 0.17 1</ambient><diffuse>0.15 0.15 0.17 1</diffuse></material></visual></link></model>
+    <!-- White quiet-zone backing plate — without this, the marker's black cells
+         blend into the stand's similarly-dark face and ArUco can't find the
+         marker's boundary at all (only the white cells render as stray blobs).
+         Sized 0.40m (vs 0.24m marker) for a clear ~1-cell quiet zone all around;
+         placed just behind the marker cells so it reads as a white border. -->
+    <model name='dock_marker_backing'><static>true</static><pose>-2.148 0 0.15 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.004 0.40 0.40</size></box></geometry><material><ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse><emissive>0.15 0.15 0.15 1</emissive></material></visual></link></model>
+    <model name='dock_marker_r0c0'><static>true</static><pose>-2.14 -0.1 0.25 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r0c1'><static>true</static><pose>-2.14 -0.06 0.25 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r0c2'><static>true</static><pose>-2.14 -0.02 0.25 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r0c3'><static>true</static><pose>-2.14 0.02 0.25 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r0c4'><static>true</static><pose>-2.14 0.06 0.25 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r0c5'><static>true</static><pose>-2.14 0.1 0.25 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r1c0'><static>true</static><pose>-2.14 -0.1 0.21 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r1c1'><static>true</static><pose>-2.14 -0.06 0.21 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r1c2'><static>true</static><pose>-2.14 -0.02 0.21 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r1c3'><static>true</static><pose>-2.14 0.02 0.21 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r1c4'><static>true</static><pose>-2.14 0.06 0.21 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r1c5'><static>true</static><pose>-2.14 0.1 0.21 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r2c0'><static>true</static><pose>-2.14 -0.1 0.17 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r2c1'><static>true</static><pose>-2.14 -0.06 0.17 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r2c2'><static>true</static><pose>-2.14 -0.02 0.17 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r2c3'><static>true</static><pose>-2.14 0.02 0.17 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r2c4'><static>true</static><pose>-2.14 0.06 0.17 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r2c5'><static>true</static><pose>-2.14 0.1 0.17 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r3c0'><static>true</static><pose>-2.14 -0.1 0.13 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r3c1'><static>true</static><pose>-2.14 -0.06 0.13 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r3c2'><static>true</static><pose>-2.14 -0.02 0.13 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r3c3'><static>true</static><pose>-2.14 0.02 0.13 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r3c4'><static>true</static><pose>-2.14 0.06 0.13 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r3c5'><static>true</static><pose>-2.14 0.1 0.13 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r4c0'><static>true</static><pose>-2.14 -0.1 0.09 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r4c1'><static>true</static><pose>-2.14 -0.06 0.09 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r4c2'><static>true</static><pose>-2.14 -0.02 0.09 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r4c3'><static>true</static><pose>-2.14 0.02 0.09 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r4c4'><static>true</static><pose>-2.14 0.06 0.09 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r4c5'><static>true</static><pose>-2.14 0.1 0.09 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r5c0'><static>true</static><pose>-2.14 -0.1 0.05 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r5c1'><static>true</static><pose>-2.14 -0.06 0.05 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r5c2'><static>true</static><pose>-2.14 -0.02 0.05 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r5c3'><static>true</static><pose>-2.14 0.02 0.05 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r5c4'><static>true</static><pose>-2.14 0.06 0.05 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+    <model name='dock_marker_r5c5'><static>true</static><pose>-2.14 0.1 0.05 0 0 0</pose><link name='link'><visual name='v'><geometry><box><size>0.01 0.04 0.04</size></box></geometry><material><ambient>0.02 0.02 0.02 1</ambient><diffuse>0.02 0.02 0.02 1</diffuse></material></visual></link></model>
+
     <!-- ── Room S1 supply closet (against south wall) ────────────────────── -->
     <model name='supply_s1'><static>true</static><pose>-10 -7.5 0.75 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2 0.5 1.5</size></box></geometry></collision><visual name='v'><geometry><box><size>2 0.5 1.5</size></box></geometry><material><ambient>0.52 0.48 0.42 1</ambient><diffuse>0.52 0.48 0.42 1</diffuse></material></visual></link></model>
 

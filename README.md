@@ -31,6 +31,7 @@ A full autonomous robot navigation stack built on **Nav2**, **SLAM Toolbox**, an
 - [Quick Start](#quick-start)
 - [All Launch Modes](#all-launch-modes)
 - [Fleet Management](#fleet-management)
+- [Open-RMF Traffic Scheduling](#open-rmf-traffic-scheduling-experimental)
 - [Worlds](#worlds)
 - [Troubleshooting](#troubleshooting)
 
@@ -303,6 +304,17 @@ ros2 launch diff_drive_robot multi_robot.launch.py \
 Everything else — TF, Nav2 params, scan fusion, fleet tools, frontier
 coordinator — picks up the generated robot list automatically.
 
+#### Fleet-wide AMR type
+Same `drive_type`/`controller` choice as single-robot mode (Modes 7–9 above), applied to every robot in the fleet:
+```bash
+# Fleet of mecanum (holonomic) robots
+ros2 launch diff_drive_robot multi_robot.launch.py drive_type:=mecanum
+
+# Fleet of Ackermann (car-like) robots
+ros2 launch diff_drive_robot multi_robot.launch.py drive_type:=ackermann
+```
+`diff` (the default) keeps the existing hand-tuned fleet nav2 params. `mecanum`/`ackermann` have no separate fleet-tuned file — they reuse and auto-namespace the single-robot `nav2_params_*.yaml` at launch time instead, so footprint/controller tuning stays in one place per drive type.
+
 #### Exploration plugins
 The default exploration stack uses reachable Wavefront Frontier Detection plus
 weighted scoring. You can switch back to simpler behavior without editing code.
@@ -351,6 +363,8 @@ Nav2 startup or localization/TF.
 | `slam_mode` | `single` | `single` = robot1 SLAM + AMCL for others; `multi` = every robot SLAM + `/map_merged` |
 | `headless` | `false` | No Gazebo GUI or RViz |
 | `fleet_mgmt` | `false` | Start mission server, task allocator, health monitor, collision avoidance, deadlock recovery |
+| `drive_type` | `diff` | Fleet-wide AMR type: `diff` (hand-tuned fleet nav2 params), `mecanum`, or `ackermann` (both reuse and auto-namespace the same single-robot `nav2_params_*.yaml` used by `slam_nav.launch.py`) |
+| `controller` | `dwb` | Local controller for `drive_type:=mecanum` (`dwb` or `mppi`, Humble only). Ignored for `diff` (fleet template is always MPPI) and `ackermann` (always MPPI) |
 | `robot_count` | `2` | Number of generated robots when `robots_json` is empty |
 | `robot_layout` | `line` | Generated spawn layout: `line`, `grid`, or `circle` |
 | `spawn_x`, `spawn_y`, `spawn_z`, `spawn_yaw` | `-2.0`, `-1.0`, `0.3`, `0.0` | Base generated spawn pose |
@@ -432,6 +446,37 @@ ros2 run diff_drive_robot fleet_manager.py tasks status
 ros2 run diff_drive_robot fleet_manager.py tasks clear
 ```
 
+### ArUco Visual Docking
+
+<table>
+<tr>
+<td><img src="images/docking.png" alt="ArUco visual docking — camera view" width="100%"></td>
+<td><img src="images/docking1.png" alt="ArUco visual docking — map/TF view" width="100%"></td>
+</tr>
+</table>
+
+`dock` does a two-phase approach: Nav2 drives to the dock's staging pose, then
+`aruco_dock.py` takes over — detects the dock's ArUco marker and visually
+servos in (lateral offset, yaw, distance) until it's centered and at the
+target stand-off distance. Automatically retries (restage or reverse+re-search)
+on a lost/missed marker, up to `max_retries`.
+
+```bash
+# Launch a world with the dock station + marker (hospital world only)
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital rviz:=true
+
+# Dock / undock (single robot — pass '' as the namespace)
+ros2 run diff_drive_robot fleet_manager.py dock '' charging_dock
+ros2 run diff_drive_robot fleet_manager.py undock '' 0.5 0.05
+
+# Run just the visual-approach node directly (skips the Nav2 staging step)
+ros2 run diff_drive_robot aruco_dock.py --ros-args -p dock_name:=charging_dock
+```
+
+Per-dock settings (marker ID/size, target distance, staging pose, retries) live in
+`config/docks.yaml`. Live camera view while docking: `/tmp/aruco_dock_view.jpg`,
+or add an RViz `Image` display on `/camera/image_raw`.
+
 ### GUI
 ```bash
 ros2 run diff_drive_robot fleet_gui.py
@@ -464,6 +509,29 @@ ros2 run diff_drive_robot task_allocator.py  # or fleet_mgmt:=true in multi_robo
 ros2 run diff_drive_robot fleet_manager.py tasks add 2.0 1.5 0 pickup_A
 ```
 Hungarian assignment across idle robots. Pure-Python — no scipy needed.
+
+---
+
+## Open-RMF Traffic Scheduling (experimental)
+
+The fleet-management stack above (task allocator, priority collision avoidance, deadlock recovery) is reactive — robots yield to each other only once a conflict is imminent. `rmf_fleet.launch.py` adds real [Open-RMF](https://osrf.github.io/ros2multirobotbook/) traffic scheduling on the same Nav2 stacks instead: `rmf_traffic_schedule` negotiates conflict-free itineraries across the whole fleet up front, and `rmf_task_dispatcher` assigns tasks to whichever registered robot can do them. Details, architecture, and known gaps: [`concepts.md` §11b](concepts.md#11b-open-rmf-traffic-scheduling-experimental).
+
+Requires (apt, already installed if `ros-humble-rmf-*` shows up in `ros2 pkg list`):
+```bash
+sudo apt install ros-humble-rmf-fleet-adapter-python ros-humble-rmf-traffic-ros2 \
+                  ros-humble-rmf-task-ros2 ros-humble-rmf-task-msgs
+```
+
+```bash
+# 1. Static-map fleet — RMF's nav graph needs fixed map-frame coordinates
+ros2 launch diff_drive_robot multi_robot.launch.py explore:=false robot_count:=2
+
+# 2. RMF traffic scheduling + task dispatch + fleet adapter (separate terminal)
+ros2 launch diff_drive_robot rmf_fleet.launch.py robot_count:=2
+
+# 3. Submit a patrol task and watch the fleet negotiate shared corridor space
+ros2 run diff_drive_robot rmf_submit_task.py patrol room_a room_b --rounds 2
+```
 
 ---
 

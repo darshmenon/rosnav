@@ -3,11 +3,17 @@
   <xacro:arg name="namespace" default=""/>
   <xacro:property name="ns" value="$(arg namespace)"/>
 
-  <!-- RGB camera: front-top of chassis, 60° FOV, 640x480 @ 30 Hz -->
+  <!-- RGB camera: front-top of chassis, 90° FOV, 640x480 @ 30 Hz, 5° downward tilt
+       (widened from 60° — narrower FOV kept losing the ArUco dock marker at
+       moderate bearing during visual-servo docking; wider FOV gives more
+       margin for Nav2's heading error and the search-rotation handoff.
+       The 5° tilt helps see the ground/dock base near the end of approach —
+       kept small since the marker is mounted at camera height and a bigger
+       tilt would push it toward the edge of frame at long range.) -->
   <joint name="camera_joint" type="fixed">
     <parent link="base_link"/>
     <child link="camera_link"/>
-    <origin xyz="0.45 0.0 0.15" rpy="0 0 0"/>
+    <origin xyz="0.45 0.0 0.15" rpy="0 0.0873 0"/>
   </joint>
 
   <link name="camera_link">
@@ -40,7 +46,7 @@
       <topic>${ns + '/camera/image_raw' if ns else 'camera/image_raw'}</topic>
       <gz_frame_id>${ns + '/camera_optical_frame' if ns else 'camera_optical_frame'}</gz_frame_id>
       <camera>
-        <horizontal_fov>1.047</horizontal_fov>
+        <horizontal_fov>1.5708</horizontal_fov>
         <image>
           <width>640</width>
           <height>480</height>

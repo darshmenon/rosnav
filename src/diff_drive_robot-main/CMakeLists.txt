@@ -41,6 +41,7 @@ install(
     scripts/deadlock_recovery.py
     scripts/bt_executor.py
     scripts/multi_coverage.py
+    scripts/aruco_dock.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(

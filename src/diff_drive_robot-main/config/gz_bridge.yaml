@@ -67,3 +67,11 @@
   ros_type_name: "sensor_msgs/msg/CameraInfo"
   gz_type_name: "gz.msgs.CameraInfo"
   direction: GZ_TO_ROS
+
+# Fixed world-overview camera (hospital.world only) — for visually monitoring
+# docking attempts from outside the robot. Not consumed by any nav/perception node.
+- ros_topic_name: "/world_monitor/image_raw"
+  gz_topic_name: "/world_monitor/image_raw"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
