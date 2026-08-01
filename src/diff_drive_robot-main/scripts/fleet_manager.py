@@ -11,6 +11,8 @@ Commands
   teleop <ns>    Interactive keyboard control for one robot
   goto <ns> <location>       Send a navigation goal by location name
   goto <ns> <x> <y> [yaw]   Send a navigation goal by coordinates
+  dock <ns> [location]      Navigate to the charging dock (default: charging_dock)
+  undock <ns> [dist] [speed] Back away from the dock (default: 0.5 m @ 0.05 m/s)
   explore <ns>   Start frontier exploration on a robot
   stop <ns>      Stop navigation / teleop for a robot
   savemap [path] Save the current SLAM map
@@ -34,6 +36,8 @@ Usage
   ros2 run diff_drive_robot fleet_manager.py locations
   ros2 run diff_drive_robot fleet_manager.py goto robot1 room_a
   ros2 run diff_drive_robot fleet_manager.py goto robot2 3.0 -1.0
+  ros2 run diff_drive_robot fleet_manager.py dock robot1
+  ros2 run diff_drive_robot fleet_manager.py undock robot1
   ros2 run diff_drive_robot fleet_manager.py mission robot1 patrol room_a room_b room_c
   ros2 run diff_drive_robot fleet_manager.py mission robot1 patrol 1,2,0 3,4,90
   ros2 run diff_drive_robot fleet_manager.py mission robot1 goto charging_dock
@@ -53,11 +57,12 @@ import tty
 
 import rclpy
 from rclpy.node import Node
+from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import Twist, PoseStamped
 from nav_msgs.msg import OccupancyGrid
 from rclpy.action import ActionClient
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy
-from nav2_msgs.action import NavigateToPose
+from nav2_msgs.action import NavigateToPose, BackUp
 from std_msgs.msg import String
 
 try:
@@ -71,6 +76,11 @@ LINEAR_SPEED  = 0.22
 ANGULAR_SPEED = 1.0
 STOP_TIMEOUT  = 0.3
 PKG = 'diff_drive_robot'
+
+DOCK_LOCATION    = 'charging_dock'
+UNDOCK_DIST      = 0.5   # m — matches recovery_nav.xml's BackUp convention
+UNDOCK_SPEED     = 0.05  # m/s
+UNDOCK_TIMEOUT   = 15.0  # s
 
 
 # ── Location helpers ──────────────────────────────────────────────────────────
@@ -126,6 +136,15 @@ def _discover_robots(node: Node) -> list[str]:
         for t, _ in topics
         if t.count('/') >= 2 and t.endswith('/cmd_vel')
     })
+
+
+def _await(future, timeout: float):
+    """Block on a future without re-spinning the node — a background thread
+    already spins it, and a second concurrent spin can abort the process."""
+    deadline = time.time() + timeout
+    while not future.done() and time.time() < deadline:
+        time.sleep(0.05)
+    return future.result()
 
 
 def _yaw_to_quat(yaw: float) -> tuple[float, float, float, float]:
@@ -269,6 +288,78 @@ class FleetNode(Node):
             print('Goal rejected.')
             return
         print(f'Goal sent to {ns} → ({x:.2f}, {y:.2f}, yaw={math.degrees(yaw):.1f}°)')
+
+    def cmd_dock(self, ns: str, location: str = DOCK_LOCATION):
+        """Navigate to the named dock pose and wait for arrival."""
+        locations = _load_locations()
+        try:
+            x, y, yaw = _resolve_location(location, locations)
+        except KeyError as e:
+            print(e)
+            return
+
+        client = ActionClient(self, NavigateToPose, f'/{ns}/navigate_to_pose' if ns else '/navigate_to_pose')
+        print(f'Docking {ns or "robot"} → {location} ({x:.2f}, {y:.2f}) … ', end='', flush=True)
+        try:
+            if not client.wait_for_server(timeout_sec=5.0):
+                print('timeout! Is Nav2 running for this robot?')
+                return
+
+            goal = NavigateToPose.Goal()
+            goal.pose = PoseStamped()
+            goal.pose.header.frame_id = 'map'
+            goal.pose.header.stamp = self.get_clock().now().to_msg()
+            goal.pose.pose.position.x = x
+            goal.pose.pose.position.y = y
+            ox, oy, oz, ow = _yaw_to_quat(yaw)
+            goal.pose.pose.orientation.x = ox
+            goal.pose.pose.orientation.y = oy
+            goal.pose.pose.orientation.z = oz
+            goal.pose.pose.orientation.w = ow
+
+            future = client.send_goal_async(goal)
+            handle = _await(future, timeout=10.0)
+            if handle is None or not handle.accepted:
+                print('goal rejected.')
+                return
+
+            result_future = handle.get_result_async()
+            result = _await(result_future, timeout=120.0)
+            if result is not None and result.status == GoalStatus.STATUS_SUCCEEDED:
+                print(f'docked at {location}.')
+            else:
+                print('docking failed — goal not reached.')
+        finally:
+            client.destroy()
+
+    def cmd_undock(self, ns: str, dist: float = UNDOCK_DIST, speed: float = UNDOCK_SPEED):
+        """Back away from the dock using the existing Nav2 BackUp behavior."""
+        client = ActionClient(self, BackUp, f'/{ns}/backup' if ns else '/backup')
+        print(f'Undocking {ns or "robot"} — backing up {dist:.2f} m … ', end='', flush=True)
+        try:
+            if not client.wait_for_server(timeout_sec=5.0):
+                print('timeout! Is the Nav2 behavior_server running for this robot?')
+                return
+
+            goal = BackUp.Goal()
+            goal.target.x = dist
+            goal.speed = speed
+            goal.time_allowance.sec = int(UNDOCK_TIMEOUT)
+
+            future = client.send_goal_async(goal)
+            handle = _await(future, timeout=10.0)
+            if handle is None or not handle.accepted:
+                print('goal rejected.')
+                return
+
+            result_future = handle.get_result_async()
+            result = _await(result_future, timeout=UNDOCK_TIMEOUT + 5.0)
+            if result is not None and result.status == GoalStatus.STATUS_SUCCEEDED:
+                print('undocked.')
+            else:
+                print('undock failed.')
+        finally:
+            client.destroy()
 
     def cmd_stop(self, ns: str):
         self._send_vel(ns, 0.0, 0.0)
@@ -610,6 +701,21 @@ def main():
                 print(e)
                 sys.exit(1)
             node.cmd_goto(ns, x, y, yaw)
+
+    elif cmd == 'dock':
+        if len(args) < 2:
+            print('Usage: fleet_manager.py dock <namespace> [location]')
+            sys.exit(1)
+        location = args[2] if len(args) > 2 else DOCK_LOCATION
+        node.cmd_dock(args[1], location)
+
+    elif cmd == 'undock':
+        if len(args) < 2:
+            print('Usage: fleet_manager.py undock <namespace> [dist] [speed]')
+            sys.exit(1)
+        dist  = float(args[2]) if len(args) > 2 else UNDOCK_DIST
+        speed = float(args[3]) if len(args) > 3 else UNDOCK_SPEED
+        node.cmd_undock(args[1], dist, speed)
 
     elif cmd == 'stop':
         if len(args) < 2:

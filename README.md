@@ -414,6 +414,8 @@ ros2 run diff_drive_robot fleet_manager.py status             # SLAM / Nav2 / ma
 ros2 run diff_drive_robot fleet_manager.py add robot3 1.0 2.0 # spawn robot at (1,2)
 ros2 run diff_drive_robot fleet_manager.py teleop robot1      # keyboard drive
 ros2 run diff_drive_robot fleet_manager.py goto robot2 3.0 -1.0
+ros2 run diff_drive_robot fleet_manager.py dock robot1        # navigate to charging_dock
+ros2 run diff_drive_robot fleet_manager.py undock robot1      # back away 0.5 m from the dock
 ros2 run diff_drive_robot fleet_manager.py explore robot2
 ros2 run diff_drive_robot fleet_manager.py savemap src/diff_drive_robot-main/maps/map_hospital
 ros2 run diff_drive_robot fleet_manager.py health             # per-robot health report
