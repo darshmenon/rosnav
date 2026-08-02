@@ -164,10 +164,12 @@ _ABS_TOPIC_KEYS = (
     ('bt_navigator', 'odom_topic'),
 )
 # map_server/docking_server/loopback_simulator aren't part of the per-robot
-# fleet bringup (map_server runs once, globally; the other two aren't wired
-# into nav2_navigation_global_tf.launch.py's lifecycle_nodes).
-# docking_server stays unused until opennav_docking is installed; meanwhile
-# aruco_dock.py publishes /{ns}/detected_dock_pose and does the final approach.
+# fleet bringup (map_server runs once, globally; loopback_simulator isn't
+# used at all). docking_server IS wired for drive_type:=diff (see
+# multi_robot.launch.py's docking_actions, and nav2_multirobot_params.yaml's
+# docking_server: section) — but only the diff-drive template carries tuned
+# dock config, so it's still stripped here for the mecanum/ackermann
+# programmatic-namespacing path, which has no docking_server section at all.
 _UNUSED_MULTIROBOT_NODES = ('map_server', 'docking_server', 'loopback_simulator')
 # Per-robot initial pose is set dynamically (see multi_robot.launch.py); the
 # single-robot file's static default would only be correct for one robot.

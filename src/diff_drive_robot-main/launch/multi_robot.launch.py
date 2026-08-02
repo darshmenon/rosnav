@@ -776,6 +776,35 @@ def _build_all(context, pkg_share: str):
                 'node_names': ['amcl'],
             }])
 
+        # opennav_docking — only the diff-drive template carries a tuned
+        # docking_server: section (see nav2_multirobot_params.yaml); mecanum/
+        # ackermann get no docking_server section, so skip it entirely rather
+        # than starting a node with no dock config. Runs alongside nav2_group
+        # via its own small lifecycle manager, independent of the shared
+        # nav2_navigation_global_tf.launch.py bringup used by every drive_type.
+        docking_actions = []
+        if drive_type == 'diff':
+            docking_node = Node(
+                package='opennav_docking',
+                executable='opennav_docking',
+                name='docking_server',
+                namespace=ns,
+                output='screen',
+                parameters=[_load_node_params(robot_params, 'docking_server'), {'use_sim_time': True}],
+            )
+            docking_lc = Node(
+                package='nav2_lifecycle_manager',
+                executable='lifecycle_manager',
+                name='lifecycle_manager_docking',
+                namespace=ns,
+                output='screen',
+                parameters=[{
+                    'use_sim_time': True,
+                    'autostart': True,
+                    'node_names': ['docking_server'],
+                }])
+            docking_actions = [docking_node, docking_lc]
+
         # Nav2 navigation stack (planner, controller, bt_navigator, …)
         # Pass namespace so RewrittenYaml wraps params under the robot key, making
         # /robot1/controller_server find its parameters. MPPI critics survive yaml.dump.
@@ -824,7 +853,7 @@ def _build_all(context, pkg_share: str):
                 msg=f'[multi_robot] {ns}: SLAM-localized, nav2 t={robot_nav2_delay:.1f}s'))
             per_robot += [
                 *slam_actions,
-                TimerAction(period=robot_nav2_delay, actions=[nav2_group]),
+                TimerAction(period=robot_nav2_delay, actions=[nav2_group, *docking_actions]),
             ]
         elif explore:
             # Other robots in explore mode: need AMCL to localise on SLAM map.
@@ -838,7 +867,7 @@ def _build_all(context, pkg_share: str):
                     amcl_lc,
                 ]),
                 TimerAction(period=initial_pose_delay, actions=[_initial_pose_pub(ns, map_x, map_y, yaw)]),
-                TimerAction(period=amcl_nav2_delay, actions=[nav2_group]),
+                TimerAction(period=amcl_nav2_delay, actions=[nav2_group, *docking_actions]),
             ]
         else:
             # Pre-built map mode: all robots use AMCL
@@ -851,7 +880,7 @@ def _build_all(context, pkg_share: str):
                     amcl_lc,
                 ]),
                 TimerAction(period=static_initial_pose_delay, actions=[_initial_pose_pub(ns, map_x, map_y, yaw)]),
-                TimerAction(period=static_nav2_delay, actions=[nav2_group]),
+                TimerAction(period=static_nav2_delay, actions=[nav2_group, *docking_actions]),
             ]
 
         actions.append(GroupAction(per_robot))

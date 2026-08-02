@@ -388,6 +388,7 @@ Architecture:
 - Battery/task-planner parameters come from `rmf_fleet.yaml`'s `battery:` section — there is no real battery telemetry in this sim yet, so `account_for_drain` is off by default.
 - `dock()` hands off to the configured `docking.plugin` (`aruco` by default → `aruco_dock.py`, or `noop` for bring-up; can be overridden with `--docking` or a custom `module.path:ClassName`). Per-dock marker/staging/charge settings live in `config/docks.yaml`. Visual docking retries with soft reverse and Nav2 restage; `stop()` / interrupt cancel the dock subprocess.
 - `rmf_fleet.launch.py` accepts `rmf_config:=/path/to/my_rmf_fleet.yaml` and `docking:=noop|aruco|module:Class` to override the config file's own settings without editing it.
+- For `drive_type:=diff` (the default), `multi_robot.launch.py` also brings up Nav2's own `opennav_docking` `docking_server` per robot (its own small `lifecycle_manager_docking`), configured via the `docking_server:` section in `nav2_multirobot_params.yaml`. Its `SimpleChargingDock` plugin consumes the same `/{ns}/detected_dock_pose` that `aruco_dock.py` publishes — the two docking paths (RMF's `ArucoDockingPlugin` subprocess flow and Nav2's native `docking_server` action) share one visual-detection source but are otherwise independent. mecanum/ackermann have no tuned `docking_server:` section, so it's skipped for those drive types.
 
 Run:
 
