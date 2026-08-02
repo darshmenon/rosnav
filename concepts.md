@@ -367,15 +367,27 @@ Pieces:
 |---|---|---|
 | `rmf_traffic_schedule` | `rmf_traffic_ros2` | Traffic scheduler — negotiates conflict-free paths across the fleet |
 | `rmf_task_dispatcher` | `rmf_task_ros2` | Assigns submitted tasks to registered robots |
-| `rmf_fleet_adapter.py` | this package | Registers `robot1..robotN` as one RMF fleet; bridges RMF path commands to each robot's existing `/{ns}/navigate_to_pose` |
+| `rmf_fleet_adapter.py` | this package | Thin entry point → `diff_drive_robot.rmf.adapter.main()`. Registers `robot1..robotN` as one RMF fleet; bridges RMF path commands to each robot's existing `/{ns}/navigate_to_pose` |
 | `rmf_submit_task.py` | this package | CLI to submit a patrol task over `/task_api_requests` |
 
+The adapter logic lives in the `diff_drive_robot/rmf/` Python package, not in the script itself:
+
+| Module | Role |
+|---|---|
+| `config.py` | Loads `config/rmf_fleet.yaml` (+ the `locations.yaml` it references) into an `RmfFleetConfig` dataclass |
+| `graph_builder.py` | Builds the RMF nav graph from `locations` + `lanes` in the config — no hardcoded waypoint table |
+| `robot_command.py` | `Nav2RobotCommand` — the `RobotCommandHandle` implementation bridging RMF to Nav2 |
+| `docking.py` | Pluggable `DockingPlugin` interface (`aruco`, `noop`, or `module.path:ClassName`) |
+| `adapter.py` | Assembles the above and runs the adapter (`run_adapter()` / `main()`) |
+
 Architecture:
-- The nav graph is built at startup from `config/locations.yaml` — one RMF waypoint per named location, connected in a star topology through `hallway` (`WAYPOINT_LANES` in `rmf_fleet_adapter.py`). Edit that table (or `locations.yaml`) if a world's rooms/corridors differ.
+- Everything customizable lives in `config/rmf_fleet.yaml` (+ `config/locations.yaml`) — no Python edits needed for a new map's rooms/corridors, lane topology, vehicle limits, battery placeholders, or task-acceptance policy.
+- The nav graph is built at startup from `config/locations.yaml` (one RMF waypoint per named location) connected per the `lanes:` list in `rmf_fleet.yaml` (star topology through `hallway` by default).
 - `Nav2RobotCommand` (one per robot namespace) turns RMF's `follow_new_path` waypoint sequence into ordinary `NavigateToPose` action calls against that robot's Nav2 stack, and reports live position back to RMF from `/{ns}/amcl_pose`.
 - Because the graph is anchored to fixed map-frame coordinates, this only works with `multi_robot.launch.py explore:=false` (static map + AMCL) — SLAM/explore mode has no fixed map for the graph to sit on.
-- Battery/task-planner parameters are placeholders (`BATTERY_*` constants) — there is no real battery telemetry in this sim yet, so `account_for_battery_drain` is off.
-- `dock()` hands off to the configured docking plugin (`aruco` by default → `aruco_dock.py`, or `noop` for bring-up). Per-dock marker/staging/charge settings live in `config/docks.yaml`. Visual docking retries with soft reverse and Nav2 restage; `stop()` / interrupt cancel the dock subprocess.
+- Battery/task-planner parameters come from `rmf_fleet.yaml`'s `battery:` section — there is no real battery telemetry in this sim yet, so `account_for_drain` is off by default.
+- `dock()` hands off to the configured `docking.plugin` (`aruco` by default → `aruco_dock.py`, or `noop` for bring-up; can be overridden with `--docking` or a custom `module.path:ClassName`). Per-dock marker/staging/charge settings live in `config/docks.yaml`. Visual docking retries with soft reverse and Nav2 restage; `stop()` / interrupt cancel the dock subprocess.
+- `rmf_fleet.launch.py` accepts `rmf_config:=/path/to/my_rmf_fleet.yaml` and `docking:=noop|aruco|module:Class` to override the config file's own settings without editing it.
 
 Run:
 
@@ -390,7 +402,7 @@ ros2 launch diff_drive_robot rmf_fleet.launch.py robot_count:=2
 ros2 run diff_drive_robot rmf_submit_task.py patrol room_a room_b --rounds 2
 ```
 
-Known gap: the exact JSON shape `rmf_task_dispatcher` expects on `/task_api_requests` follows the `rmf_api_msgs` task-request schema, which isn't vendored as a local file in this ROS distro's apt packages — `rmf_submit_task.py`'s payload matches what RMF's own demos publish, but is the one part of this integration not yet confirmed against a live dispatcher. If it's rejected, `ros2 topic echo /task_api_responses` while resubmitting will show why.
+`rmf_submit_task.py`'s payload shape (envelope + `task_request` fields) is verified against the upstream `open-rmf/rmf_api_msgs` JSON schemas and `open-rmf/rmf_demos`'s `dispatch_patrol.py` reference implementation — not yet exercised against a live `rmf_task_dispatcher` in this repo, but the shape itself is confirmed correct. If a live dispatcher still rejects it, `ros2 topic echo /task_api_responses` while resubmitting will show why.
 
 ---
 

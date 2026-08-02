@@ -358,26 +358,26 @@ docking_server:
     simple_charging_dock:
       plugin: 'opennav_docking::SimpleChargingDock'
       docking_threshold: 0.05
-      staging_x_offset: -0.7
+      staging_x_offset: -1.14
       use_external_detection_pose: true
       use_battery_status: false # true
       use_stall_detection: false # true
 
       external_detection_timeout: 1.0
-      external_detection_translation_x: -0.18
+      external_detection_translation_x: -0.40
       external_detection_translation_y: 0.0
       external_detection_rotation_roll: -1.57
       external_detection_rotation_pitch: -1.57
       external_detection_rotation_yaw: 0.0
       filter_coef: 0.1
 
-    # Dock instances
-    # The following example illustrates configuring dock instances.
-    # docks: ['home_dock']  # Input your docks here
-    # home_dock:
-    #   type: 'simple_charging_dock'
-    #   frame: map
-    #   pose: [0.0, 0.0, 0.0]
+    # Dock instances — hospital.world ArUco marker at ~(-2.14, 0); staging at charging_dock.
+    # detected_dock_pose is published by aruco_dock.py for SimpleChargingDock.
+    docks: ['charging_dock']
+    charging_dock:
+      type: 'simple_charging_dock'
+      frame: map
+      pose: [-2.14, 0.0, 3.14159]
 
     controller:
       k_phi: 3.0

@@ -26,10 +26,21 @@
   <depend>tf2_ros</depend>
   <depend>tf2_geometry_msgs</depend>
   <exec_depend>laser_filters</exec_depend>
+
+  <!-- Visual docking (aruco_dock.py) -->
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
   
   <!-- Navigation dependencies -->
   <depend>nav2_msgs</depend>
   <depend>nav2_common</depend>
+
+  <!-- Open-RMF full traffic scheduling (rmf_fleet_adapter.py / rmf_fleet.launch.py) -->
+  <exec_depend>rmf_fleet_adapter_python</exec_depend>
+  <exec_depend>rmf_traffic_ros2</exec_depend>
+  <exec_depend>rmf_task_ros2</exec_depend>
+  <exec_depend>rmf_task_msgs</exec_depend>
+  <exec_depend>rmf_fleet_msgs</exec_depend>
 
   <!-- Python runtime dependencies -->
   <exec_depend>python3-yaml</exec_depend>

@@ -6,6 +6,9 @@ log/
 .slam_nav_pid
 *.runtime.log
 
+# rmf_traffic_schedule runtime state (regenerated every run)
+.rmf_schedule_node.yaml
+
 # Generated maps (keep folder + README only)
 src/diff_drive_robot-main/maps/*.pgm
 src/diff_drive_robot-main/maps/*.yaml

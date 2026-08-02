@@ -53,12 +53,21 @@ Usage
   # Spawn more robots without editing this file
   ros2 launch diff_drive_robot multi_robot.launch.py robot_count:=4 robot_layout:=grid
 
+  # Fleet of mecanum (holonomic) robots instead of diff-drive
+  ros2 launch diff_drive_robot multi_robot.launch.py drive_type:=mecanum
+
+  # Same drive_type/controller options as slam_nav.launch.py (single robot),
+  # applied fleet-wide — diff keeps its hand-tuned fleet nav2 params; mecanum/
+  # ackermann reuse and namespace the single-robot nav2_params_*.yaml.
+  ros2 launch diff_drive_robot multi_robot.launch.py drive_type:=ackermann
+
   # Send a nav goal to a specific robot
   ros2 action send_goal /robot1/navigate_to_pose nav2_msgs/action/NavigateToPose \\
     "{pose: {header: {frame_id: map}, pose: {position: {x: 3.0, y: 1.0}}}}"
 """
 
 import os
+import sys
 import tempfile
 import json
 import math
@@ -67,13 +76,10 @@ import xml.etree.ElementTree as ET
 
 from ament_index_python.packages import get_package_share_directory
 
-ROS_DISTRO = os.environ.get('ROS_DISTRO', 'humble')
-# Behaviour plugin format differs between distros (/ vs ::)
-_MR_PARAMS = (
-    'nav2_multirobot_params_jazzy.yaml'
-    if ROS_DISTRO == 'jazzy'
-    else 'nav2_multirobot_params.yaml'
-)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _common  # noqa: E402  (shared with slam_nav.launch.py)
+
+ROS_DISTRO = _common.ROS_DISTRO
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument, ExecuteProcess, GroupAction, IncludeLaunchDescription,
@@ -88,8 +94,7 @@ from launch_ros.actions import Node
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
-def _truthy(value: str) -> bool:
-    return value.strip().lower() in ('true', '1', 'yes')
+_truthy = _common.truthy
 
 
 def _resolve_robots(
@@ -343,17 +348,51 @@ def _point_in_box(x: float, y: float, box: dict, margin: float) -> bool:
             abs(ly) <= box['sy'] / 2.0 + margin)
 
 
+def _multirobot_template_yaml(pkg_share: str, controller: str, drive_type: str) -> str:
+    """Base nav2 params file for the fleet, per drive_type.
+
+    diff (the default) keeps using the existing hand-tuned fleet templates —
+    no behaviour change for existing fleets. mecanum/ackermann have no such
+    hand-tuned template, so the matching single-robot nav2_params_*.yaml (also
+    used by slam_nav.launch.py) is namespaced programmatically at launch time
+    instead — see _make_robot_params / _common.namespace_nav2_params.
+    """
+    if drive_type == 'diff':
+        fname = 'nav2_multirobot_params_jazzy.yaml' if ROS_DISTRO == 'jazzy' else 'nav2_multirobot_params.yaml'
+    else:
+        fname = _common.nav2_params_filename(controller, drive_type, ROS_DISTRO)
+    return os.path.join(pkg_share, 'config', fname)
+
+
 def _make_robot_params(
     template_path: str,
     robot_ns: str,
+    pkg_share: str,
     initial_pose: dict | None = None,
     nav_map_topic: str = '/map',
 ) -> str:
-    """Substitute ROBOT_NS in the template YAML and return a temp-file path."""
+    """Return a namespaced-for-this-robot copy of a nav2 params file as a temp-file path.
+
+    Two kinds of source files are supported:
+      - Hand-tuned fleet templates (nav2_multirobot_params*.yaml) already contain
+        a literal "ROBOT_NS" placeholder in their text; substituted directly.
+      - Plain single-robot nav2_params_*.yaml files (used for drive types that
+        don't have a hand-tuned fleet template, e.g. mecanum/ackermann) are
+        namespaced programmatically via _common.namespace_nav2_params — one
+        source of truth per drive type, shared with slam_nav.launch.py.
+    """
     with open(template_path) as f:
         content = f.read()
-    content = content.replace('ROBOT_NS', robot_ns)
-    params = yaml.safe_load(content)
+    if 'ROBOT_NS' in content:
+        content = content.replace('ROBOT_NS', robot_ns)
+        params = yaml.safe_load(content)
+    else:
+        params = _common.namespace_nav2_params(yaml.safe_load(content), robot_ns)
+
+    bt_params = params.get('bt_navigator', {}).get('ros__parameters', {})
+    if 'default_nav_to_pose_bt_xml' in bt_params:
+        bt_params['default_nav_to_pose_bt_xml'] = bt_params['default_nav_to_pose_bt_xml'].replace(
+            'replace_with_pkg_share', pkg_share.replace('\\', '/'))
     if initial_pose is not None:
         amcl_params = params.setdefault('amcl', {}).setdefault('ros__parameters', {})
         amcl_params['set_initial_pose'] = True
@@ -424,21 +463,7 @@ def _resolve_map_file(map_arg: str, world_path: str, pkg_share: str) -> str:
     return candidates[0]
 
 
-def _resolve_gazebo_world_name(world_path: str) -> str:
-    fallback = os.path.splitext(os.path.basename(world_path))[0]
-    try:
-        root = ET.parse(os.path.expanduser(world_path)).getroot()
-    except (ET.ParseError, OSError):
-        return fallback
-
-    if root.tag == 'world' and root.get('name'):
-        return root.get('name')
-
-    world = root.find('world')
-    if world is not None and world.get('name'):
-        return world.get('name')
-
-    return fallback
+_resolve_gazebo_world_name = _common.resolve_gazebo_world_name
 
 
 def _load_node_params(params_path: str, node_name: str) -> dict:
@@ -524,11 +549,13 @@ def _build_all(context, pkg_share: str):
     robot_start_stagger = float(LaunchConfiguration('robot_start_stagger').perform(context).strip())
     amcl_start_delay = float(LaunchConfiguration('amcl_start_delay').perform(context).strip())
     robots_json = LaunchConfiguration('robots_json').perform(context).strip()
+    drive_type = LaunchConfiguration('drive_type').perform(context).strip().lower()
+    controller = LaunchConfiguration('controller').perform(context).strip().lower()
     if slam_mode not in ('single', 'multi'):
         raise ValueError('slam_mode must be one of: single, multi')
 
     slam_pkg     = get_package_share_directory('slam_toolbox')
-    ros_gz       = get_package_share_directory('ros_gz_sim')
+    urdf_filename = _common.urdf_filename_for(drive_type)
 
     # Resolve world file
     if os.path.isabs(world_arg) and os.path.isfile(world_arg):
@@ -542,7 +569,7 @@ def _build_all(context, pkg_share: str):
     world_stem   = os.path.splitext(os.path.basename(world_path))[0]
     gazebo_world_name = _resolve_gazebo_world_name(world_path)
     map_prefix   = os.path.join(pkg_share, 'maps', f'map_{world_stem}')
-    template_yaml = os.path.join(pkg_share, 'config', _MR_PARAMS)
+    template_yaml = _multirobot_template_yaml(pkg_share, controller, drive_type)
     slam_template_yaml = os.path.join(
         pkg_share, 'config',
         'mapper_params_per_robot.yaml' if slam_mode == 'multi'
@@ -560,23 +587,17 @@ def _build_all(context, pkg_share: str):
         LogInfo(msg=f'[multi_robot] spawn poses = {[(r["name"], r["x"], r["y"]) for r in robots]}'),
         LogInfo(msg=f'[multi_robot] explore = {explore}'),
         LogInfo(msg=f'[multi_robot] slam_mode = {slam_mode}'),
+        LogInfo(msg=f'[multi_robot] drive_type = {drive_type}, controller = {controller}, urdf = {urdf_filename}'),
+        LogInfo(msg=f'[multi_robot] nav2 template = {os.path.basename(template_yaml)} '
+                    f'({"hand-tuned fleet template" if "ROBOT_NS" in open(template_yaml).read() else "single-robot params, namespaced at launch"})'),
     ]
     for msg in spawn_adjustments:
         actions.append(LogInfo(msg=f'[multi_robot] adjusted spawn: {msg}'))
 
     # ── Gazebo server + GUI ───────────────────────────────────────────────────
-    actions.append(IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(ros_gz, 'launch', 'gz_sim.launch.py')),
-        launch_arguments={
-            'gz_args': f'-r -s -v1 {world_path}',
-            'on_exit_shutdown': 'true',
-        }.items()))
+    actions.append(_common.gazebo_server_action(world_path))
     if not headless:
-        actions.append(IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(ros_gz, 'launch', 'gz_sim.launch.py')),
-            launch_arguments={'gz_args': '-g'}.items()))
+        actions.append(_common.gazebo_client_action())
 
     # Bridge the Gazebo clock exactly once.
     # Multiple /clock bridges can race and produce backward time jumps.
@@ -696,30 +717,17 @@ def _build_all(context, pkg_share: str):
                 'yaw': float(yaw),
             }
         nav_map_topic = '/map_merged' if explore and slam_mode == 'multi' else '/map'
-        robot_params = _make_robot_params(template_yaml, ns, initial_pose, nav_map_topic)
+        robot_params = _make_robot_params(template_yaml, ns, pkg_share, initial_pose, nav_map_topic)
+        actions.append(LogInfo(msg=f'[multi_robot] {ns}: nav2 params -> {robot_params} (map_topic={nav_map_topic})'))
 
         # Robot State Publisher — frame_prefix + namespace arg makes TF frames unique per robot
-        rsp = IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(pkg_share, 'launch', 'rsp.launch.py')),
-            launch_arguments={
-                'use_sim_time': 'true',
-                'urdf': os.path.join(pkg_share, 'urdf', 'robot.urdf.xacro'),
-                'frame_prefix': f'{ns}/',
-                'namespace': ns,
-            }.items())
+        rsp = _common.rsp_include(
+            pkg_share, os.path.join(pkg_share, 'urdf', urdf_filename),
+            frame_prefix=f'{ns}/', namespace=ns)
 
         # Spawn in Gazebo
-        spawn = Node(
-            package='ros_gz_sim',
-            executable='create',
-            arguments=[
-                '-world', gazebo_world_name,
-                '-topic', f'/{ns}/robot_description',
-                '-name', ns,
-                '-x', x, '-y', y, '-z', z, '-Y', yaw,
-            ],
-            output='screen')
+        spawn = _common.spawn_robot_node(
+            gazebo_world_name, f'/{ns}/robot_description', ns, x, y, z, yaw)
 
         # Gazebo ↔ ROS bridge (2D lidar, odom, cmd_vel)
         # TF is handled by dedicated bridge nodes below to avoid the /{ns}/tf empty-topic problem.
@@ -738,13 +746,7 @@ def _build_all(context, pkg_share: str):
             remappings=[(f'/{ns}/scan', f'/{ns}/scan_raw')],
             output='screen')
 
-        laser_filter = Node(
-            package='laser_filters',
-            executable='scan_to_scan_filter_chain',
-            namespace=ns,
-            parameters=[os.path.join(pkg_share, 'config', 'laser_filters.yaml')],
-            remappings=[('scan', 'scan_raw'), ('scan_filtered', 'scan')],
-            output='screen')
+        laser_filter = _common.laser_filter_node(pkg_share, namespace=ns)
 
         # AMCL — localises against /map (shared).
         # Skipped for robot1 in SLAM mode (SLAM provides the map→odom TF).
@@ -988,6 +990,17 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'fleet_mgmt', default_value='false',
             description='true = start priority collision avoidance + deadlock recovery nodes'),
+        DeclareLaunchArgument(
+            'drive_type', default_value='diff',
+            description='Fleet-wide drive base: "diff" (default, hand-tuned fleet nav2 params), '
+                        '"mecanum" (holonomic) or "ackermann" (car-like steering). '
+                        'mecanum/ackermann reuse the single-robot nav2_params_*.yaml, namespaced '
+                        'per-robot at launch time — see slam_nav.launch.py for the same drive types.'),
+        DeclareLaunchArgument(
+            'controller', default_value='dwb',
+            description='Local controller for drive_type:=mecanum: "dwb" (default) or "mppi". '
+                        'Humble only — ignored on Jazzy. Ignored for drive_type:=diff (fleet always '
+                        'uses its hand-tuned MPPI template) and drive_type:=ackermann (always MPPI).'),
         DeclareLaunchArgument(
             'robot_count', default_value='2',
             description='Number of generated robots when robots_json is empty'),

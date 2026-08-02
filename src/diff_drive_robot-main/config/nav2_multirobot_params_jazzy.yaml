@@ -60,6 +60,8 @@ bt_navigator:
       plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
     navigate_through_poses:
       plugin: "nav2_bt_navigator::NavigateThroughPosesNavigator"
+    # Custom BT — path is substituted at launch time by multi_robot.launch.py.
+    default_nav_to_pose_bt_xml: "replace_with_pkg_share/config/bt/navigate_w_recovery.xml"
     error_code_names:
       - compute_path_error_code
       - follow_path_error_code

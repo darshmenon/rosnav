@@ -13,7 +13,7 @@ When slam:=false the launch uses map_<world_name>.yaml from the maps/ directory.
 """
 
 import os
-import xml.etree.ElementTree as ET
+import sys
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -27,45 +27,19 @@ from launch.actions import (
 )
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-ROS_DISTRO = os.environ.get('ROS_DISTRO', 'humble')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _common  # noqa: E402  (shared with multi_robot.launch.py)
 
-
-def _nav2_params_filename(controller: str, drive_type: str) -> str:
-    if drive_type == 'ackermann':
-        return 'nav2_params_ackermann.yaml'
-    # Jazzy's params file already defaults to MPPI; the dwb/mppi switch only
-    # applies on Humble, which defaults to DWB.
-    if ROS_DISTRO == 'jazzy':
-        return 'nav2_params_mecanum_jazzy.yaml' if drive_type == 'mecanum' else 'nav2_params_jazzy.yaml'
-    if drive_type == 'mecanum':
-        return 'nav2_params_mecanum.yaml'
-    return 'nav2_params_mppi.yaml' if controller == 'mppi' else 'nav2_params.yaml'
+ROS_DISTRO = _common.ROS_DISTRO
 
 
 def _resolve_world_name(raw_name: str, world_path: str) -> str:
     if raw_name:
         return os.path.splitext(os.path.basename(raw_name))[0]
     return os.path.splitext(os.path.basename(world_path))[0]
-
-
-def _resolve_gazebo_world_name(world_path: str) -> str:
-    fallback = os.path.splitext(os.path.basename(world_path))[0]
-    try:
-        root = ET.parse(os.path.expanduser(world_path)).getroot()
-    except (ET.ParseError, OSError):
-        return fallback
-
-    if root.tag == 'world' and root.get('name'):
-        return root.get('name')
-
-    world = root.find('world')
-    if world is not None and world.get('name'):
-        return world.get('name')
-
-    return fallback
 
 
 def _resolve_world_path(world_name_arg: str, world_arg: str, pkg_share: str) -> str:
@@ -111,58 +85,23 @@ def _build_runtime_actions(context, pkg_share: str):
 
     world_path = _resolve_world_path(world_name_arg, world_arg, pkg_share)
     world_name = _resolve_world_name(world_name_arg, world_path)
-    gazebo_world_name = _resolve_gazebo_world_name(world_path)
+    gazebo_world_name = _common.resolve_gazebo_world_name(world_path)
     map_prefix = _resolve_map_prefix(
         LaunchConfiguration('map_prefix').perform(context).strip(), world_name, pkg_share)
     map_yaml = _resolve_map_yaml(world_name, pkg_share)
 
-    urdf_filename = PythonExpression([
-        "'robot_mecanum.urdf.xacro' if '", drive_type, "' == 'mecanum' "
-        "else 'robot_ackermann.urdf.xacro' if '", drive_type, "' == 'ackermann' "
-        "else 'robot.urdf.xacro'"
-    ])
-    rsp = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(os.path.join(pkg_share, 'launch', 'rsp.launch.py')),
-        launch_arguments={
-            'use_sim_time': 'true',
-            'urdf': PathJoinSubstitution([pkg_share, 'urdf', urdf_filename]),
-        }.items(),
-    )
+    urdf_filename = _common.urdf_filename_for(drive_type)
+    rsp = _common.rsp_include(pkg_share, os.path.join(pkg_share, 'urdf', urdf_filename))
 
-    gazebo_server = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(get_package_share_directory('ros_gz_sim'), 'launch', 'gz_sim.launch.py')
-        ),
-        launch_arguments={
-            'gz_args': f'-r -s -v1 {world_path}',
-            'on_exit_shutdown': 'true',
-        }.items(),
-    )
+    gazebo_server = _common.gazebo_server_action(world_path)
 
     gazebo_client = GroupAction(
         condition=UnlessCondition(headless),
-        actions=[IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(get_package_share_directory('ros_gz_sim'), 'launch', 'gz_sim.launch.py')
-            ),
-            launch_arguments={'gz_args': '-g'}.items(),
-        )],
+        actions=[_common.gazebo_client_action()],
     )
 
-    spawn_robot = Node(
-        package='ros_gz_sim',
-        executable='create',
-        arguments=[
-            '-world', gazebo_world_name,
-            '-topic', 'robot_description',
-            '-name', robot_name,
-            '-x', spawn_x,
-            '-y', spawn_y,
-            '-z', spawn_z,
-            '-Y', spawn_yaw,
-        ],
-        output='screen',
-    )
+    spawn_robot = _common.spawn_robot_node(
+        gazebo_world_name, 'robot_description', robot_name, spawn_x, spawn_y, spawn_z, spawn_yaw)
 
     ros_gz_bridge = Node(
         package='ros_gz_bridge',
@@ -176,21 +115,12 @@ def _build_runtime_actions(context, pkg_share: str):
 
     # Lidar filter chain: raw Gazebo scan (/scan_raw) in, cleaned /scan out.
     # SLAM Toolbox, AMCL, and the costmaps below never see the unfiltered feed.
-    laser_filter = Node(
-        package='laser_filters',
-        executable='scan_to_scan_filter_chain',
-        parameters=[os.path.join(pkg_share, 'config', 'laser_filters.yaml')],
-        remappings=[('scan', 'scan_raw'), ('scan_filtered', 'scan')],
-    )
+    laser_filter = _common.laser_filter_node(pkg_share)
 
     # Patch the BT path placeholder before passing params to nav2.
-    import re as _re
-    _raw_params = os.path.join(pkg_share, 'config', _nav2_params_filename(controller, drive_type))
-    with open(_raw_params) as _f:
-        _patched = _re.sub(r'replace_with_pkg_share', pkg_share.replace('\\', '/'), _f.read())
-    _params_file = f'/tmp/diff_drive_nav2_patched_{os.getpid()}.yaml'
-    with open(_params_file, 'w') as _f:
-        _f.write(_patched)
+    nav2_params_name = _common.nav2_params_filename(controller, drive_type, ROS_DISTRO)
+    _raw_params = os.path.join(pkg_share, 'config', nav2_params_name)
+    _params_file = _common.patch_pkg_share_placeholder(_raw_params, pkg_share)
 
     if use_slam:
         slam_or_localization = TimerAction(
@@ -328,6 +258,7 @@ def _build_runtime_actions(context, pkg_share: str):
         LogInfo(msg=f'[slam_nav.launch] mode={mode}, ROS_DISTRO={ROS_DISTRO}, controller={controller}, drive_type={drive_type}'),
         LogInfo(msg=f'[slam_nav.launch] world={world_path}'),
         LogInfo(msg=f'[slam_nav.launch] robot_name={robot_name.perform(context)}'),
+        LogInfo(msg=f'[slam_nav.launch] urdf={urdf_filename}, nav2_params={nav2_params_name}'),
         rsp,
         gazebo_server,
         gazebo_client,

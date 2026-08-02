@@ -7,9 +7,13 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
+find_package(ament_cmake_python REQUIRED)
 # uncomment the following section in order to fill in
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)
+
+ament_python_install_package(${PROJECT_NAME})
+
 install(
   PROGRAMS
     scripts/navigation.py
@@ -42,6 +46,8 @@ install(
     scripts/bt_executor.py
     scripts/multi_coverage.py
     scripts/aruco_dock.py
+    scripts/rmf_fleet_adapter.py
+    scripts/rmf_submit_task.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(
