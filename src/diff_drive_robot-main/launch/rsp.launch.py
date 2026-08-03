@@ -19,6 +19,7 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
     frame_prefix = LaunchConfiguration('frame_prefix')
     namespace = LaunchConfiguration('namespace')
+    lidar_type = LaunchConfiguration('lidar_type')
 
     # Declare launch arguments
     declare_use_sim_time = DeclareLaunchArgument(
@@ -37,6 +38,11 @@ def generate_launch_description():
             name='namespace', default_value='',
             description='Robot namespace passed to xacro for TF frame IDs (e.g. "robot1")')
 
+    declare_lidar_type = DeclareLaunchArgument(
+            name='lidar_type', default_value='2d',
+            description='"2d" (LaserScan on scan) or "3d" (PointCloud2 on points) — '
+                        'only robot.urdf.xacro (drive_type:=diff) supports 3d')
+
     # Create a robot state publisher
     robot_state_publisher = Node(
         package='robot_state_publisher',
@@ -46,7 +52,8 @@ def generate_launch_description():
         parameters=[{
             'use_sim_time': use_sim_time,
             'robot_description': ParameterValue(
-                Command(['xacro ', urdf, ' namespace:=', namespace]),
+                Command(['xacro ', urdf, ' namespace:=', namespace,
+                         ' lidar_type:=', lidar_type]),
                 value_type=str),
             'frame_prefix': frame_prefix,
         }]

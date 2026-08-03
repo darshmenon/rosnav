@@ -82,6 +82,11 @@ def _build_runtime_actions(context, pkg_share: str):
     spawn_yaw = LaunchConfiguration('spawn_yaw')
     controller = LaunchConfiguration('controller').perform(context).strip().lower()
     drive_type = LaunchConfiguration('drive_type').perform(context).strip().lower()
+    lidar_type = LaunchConfiguration('lidar_type').perform(context).strip().lower()
+    if lidar_type == '3d' and drive_type != 'diff':
+        print(f'[slam_nav] lidar_type=3d only supported for drive_type:=diff '
+              f'(got drive_type:={drive_type}) — falling back to 2d')
+        lidar_type = '2d'
 
     world_path = _resolve_world_path(world_name_arg, world_arg, pkg_share)
     world_name = _resolve_world_name(world_name_arg, world_path)
@@ -91,7 +96,8 @@ def _build_runtime_actions(context, pkg_share: str):
     map_yaml = _resolve_map_yaml(world_name, pkg_share)
 
     urdf_filename = _common.urdf_filename_for(drive_type)
-    rsp = _common.rsp_include(pkg_share, os.path.join(pkg_share, 'urdf', urdf_filename))
+    rsp = _common.rsp_include(
+        pkg_share, os.path.join(pkg_share, 'urdf', urdf_filename), lidar_type=lidar_type)
 
     gazebo_server = _common.gazebo_server_action(world_path)
 
@@ -318,5 +324,10 @@ def generate_launch_description():
             name='drive_type',
             default_value='diff',
             description='Drive base: "diff" (default), "mecanum" (holonomic, 4 driven wheels), or "ackermann" (car-like front steering). Ackermann always uses MPPI params.'),
+        DeclareLaunchArgument(
+            name='lidar_type',
+            default_value='2d',
+            description='"2d" (default, LaserScan on /scan) or "3d" (16-channel PointCloud2 on '
+                        '/points, gpu_lidar). Only supported for drive_type:=diff.'),
         OpaqueFunction(function=_build_runtime_actions, args=[pkg_share]),
     ])

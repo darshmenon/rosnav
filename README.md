@@ -477,6 +477,8 @@ Per-dock settings (marker ID/size, target distance, staging pose, retries) live 
 `config/docks.yaml`. Live camera view while docking: `/tmp/aruco_dock_view.jpg`,
 or add an RViz `Image` display on `/camera/image_raw`.
 
+**Native Nav2 docking (multi-robot, `drive_type:=diff`):** in addition to the `fleet_manager.py dock`/ArUco flow above, `multi_robot.launch.py` also brings up Nav2's own `opennav_docking` `docking_server` per robot (own lifecycle manager, `/robotN/dock_robot` and `/robotN/undock_robot` actions), tuned via the `docking_server:` section in `nav2_multirobot_params.yaml`. It consumes the same `/robotN/detected_dock_pose` that `aruco_dock.py` publishes, so the two docking paths share one visual-detection source. Requires `sudo apt install ros-$ROS_DISTRO-opennav-docking`; skipped automatically for `mecanum`/`ackermann` (no tuned dock pose for those bases yet).
+
 ### GUI
 ```bash
 ros2 run diff_drive_robot fleet_gui.py
@@ -535,21 +537,23 @@ ros2 run diff_drive_robot rmf_submit_task.py patrol room_a room_b --rounds 2
 
 ---
 
-## 3D LiDAR (optional)
+## 3D LiDAR (optional, drive_type:=diff only)
 
-The URDF supports both 2D and 3D LiDAR. Default is 2D (`lidar.xacro`).
-
-To switch to 3D:
-1. Edit `urdf/robot.urdf.xacro` — replace `lidar.xacro` with `lidar3d.xacro`
-2. Convert PointCloud2 → LaserScan for Nav2:
+The URDF supports both 2D and 3D LiDAR, selected with a launch argument — no manual xacro editing needed:
 
 ```bash
-sudo apt install ros-$ROS_DISTRO-pointcloud-to-laserscan
-ros2 run pointcloud_to_laserscan pointcloud_to_laserscan_node \
-    --ros-args -r cloud_in:=/points -r scan:=/scan \
-    -p min_height:=0.1 -p max_height:=1.0 \
-    -p angle_min:=-1.57 -p angle_max:=1.57
+# Single robot
+ros2 launch diff_drive_robot slam_nav.launch.py lidar_type:=3d
+
+# Fleet — every robot gets 3D lidar
+ros2 launch diff_drive_robot multi_robot.launch.py lidar_type:=3d
 ```
+
+`lidar_type:=2d` (default) publishes `sensor_msgs/msg/LaserScan` on `/scan` (`/{ns}/scan` in a fleet). `lidar_type:=3d` swaps in a 16-channel `gpu_lidar` (VLP-16 style) publishing `sensor_msgs/msg/PointCloud2` on `/points` (`/{ns}/points`) instead — mecanum/ackermann ignore this arg and always use 2D.
+
+Both costmaps (local + global) already list a `points` observation source alongside `scan` — Nav2 marks/clears obstacles from whichever one is actually publishing, so `lidar_type:=3d` feeds path planning directly, no separate config needed. Verified end-to-end: real 16×1800 `PointCloud2` data flows on `/points` (and per-robot `/{ns}/points` in a fleet) with correct `frame_id`, and the local costmap marks occupied cells from it with `/scan` absent.
+
+> gz-sim's `gpu_lidar` publishes `gz.msgs.LaserScan` on the sensor's own topic and the real `gz.msgs.PointCloudPacked` on a nested `<topic>/points` — the bridge config bridges that nested topic and (in the fleet launch) remaps it down to a clean `/{ns}/points`.
 
 ---
 
@@ -565,8 +569,9 @@ ros2 run pointcloud_to_laserscan pointcloud_to_laserscan_node \
 | `hospital` | 26×18 m | Central corridor, north/south patient bays, nurse station, storage |
 | `office` | 22×~12 m | Central corridor, lobby, 2 meeting rooms, kitchen |
 | `empty` | 100×100 m | Flat open ground plane, no obstacles — baseline/smoke-test world |
+| `multi_terrain` | ~25 m long | Flat spawn area, then (along +X) a 12°/22° ramp pair, a 6-step staircase, a rough bump patch, and jittered discrete obstacles — for perception/costmap stress-testing. Adapted from a quadruped RL terrain course; a wheeled base won't climb the staircase, but it's still useful for nav/perception around obstacles it can't cross |
 
-All worlds use SDF primitives only — no external model downloads, instant load. All 8 work with every drive type (`diff`, `mecanum`, `ackermann` — see [Mode 7](#mode-7--holonomic-mecanum-drive) and [Mode 9](#mode-9--ackermann-car-like-drive)) and either controller (`controller:=dwb|mppi`).
+All worlds use SDF primitives only — no external model downloads, instant load. All 9 work with every drive type (`diff`, `mecanum`, `ackermann` — see [Mode 7](#mode-7--holonomic-mecanum-drive) and [Mode 9](#mode-9--ackermann-car-like-drive)) and either controller (`controller:=dwb|mppi`). `multi_terrain` has no pre-built map yet — launch with `explore:=true` (SLAM mode).
 
 ```bash
 # Single robot, any world

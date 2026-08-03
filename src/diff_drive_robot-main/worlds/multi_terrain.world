@@ -1,0 +1,416 @@
+<?xml version="1.0" ?>
+<sdf version="1.8">
+  <world name="multi_terrain">
+
+    <physics name='1ms' type='ignored'>
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system"
+            name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system"
+            name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system"
+            name="ignition::gazebo::systems::SceneBroadcaster"/>
+    <plugin filename="ignition-gazebo-sensors-system"
+            name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="ignition-gazebo-contact-system"
+            name="ignition::gazebo::systems::Contact"/>
+    <plugin filename="ignition-gazebo-imu-system"
+            name="ignition::gazebo::systems::Imu"/>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <!-- Flat spawn/reset area at the origin. stand_go2_gz.py hardcodes the
+         fall-recovery reset pose to (0,0,0.32) in this world, so the origin
+         must stay flat ground. All terrain features below are offset along
+         +X, away from the origin. -->
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>200 200</size></plane></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>200 200</size></plane></geometry>
+          <material><ambient>0.8 0.8 0.8 1</ambient><diffuse>0.8 0.8 0.8 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Ramps (x ~ 2.5-5.5m): two lanes, 12 deg and 22 deg, rising toward +X -->
+    <model name="ramp_12deg">
+      <static>true</static>
+      <pose>4 -2 0.3608 0 -0.2094 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>3 2 0.1</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>3 2 0.1</size></box></geometry>
+          <material><ambient>0.6 0.6 0.7 1</ambient><diffuse>0.6 0.6 0.7 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="ramp_22deg">
+      <static>true</static>
+      <pose>4 2 0.6083 0 -0.3840 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>3 2 0.1</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>3 2 0.1</size></box></geometry>
+          <material><ambient>0.7 0.5 0.5 1</ambient><diffuse>0.7 0.5 0.5 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Staircase (x ~ 8-9.5m): 6 steps, 0.08m rise x 0.25m run -->
+    <model name="staircase">
+      <static>true</static>
+      <pose>0 0 0 0 0 0</pose>
+      <link name="step_1">
+        <pose>8.125 0 0.04 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.25 2 0.08</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.25 2 0.08</size></box></geometry>
+          <material><ambient>0.55 0.55 0.55 1</ambient><diffuse>0.55 0.55 0.55 1</diffuse></material></visual>
+      </link>
+      <link name="step_2">
+        <pose>8.375 0 0.08 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.25 2 0.16</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.25 2 0.16</size></box></geometry>
+          <material><ambient>0.55 0.55 0.55 1</ambient><diffuse>0.55 0.55 0.55 1</diffuse></material></visual>
+      </link>
+      <link name="step_3">
+        <pose>8.625 0 0.12 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.25 2 0.24</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.25 2 0.24</size></box></geometry>
+          <material><ambient>0.55 0.55 0.55 1</ambient><diffuse>0.55 0.55 0.55 1</diffuse></material></visual>
+      </link>
+      <link name="step_4">
+        <pose>8.875 0 0.16 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.25 2 0.32</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.25 2 0.32</size></box></geometry>
+          <material><ambient>0.55 0.55 0.55 1</ambient><diffuse>0.55 0.55 0.55 1</diffuse></material></visual>
+      </link>
+      <link name="step_5">
+        <pose>9.125 0 0.2 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.25 2 0.4</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.25 2 0.4</size></box></geometry>
+          <material><ambient>0.55 0.55 0.55 1</ambient><diffuse>0.55 0.55 0.55 1</diffuse></material></visual>
+      </link>
+      <link name="step_6">
+        <pose>9.375 0 0.24 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.25 2 0.48</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.25 2 0.48</size></box></geometry>
+          <material><ambient>0.55 0.55 0.55 1</ambient><diffuse>0.55 0.55 0.55 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- Rough patch (x ~ 14-18m): grid of small boxes with smoothly
+         varying heights, generated by scripts/generate_rough_patch.py.
+         Boxes (not a heightmap) because Ogre2's heightmap-terrain shader
+         fails to compile alongside the GPU lidar sensor under this
+         environment's software/EGL rendering fallback. -->
+    <model name="rough_patch">
+      <static>true</static>
+      <pose>0 0 0 0 0 0</pose>
+      <link name="bump_0_0"><pose>14.286 -1.714 0.025 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.050</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.050</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_0_1"><pose>14.286 -1.143 0.024 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.048</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.048</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_0_2"><pose>14.286 -0.571 0.021 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.041</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.041</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_0_3"><pose>14.286 0.000 0.021 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.043</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.043</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_0_4"><pose>14.286 0.571 0.024 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.048</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.048</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_0_5"><pose>14.286 1.143 0.028 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.055</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.055</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_0_6"><pose>14.286 1.714 0.035 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.070</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.070</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_1_0"><pose>14.857 -1.714 0.020 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.040</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.040</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_1_1"><pose>14.857 -1.143 0.019 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.038</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.038</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_1_2"><pose>14.857 -0.571 0.014 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.027</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.027</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_1_3"><pose>14.857 0.000 0.020 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.040</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.040</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_1_4"><pose>14.857 0.571 0.022 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.045</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.045</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_1_5"><pose>14.857 1.143 0.030 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.060</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.060</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_1_6"><pose>14.857 1.714 0.033 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.066</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.066</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_2_0"><pose>15.429 -1.714 0.018 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.036</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.036</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_2_1"><pose>15.429 -1.143 0.020 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.040</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.040</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_2_2"><pose>15.429 -0.571 0.018 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.035</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.035</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_2_3"><pose>15.429 0.000 0.021 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.043</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.043</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_2_4"><pose>15.429 0.571 0.020 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.041</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.041</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_2_5"><pose>15.429 1.143 0.023 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.046</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.046</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_2_6"><pose>15.429 1.714 0.021 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.042</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.042</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_3_0"><pose>16.000 -1.714 0.014 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.027</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.027</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_3_1"><pose>16.000 -1.143 0.021 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.042</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.042</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_3_2"><pose>16.000 -0.571 0.026 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.053</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.053</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_3_3"><pose>16.000 0.000 0.023 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.046</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.046</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_3_4"><pose>16.000 0.571 0.019 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.038</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.038</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_3_5"><pose>16.000 1.143 0.016 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.031</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.031</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_3_6"><pose>16.000 1.714 0.015 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.030</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.030</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_4_0"><pose>16.571 -1.714 0.010 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.020</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.020</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_4_1"><pose>16.571 -1.143 0.019 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.037</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.037</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_4_2"><pose>16.571 -0.571 0.026 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.053</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.053</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_4_3"><pose>16.571 0.000 0.023 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.046</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.046</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_4_4"><pose>16.571 0.571 0.018 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.035</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.035</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_4_5"><pose>16.571 1.143 0.014 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.028</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.028</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_4_6"><pose>16.571 1.714 0.015 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.030</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.030</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_5_0"><pose>17.143 -1.714 0.010 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.020</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.020</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_5_1"><pose>17.143 -1.143 0.016 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.033</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.033</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_5_2"><pose>17.143 -0.571 0.022 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.044</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.044</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_5_3"><pose>17.143 0.000 0.024 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.047</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.047</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_5_4"><pose>17.143 0.571 0.018 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.036</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.036</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_5_5"><pose>17.143 1.143 0.018 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.036</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.036</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_5_6"><pose>17.143 1.714 0.021 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.043</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.043</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_6_0"><pose>17.714 -1.714 0.015 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.029</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.029</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_6_1"><pose>17.714 -1.143 0.018 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.036</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.036</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_6_2"><pose>17.714 -0.571 0.019 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.039</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.039</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_6_3"><pose>17.714 0.000 0.024 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.047</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.047</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_6_4"><pose>17.714 0.571 0.017 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.034</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.034</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_6_5"><pose>17.714 1.143 0.019 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.038</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.038</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+      <link name="bump_6_6"><pose>17.714 1.714 0.024 0 0 0</pose>
+        <collision name="collision"><geometry><box><size>0.571 0.571 0.047</size></box></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface></collision>
+        <visual name="visual"><geometry><box><size>0.571 0.571 0.047</size></box></geometry>
+          <material><ambient>0.65 0.6 0.5 1</ambient><diffuse>0.65 0.6 0.5 1</diffuse></material></visual></link>
+    </model>
+
+    <!-- Discrete obstacles (x ~ 20-24m): jittered grid of small boxes -->
+    <model name="obstacles">
+      <static>true</static>
+      <pose>0 0 0 0 0 0</pose>
+      <link name="ob_1"><pose>20.2 -1.4 0.02 0 0 0.1</pose>
+        <collision name="collision"><geometry><box><size>0.3 0.3 0.04</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.3 0.3 0.04</size></box></geometry></visual></link>
+      <link name="ob_2"><pose>20.9 -0.6 0.03 0 0 -0.2</pose>
+        <collision name="collision"><geometry><box><size>0.3 0.3 0.06</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.3 0.3 0.06</size></box></geometry></visual></link>
+      <link name="ob_3"><pose>21.6 0.3 0.015 0 0 0.3</pose>
+        <collision name="collision"><geometry><box><size>0.3 0.3 0.03</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.3 0.3 0.03</size></box></geometry></visual></link>
+      <link name="ob_4"><pose>22.3 1.2 0.04 0 0 -0.15</pose>
+        <collision name="collision"><geometry><box><size>0.3 0.3 0.08</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.3 0.3 0.08</size></box></geometry></visual></link>
+      <link name="ob_5"><pose>22.9 -1.1 0.025 0 0 0.25</pose>
+        <collision name="collision"><geometry><box><size>0.3 0.3 0.05</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.3 0.3 0.05</size></box></geometry></visual></link>
+      <link name="ob_6"><pose>20.5 0.9 0.035 0 0 -0.3</pose>
+        <collision name="collision"><geometry><box><size>0.3 0.3 0.07</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.3 0.3 0.07</size></box></geometry></visual></link>
+      <link name="ob_7"><pose>21.2 -0.2 0.02 0 0 0.05</pose>
+        <collision name="collision"><geometry><box><size>0.3 0.3 0.04</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.3 0.3 0.04</size></box></geometry></visual></link>
+      <link name="ob_8"><pose>23.4 0.6 0.03 0 0 0.2</pose>
+        <collision name="collision"><geometry><box><size>0.3 0.3 0.06</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.3 0.3 0.06</size></box></geometry></visual></link>
+      <link name="ob_9"><pose>23.8 -0.5 0.015 0 0 -0.1</pose>
+        <collision name="collision"><geometry><box><size>0.3 0.3 0.03</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.3 0.3 0.03</size></box></geometry></visual></link>
+      <link name="ob_10"><pose>22.0 -1.3 0.04 0 0 0.15</pose>
+        <collision name="collision"><geometry><box><size>0.3 0.3 0.08</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.3 0.3 0.08</size></box></geometry></visual></link>
+    </model>
+
+  </world>
+</sdf>

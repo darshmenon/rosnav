@@ -5,7 +5,13 @@
 
     <xacro:include filename="gazebo_control.xacro" />
 
-    <xacro:include filename="lidar.xacro" />
+    <xacro:arg name="lidar_type" default="2d"/>
+    <xacro:if value="${'$(arg lidar_type)' == '3d'}">
+        <xacro:include filename="lidar3d.xacro" />
+    </xacro:if>
+    <xacro:unless value="${'$(arg lidar_type)' == '3d'}">
+        <xacro:include filename="lidar.xacro" />
+    </xacro:unless>
 
     <xacro:include filename="camera.xacro" />
 

@@ -99,7 +99,7 @@ def gazebo_client_action():
     )
 
 
-def rsp_include(pkg_share: str, urdf_path, frame_prefix='', namespace=''):
+def rsp_include(pkg_share: str, urdf_path, frame_prefix='', namespace='', lidar_type='2d'):
     return IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(pkg_share, 'launch', 'rsp.launch.py')),
         launch_arguments={
@@ -107,6 +107,7 @@ def rsp_include(pkg_share: str, urdf_path, frame_prefix='', namespace=''):
             'urdf': urdf_path,
             'frame_prefix': frame_prefix,
             'namespace': namespace,
+            'lidar_type': lidar_type,
         }.items(),
     )
 

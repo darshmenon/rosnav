@@ -48,9 +48,12 @@
   gz_type_name: "gz.msgs.Pose_V"
   direction: GZ_TO_ROS
 
-# 3D LiDAR PointCloud2 (only active when lidar3d.xacro is used)
+# 3D LiDAR PointCloud2 (only active when lidar3d.xacro is used).
+# gz-sim's gpu_lidar publishes gz.msgs.LaserScan on the sensor's own <topic>,
+# and the actual gz.msgs.PointCloudPacked on a nested "<topic>/points" — the
+# bridge must point at that nested topic, not the base one.
 - ros_topic_name: "/points"
-  gz_topic_name: "/points"
+  gz_topic_name: "/points/points"
   ros_type_name: "sensor_msgs/msg/PointCloud2"
   gz_type_name: "gz.msgs.PointCloudPacked"
   direction: GZ_TO_ROS

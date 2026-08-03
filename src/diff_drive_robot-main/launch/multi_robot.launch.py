@@ -551,6 +551,11 @@ def _build_all(context, pkg_share: str):
     robots_json = LaunchConfiguration('robots_json').perform(context).strip()
     drive_type = LaunchConfiguration('drive_type').perform(context).strip().lower()
     controller = LaunchConfiguration('controller').perform(context).strip().lower()
+    lidar_type = LaunchConfiguration('lidar_type').perform(context).strip().lower()
+    if lidar_type == '3d' and drive_type != 'diff':
+        print(f'[multi_robot] lidar_type=3d only supported for drive_type:=diff '
+              f'(got drive_type:={drive_type}) — falling back to 2d')
+        lidar_type = '2d'
     if slam_mode not in ('single', 'multi'):
         raise ValueError('slam_mode must be one of: single, multi')
 
@@ -723,27 +728,37 @@ def _build_all(context, pkg_share: str):
         # Robot State Publisher — frame_prefix + namespace arg makes TF frames unique per robot
         rsp = _common.rsp_include(
             pkg_share, os.path.join(pkg_share, 'urdf', urdf_filename),
-            frame_prefix=f'{ns}/', namespace=ns)
+            frame_prefix=f'{ns}/', namespace=ns, lidar_type=lidar_type)
 
         # Spawn in Gazebo
         spawn = _common.spawn_robot_node(
             gazebo_world_name, f'/{ns}/robot_description', ns, x, y, z, yaw)
 
-        # Gazebo ↔ ROS bridge (2D lidar, odom, cmd_vel)
+        # Gazebo ↔ ROS bridge (lidar, odom, cmd_vel)
         # TF is handled by dedicated bridge nodes below to avoid the /{ns}/tf empty-topic problem.
         # The gz-side lidar topic is fixed to {ns}/scan by lidar.xacro, so the bridge
         # argument below must keep that name — the remapping is what renames the ROS-side
         # output to scan_raw, freeing "scan" for laser_filter's cleaned republish.
+        bridge_args = [
+            f'/{ns}/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist',
+            f'/{ns}/odom@nav_msgs/msg/Odometry[gz.msgs.Odometry',
+            f'/{ns}/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
+        ]
+        bridge_remaps = [(f'/{ns}/scan', f'/{ns}/scan_raw')]
+        if lidar_type == '3d':
+            # gz-sim's gpu_lidar publishes gz.msgs.PointCloudPacked on a nested
+            # "<topic>/points" (not the sensor's own <topic>, which carries
+            # gz.msgs.LaserScan) — bridge that nested topic, then remap down
+            # to a clean /{ns}/points on the ROS side.
+            bridge_args.append(
+                f'/{ns}/points/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked')
+            bridge_remaps.append((f'/{ns}/points/points', f'/{ns}/points'))
         bridge = Node(
             package='ros_gz_bridge',
             executable='parameter_bridge',
             namespace=ns,
-            arguments=[
-                f'/{ns}/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist',
-                f'/{ns}/odom@nav_msgs/msg/Odometry[gz.msgs.Odometry',
-                f'/{ns}/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
-            ],
-            remappings=[(f'/{ns}/scan', f'/{ns}/scan_raw')],
+            arguments=bridge_args,
+            remappings=bridge_remaps,
             output='screen')
 
         laser_filter = _common.laser_filter_node(pkg_share, namespace=ns)
@@ -1025,6 +1040,10 @@ def generate_launch_description():
                         '"mecanum" (holonomic) or "ackermann" (car-like steering). '
                         'mecanum/ackermann reuse the single-robot nav2_params_*.yaml, namespaced '
                         'per-robot at launch time — see slam_nav.launch.py for the same drive types.'),
+        DeclareLaunchArgument(
+            'lidar_type', default_value='2d',
+            description='Fleet-wide lidar: "2d" (default, LaserScan on /{ns}/scan) or "3d" '
+                        '(PointCloud2 on /{ns}/points, gpu_lidar). Only drive_type:=diff.'),
         DeclareLaunchArgument(
             'controller', default_value='dwb',
             description='Local controller for drive_type:=mecanum: "dwb" (default) or "mppi". '
