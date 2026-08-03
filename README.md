@@ -570,8 +570,11 @@ Both costmaps (local + global) already list a `points` observation source alongs
 | `office` | 22×~12 m | Central corridor, lobby, 2 meeting rooms, kitchen |
 | `empty` | 100×100 m | Flat open ground plane, no obstacles — baseline/smoke-test world |
 | `multi_terrain` | ~25 m long | Flat spawn area, then (along +X) a 12°/22° ramp pair, a 6-step staircase, a rough bump patch, and jittered discrete obstacles — for perception/costmap stress-testing. Adapted from a quadruped RL terrain course; a wheeled base won't climb the staircase, but it's still useful for nav/perception around obstacles it can't cross |
+| `outdoor` | 100×100 m bowl | Real heightmap terrain (gz-sim's Fuel-hosted "Heightmap Bowl", auto-downloaded and cached on first launch — needs network access once) |
 
-All worlds use SDF primitives only — no external model downloads, instant load. All 9 work with every drive type (`diff`, `mecanum`, `ackermann` — see [Mode 7](#mode-7--holonomic-mecanum-drive) and [Mode 9](#mode-9--ackermann-car-like-drive)) and either controller (`controller:=dwb|mppi`). `multi_terrain` has no pre-built map yet — launch with `explore:=true` (SLAM mode).
+All worlds except `outdoor` use SDF primitives only — no external model downloads, instant load. All 10 work with every drive type (`diff`, `mecanum`, `ackermann` — see [Mode 7](#mode-7--holonomic-mecanum-drive) and [Mode 9](#mode-9--ackermann-car-like-drive)) and either controller (`controller:=dwb|mppi`). `multi_terrain`/`outdoor` have no pre-built map yet — launch with `explore:=true` (SLAM mode).
+
+> **`outdoor` known issues:** first launch downloads the heightmap from Fuel, which can take longer than the spawn step's timeout — if the robot fails to appear, re-run the same launch command (the model is cached after the first successful download, so subsequent launches spawn immediately). Separately, `slam_toolbox` currently logs recurring `Received map message is malformed` / `Robot is out of bounds of the costmap` on this world — navigation itself, sensors, and the terrain rendering all work (verified: no shader crash, real `/scan`+`/odom` data, `bt_navigator` reaches `active`), but a full nav-goal-reached run hasn't been confirmed here yet. Likely needs an explicit flat `ground_plane` alongside the heightmap for `slam_toolbox` to anchor its occupancy grid — untriaged further.
 
 ```bash
 # Single robot, any world

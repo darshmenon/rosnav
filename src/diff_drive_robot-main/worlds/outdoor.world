@@ -1,0 +1,50 @@
+<?xml version="1.0" ?>
+<!--
+  Outdoor world with a real heightmap terrain (Fuel-hosted "Heightmap Bowl"
+  by chapulina, auto-downloaded and cached by gz-sim at runtime).
+
+  KNOWN RISK: Ogre2's heightmap-terrain shader has been observed to fail to
+  compile alongside a GPU-based sensor (camera, gpu_lidar) under this kind
+  of headless/software-EGL rendering fallback. If Gazebo crashes or the
+  terrain fails to render on launch, fall back to a primitive-based outdoor
+  world (ground plane + simple prop shapes) instead of a real heightmap.
+-->
+<sdf version="1.6">
+  <world name="outdoor">
+
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system"
+            name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system"
+            name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system"
+            name="ignition::gazebo::systems::SceneBroadcaster"/>
+    <plugin filename="ignition-gazebo-sensors-system"
+            name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="ignition-gazebo-contact-system"
+            name="ignition::gazebo::systems::Contact"/>
+    <plugin filename="ignition-gazebo-imu-system"
+            name="ignition::gazebo::systems::Imu"/>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <include>
+      <uri>
+        https://fuel.gazebosim.org/1.0/chapulina/models/Heightmap Bowl
+      </uri>
+    </include>
+
+  </world>
+</sdf>
