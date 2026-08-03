@@ -87,6 +87,8 @@ def _build_runtime_actions(context, pkg_share: str):
         print(f'[slam_nav] lidar_type=3d only supported for drive_type:=diff '
               f'(got drive_type:={drive_type}) — falling back to 2d')
         lidar_type = '2d'
+    lidar3d_height = LaunchConfiguration('lidar3d_height').perform(context).strip()
+    lidar3d_vfov_deg = LaunchConfiguration('lidar3d_vfov_deg').perform(context).strip()
 
     world_path = _resolve_world_path(world_name_arg, world_arg, pkg_share)
     world_name = _resolve_world_name(world_name_arg, world_path)
@@ -97,7 +99,8 @@ def _build_runtime_actions(context, pkg_share: str):
 
     urdf_filename = _common.urdf_filename_for(drive_type)
     rsp = _common.rsp_include(
-        pkg_share, os.path.join(pkg_share, 'urdf', urdf_filename), lidar_type=lidar_type)
+        pkg_share, os.path.join(pkg_share, 'urdf', urdf_filename), lidar_type=lidar_type,
+        lidar3d_height=lidar3d_height, lidar3d_vfov_deg=lidar3d_vfov_deg)
 
     gazebo_server = _common.gazebo_server_action(world_path)
 
@@ -329,5 +332,12 @@ def generate_launch_description():
             default_value='2d',
             description='"2d" (default, LaserScan on /scan) or "3d" (16-channel PointCloud2 on '
                         '/points, gpu_lidar). Only supported for drive_type:=diff.'),
+        DeclareLaunchArgument(
+            name='lidar3d_height', default_value='0.25',
+            description='3D lidar mount height (m), lidar_type:=3d only. Needs >=0.10m '
+                        'clearance above the chassis top (z=0.15) to avoid self-hits.'),
+        DeclareLaunchArgument(
+            name='lidar3d_vfov_deg', default_value='10',
+            description='3D lidar vertical half-angle in degrees (+/-), lidar_type:=3d only.'),
         OpaqueFunction(function=_build_runtime_actions, args=[pkg_share]),
     ])

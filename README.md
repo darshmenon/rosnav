@@ -555,6 +555,14 @@ Both costmaps (local + global) already list a `points` observation source alongs
 
 > gz-sim's `gpu_lidar` publishes `gz.msgs.LaserScan` on the sensor's own topic and the real `gz.msgs.PointCloudPacked` on a nested `<topic>/points` — the bridge config bridges that nested topic and (in the fleet launch) remaps it down to a clean `/{ns}/points`.
 
+**Mount height / vertical FOV are tunable, not hardcoded:**
+```bash
+ros2 launch diff_drive_robot slam_nav.launch.py lidar_type:=3d lidar3d_height:=0.3 lidar3d_vfov_deg:=8
+```
+`lidar3d_height` (default `0.25`) and `lidar3d_vfov_deg` (default `10`, the +/- half-angle) thread all the way through `rsp.launch.py` into `lidar3d.xacro`. The defaults fix a real self-collision bug found by inspecting actual point cloud data: at the original 2D-lidar mount height (0.175 m, only 0.025 m above the 0.15 m chassis top), the 3D sensor's added vertical spread put the robot's own chassis inside its downward FOV — closest returns were ~0.36 m at `y=+/-0.2` (matching the chassis edges) and landed at global `z~0.085`, *above* the costmap's `min_obstacle_height:=0.05` filter, so the robot would have seen a phantom obstacle hugging itself everywhere it went. Raising the mount to 0.25 m (0.10 m clearance) moved the closest real return out to ~0.92 m at plausible external-object coordinates — confirmed by direct point cloud inspection, not just log messages.
+
+> **This is not 3D SLAM.** `slam_toolbox` (the only SLAM in this project) builds a 2D occupancy grid — it has no concept of elevation or 3D structure. `lidar_type:=3d` only adds the point cloud as a second, height-filtered *obstacle source* into the existing 2D costmap; it does not change what gets mapped or how localization works. Real 3D mapping (e.g. for the `outdoor` heightmap world or climbing terrain in `multi_terrain`) would need a different SLAM stack entirely — RTAB-Map, FAST-LIO2, or Cartographer's 3D mode — none of which are wired into this project.
+
 ---
 
 ## Worlds

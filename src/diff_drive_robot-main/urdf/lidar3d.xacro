@@ -15,11 +15,26 @@
   <xacro:arg name="namespace" default=""/>
   <xacro:property name="ns" value="$(arg namespace)"/>
 
-  <!-- Mount at same position as 2D lidar so Nav2 costmaps still work -->
+  <!-- Mount height and vertical FOV are configurable from the launch chain
+       (lidar3d_height / lidar3d_vfov_deg) — see slam_nav.launch.py /
+       multi_robot.launch.py. Defaults give 0.10 m clearance above the
+       chassis top (z=0.15) at a 10 deg half-angle; the chassis-top gap
+       used to be only 0.025 m at the old z=0.175/15 deg combo, which put
+       the robot's own chassis inside the downward FOV cone at close range
+       (self-hits around 0.36 m, symmetric at y=+/-0.2 m — confirmed via
+       gz-side point cloud inspection). 2D lidar (a single flat ring, no
+       vertical spread) never had this problem, so it kept its original
+       z=0.175 mount.
+  -->
+  <xacro:arg name="lidar3d_height" default="0.25"/>
+  <xacro:arg name="lidar3d_vfov_deg" default="10"/>
+  <xacro:property name="lidar3d_z" value="$(arg lidar3d_height)"/>
+  <xacro:property name="lidar3d_vfov_rad" value="${radians(float('$(arg lidar3d_vfov_deg)'))}"/>
+
   <joint name="laser_joint" type="fixed">
     <parent link="chassis"/>
     <child link="laser_frame"/>
-    <origin xyz="0.1 0 0.175" rpy="0 0 0"/>
+    <origin xyz="0.1 0 ${lidar3d_z}" rpy="0 0 0"/>
   </joint>
 
   <link name="laser_frame">
@@ -61,8 +76,8 @@
           </horizontal>
           <vertical>
             <samples>16</samples>           <!-- 16 channels -->
-            <min_angle>-0.2618</min_angle>  <!-- -15 deg -->
-            <max_angle>0.2618</max_angle>   <!-- +15 deg -->
+            <min_angle>${-lidar3d_vfov_rad}</min_angle>
+            <max_angle>${lidar3d_vfov_rad}</max_angle>
           </vertical>
         </scan>
         <range>

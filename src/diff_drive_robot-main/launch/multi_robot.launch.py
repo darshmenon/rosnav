@@ -556,6 +556,8 @@ def _build_all(context, pkg_share: str):
         print(f'[multi_robot] lidar_type=3d only supported for drive_type:=diff '
               f'(got drive_type:={drive_type}) — falling back to 2d')
         lidar_type = '2d'
+    lidar3d_height = LaunchConfiguration('lidar3d_height').perform(context).strip()
+    lidar3d_vfov_deg = LaunchConfiguration('lidar3d_vfov_deg').perform(context).strip()
     if slam_mode not in ('single', 'multi'):
         raise ValueError('slam_mode must be one of: single, multi')
 
@@ -728,7 +730,8 @@ def _build_all(context, pkg_share: str):
         # Robot State Publisher — frame_prefix + namespace arg makes TF frames unique per robot
         rsp = _common.rsp_include(
             pkg_share, os.path.join(pkg_share, 'urdf', urdf_filename),
-            frame_prefix=f'{ns}/', namespace=ns, lidar_type=lidar_type)
+            frame_prefix=f'{ns}/', namespace=ns, lidar_type=lidar_type,
+            lidar3d_height=lidar3d_height, lidar3d_vfov_deg=lidar3d_vfov_deg)
 
         # Spawn in Gazebo
         spawn = _common.spawn_robot_node(
@@ -1044,6 +1047,13 @@ def generate_launch_description():
             'lidar_type', default_value='2d',
             description='Fleet-wide lidar: "2d" (default, LaserScan on /{ns}/scan) or "3d" '
                         '(PointCloud2 on /{ns}/points, gpu_lidar). Only drive_type:=diff.'),
+        DeclareLaunchArgument(
+            'lidar3d_height', default_value='0.25',
+            description='3D lidar mount height (m), lidar_type:=3d only. Needs >=0.10m '
+                        'clearance above the chassis top (z=0.15) to avoid self-hits.'),
+        DeclareLaunchArgument(
+            'lidar3d_vfov_deg', default_value='10',
+            description='3D lidar vertical half-angle in degrees (+/-), lidar_type:=3d only.'),
         DeclareLaunchArgument(
             'controller', default_value='dwb',
             description='Local controller for drive_type:=mecanum: "dwb" (default) or "mppi". '
