@@ -42,6 +42,12 @@
   <exec_depend>rmf_task_msgs</exec_depend>
   <exec_depend>rmf_fleet_msgs</exec_depend>
 
+  <!-- Native Nav2 docking (multi_robot.launch.py drive_type:=diff docking_server) -->
+  <exec_depend>opennav_docking</exec_depend>
+
+  <!-- Real 3D SLAM (slam_nav.launch.py lidar_type:=3d slam_algo:=3d) -->
+  <exec_depend>rtabmap_slam</exec_depend>
+
   <!-- Python runtime dependencies -->
   <exec_depend>python3-yaml</exec_depend>
   <exec_depend>python3-scipy</exec_depend>

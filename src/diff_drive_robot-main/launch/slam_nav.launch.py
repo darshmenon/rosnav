@@ -90,6 +90,18 @@ def _build_runtime_actions(context, pkg_share: str):
     lidar3d_height = LaunchConfiguration('lidar3d_height').perform(context).strip()
     lidar3d_vfov_deg = LaunchConfiguration('lidar3d_vfov_deg').perform(context).strip()
 
+    slam_algo = LaunchConfiguration('slam_algo').perform(context).strip().lower()
+    if slam_algo == '3d' and lidar_type != '3d':
+        print('[slam_nav] slam_algo=3d requires lidar_type:=3d — falling back to slam_algo=2d')
+        slam_algo = '2d'
+    if slam_algo == '3d':
+        try:
+            get_package_share_directory('rtabmap_slam')
+        except Exception:
+            print('[slam_nav] slam_algo=3d requested but ros-humble-rtabmap-ros is not '
+                  'installed (sudo apt install ros-humble-rtabmap-ros) — falling back to slam_algo=2d')
+            slam_algo = '2d'
+
     world_path = _resolve_world_path(world_name_arg, world_arg, pkg_share)
     world_name = _resolve_world_name(world_name_arg, world_path)
     gazebo_world_name = _common.resolve_gazebo_world_name(world_path)
@@ -131,7 +143,44 @@ def _build_runtime_actions(context, pkg_share: str):
     _raw_params = os.path.join(pkg_share, 'config', nav2_params_name)
     _params_file = _common.patch_pkg_share_placeholder(_raw_params, pkg_share)
 
-    if use_slam:
+    if use_slam and slam_algo == '3d':
+        # RTAB-Map lidar SLAM: consumes the *existing* wheel /odom directly (like
+        # slam_toolbox does) instead of running RTAB-Map's own icp_odometry — that
+        # keeps this a drop-in swap with exactly one odom->base_link TF publisher
+        # (the gz DiffDrive plugin), avoiding a two-parent TF conflict. RTAB-Map
+        # only adds the map->odom layer on top, same as slam_toolbox/AMCL today.
+        slam_or_localization = TimerAction(
+            period=5.0,
+            actions=[
+                Node(
+                    package='rtabmap_slam',
+                    executable='rtabmap',
+                    output='screen',
+                    parameters=[{
+                        'use_sim_time': True,
+                        'frame_id': 'base_link',
+                        'odom_frame_id': 'odom',
+                        'map_frame_id': 'map',
+                        'subscribe_depth': False,
+                        'subscribe_rgb': False,
+                        'subscribe_scan_cloud': True,
+                        'approx_sync': True,
+                        'wait_for_transform': 0.2,
+                        # RTAB-Map's internal parameters are strings:
+                        'Reg/Strategy': '1',           # ICP — no camera to do Vis registration
+                        'Icp/PointToPlane': 'true',
+                        'Grid/Sensor': '0',             # occupancy grid from the lidar cloud, not depth
+                        'Grid/3D': 'false',              # project to 2D for Nav2's /map
+                        'Grid/CellSize': '0.05',
+                        'Grid/RangeMax': '20.0',
+                        'Mem/IncrementalMemory': 'true',  # mapping mode (vs. localization)
+                    }],
+                    remappings=[('odom', '/odom'), ('scan_cloud', '/points')],
+                    arguments=['-d'],  # fresh database each run — no stale map from a previous session
+                )
+            ],
+        )
+    elif use_slam:
         slam_or_localization = TimerAction(
             period=5.0,
             actions=[
@@ -150,6 +199,9 @@ def _build_runtime_actions(context, pkg_share: str):
                 )
             ],
         )
+
+    if use_slam:
+        # Same Nav2 bringup regardless of which SLAM backend is producing /map.
         nav2 = TimerAction(
             period=8.0,
             actions=[
@@ -339,5 +391,11 @@ def generate_launch_description():
         DeclareLaunchArgument(
             name='lidar3d_vfov_deg', default_value='10',
             description='3D lidar vertical half-angle in degrees (+/-), lidar_type:=3d only.'),
+        DeclareLaunchArgument(
+            name='slam_algo', default_value='2d',
+            description='"2d" (default, slam_toolbox — 2D occupancy grid only) or "3d" '
+                        '(RTAB-Map lidar SLAM, real 3D map + projected 2D grid for Nav2). '
+                        'Requires lidar_type:=3d and ros-humble-rtabmap-ros installed; '
+                        'falls back to 2d with a warning if either is missing.'),
         OpaqueFunction(function=_build_runtime_actions, args=[pkg_share]),
     ])
