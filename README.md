@@ -595,27 +595,18 @@ Requires `lidar_type:=3d` and `ros-humble-rtabmap-ros` — **fails safe**, not h
 
 All worlds except `outdoor` use SDF primitives only — no external model downloads, instant load. All 10 work with every drive type (`diff`, `mecanum`, `ackermann` — see [Mode 7](#mode-7--holonomic-mecanum-drive) and [Mode 9](#mode-9--ackermann-car-like-drive)) and either controller (`controller:=dwb|mppi`). `multi_terrain`/`outdoor` have no pre-built map yet — launch with `explore:=true` (SLAM mode).
 
-> ⚠️ **`outdoor` needs a non-default spawn**, or SLAM/nav never works: the default spot sits on the bowl's flat center, out of lidar range of any terrain, so the map stays 0×0 forever. Spawn on the slope instead:
+> ℹ️ **`outdoor` and `multi_terrain` auto-pick a safe spawn — no `spawn_x`/`spawn_y`/etc. needed.** `slam_nav.launch.py`'s `spawn_x`/`spawn_y`/`spawn_z`/`spawn_yaw` args default to `'auto'`, which resolves per-world (`_WORLD_SPAWN_DEFAULTS` in the launch file) instead of the old one-size-fits-all (1.5, 1.0):
 >
-> ```bash
-> ros2 launch diff_drive_robot slam_nav.launch.py world_name:=outdoor explore:=true \
->   lidar_type:=3d slam_algo:=3d headless:=true \
->   spawn_x:=40.0 spawn_y:=0.0 spawn_z:=9.0 spawn_yaw:=0.0
-> ```
+> - `outdoor`'s generic default sits on the bowl's flat center, out of lidar range of any terrain, so the map stayed 0×0 forever — `auto` now spawns on the slope instead (40.0, 0.0, 9.0).
+> - `multi_terrain`'s generic default sits on the open flat pad before the ramps — wide-open, feature-poor ground gives RTAB-Map's ICP registration nothing to lock rotation/translation against (`RegistrationIcp.cpp: structural complexity is too low`), and the resulting drift showed up as false obstacles in the projected `/map`, boxing the robot in near spawn (confirmed live: every frontier past a ~1m pocket failed to plan). `auto` now spawns at the foot of `ramp_12deg` (2.2, -2.0) instead, giving ICP something real to anchor to.
 >
-> Verified working end-to-end. Also fixed a real bug found along the way: `frontier_explorer.py`/`frontier_coordinator.py` (and, same pattern, `coverage_planner.py`/`map_fusion.py`) subscribed to `/map` with the wrong QoS (VOLATILE vs. the publisher's TRANSIENT_LOCAL), which could permanently deadlock exploration.
+> Passing an explicit `spawn_x`/`spawn_y`/etc. always overrides `auto` for that axis. Verified live with plain `world_name:=outdoor|multi_terrain explore:=true lidar_type:=3d slam_algo:=3d headless:=true` and no spawn args at all: `outdoor` reaches multiple `Goal succeeded`; `multi_terrain` reached 4+ real goals moving steadily away from spawn, with transient planner failures recovering on their own via the existing recovery behavior tree.
 >
-> First launch downloads the heightmap from Fuel — re-run the same command if the robot doesn't appear (cached after that).
-
-> ⚠️ **`multi_terrain` + `slam_algo:=3d` also needs a non-default spawn.** The default spawn (1.5, 1.0) sits on the open flat pad before the ramps — wide-open, feature-poor ground gives RTAB-Map's ICP registration nothing to lock rotation/translation against (`RegistrationIcp.cpp: structural complexity is too low`), and the resulting drift shows up as false obstacles in the projected `/map`, boxing the robot in near spawn (confirmed live: every frontier past a ~1m pocket failed to plan). Spawning next to real geometry instead — e.g. at the foot of `ramp_12deg` — gives ICP something to anchor to and fixes it:
+> An earlier attempt fixed this by adding a small static pillar next to `multi_terrain`'s default spawn instead (to give ICP an anchor without changing spawn behavior) — reverted after live testing showed it improved ICP registration quality but still left exploration stuck (0 real goals in 100+s), likely from its own inflated costmap footprint overlapping nearby frontier candidates. The per-world spawn default was the fix that actually worked.
 >
-> ```bash
-> ros2 launch diff_drive_robot slam_nav.launch.py world_name:=multi_terrain explore:=true \
->   lidar_type:=3d slam_algo:=3d headless:=true \
->   spawn_x:=2.2 spawn_y:=-2.0 spawn_yaw:=0.0
-> ```
+> Also fixed two real bugs found along the way: (1) `frontier_explorer.py`/`frontier_coordinator.py` (and, same pattern, `coverage_planner.py`/`map_fusion.py`) subscribed to `/map` with the wrong QoS (VOLATILE vs. the publisher's TRANSIENT_LOCAL), which could permanently deadlock exploration; (2) `frontier_explorer.py`'s "spurious success" guard (an instant/bogus `NavigateToPose` success under ~0.5s) detected the bad result but never counted it as a failure either, so a phantom frontier could be retried forever with zero progress — it now counts toward `max_frontier_retries` like any other failure.
 >
-> Verified with this spawn: 3D SLAM mapped continuously (WM growing, no malformed-map errors) and frontier exploration reached 7 real goals, moving steadily away from spawn over ~50s, with one transient planner failure recovering on its own via the existing recovery behavior tree. Also found and fixed a real bug along the way: `frontier_explorer.py`'s existing "spurious success" guard (an instant/bogus `NavigateToPose` success under ~0.5s) detected the bad result but never counted it as a failure either, so a phantom frontier could be retried forever with zero progress — it now counts toward `max_frontier_retries` like any other failure, so it blacklists and exploration moves on.
+> `outdoor` first launch downloads the heightmap from Fuel — re-run the same command if the robot doesn't appear (cached after that).
 
 ```bash
 # Single robot, any world

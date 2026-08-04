@@ -67,6 +67,30 @@ def _resolve_map_yaml(world_name: str, pkg_share: str) -> str:
     return candidates[0]
 
 
+# Per-world spawn points verified live to avoid known SLAM failure modes at
+# the generic default (1.5, 1.0): 'outdoor's flat bowl-center default is out
+# of lidar range of any terrain (map stays 0x0 forever); 'multi_terrain's
+# open flat pad gives RTAB-Map's ICP nothing to lock onto, so drift shows up
+# as false obstacles that box the robot in near spawn. Only applied when the
+# corresponding spawn_* argument is left at its 'auto' sentinel, so an
+# explicit spawn_x/y/z/yaw override always wins.
+_WORLD_SPAWN_DEFAULTS = {
+    'outdoor': {'x': '40.0', 'y': '0.0', 'z': '9.0', 'yaw': '0.0'},
+    'multi_terrain': {'x': '2.2', 'y': '-2.0', 'z': '0.3', 'yaw': '0.0'},
+}
+_GENERIC_SPAWN_DEFAULT = {'x': '1.5', 'y': '1.0', 'z': '0.3', 'yaw': '0.0'}
+
+
+def _resolve_spawn(world_name: str, x_arg: str, y_arg: str, z_arg: str, yaw_arg: str):
+    defaults = _WORLD_SPAWN_DEFAULTS.get(world_name, _GENERIC_SPAWN_DEFAULT)
+    return (
+        defaults['x'] if x_arg == 'auto' else x_arg,
+        defaults['y'] if y_arg == 'auto' else y_arg,
+        defaults['z'] if z_arg == 'auto' else z_arg,
+        defaults['yaw'] if yaw_arg == 'auto' else yaw_arg,
+    )
+
+
 def _build_runtime_actions(context, pkg_share: str):
     world_name_arg = LaunchConfiguration('world_name').perform(context)
     world_arg = LaunchConfiguration('world').perform(context)
@@ -76,10 +100,6 @@ def _build_runtime_actions(context, pkg_share: str):
     slam_arg = LaunchConfiguration('slam').perform(context).lower()
     use_slam = slam_arg in ('true', '1', 'yes')
     robot_name = LaunchConfiguration('robot_name')
-    spawn_x = LaunchConfiguration('spawn_x')
-    spawn_y = LaunchConfiguration('spawn_y')
-    spawn_z = LaunchConfiguration('spawn_z')
-    spawn_yaw = LaunchConfiguration('spawn_yaw')
     controller = LaunchConfiguration('controller').perform(context).strip().lower()
     drive_type = LaunchConfiguration('drive_type').perform(context).strip().lower()
     lidar_type = LaunchConfiguration('lidar_type').perform(context).strip().lower()
@@ -105,6 +125,14 @@ def _build_runtime_actions(context, pkg_share: str):
     world_path = _resolve_world_path(world_name_arg, world_arg, pkg_share)
     world_name = _resolve_world_name(world_name_arg, world_path)
     gazebo_world_name = _common.resolve_gazebo_world_name(world_path)
+
+    spawn_x, spawn_y, spawn_z, spawn_yaw = _resolve_spawn(
+        world_name,
+        LaunchConfiguration('spawn_x').perform(context).strip(),
+        LaunchConfiguration('spawn_y').perform(context).strip(),
+        LaunchConfiguration('spawn_z').perform(context).strip(),
+        LaunchConfiguration('spawn_yaw').perform(context).strip(),
+    )
     map_prefix = _resolve_map_prefix(
         LaunchConfiguration('map_prefix').perform(context).strip(), world_name, pkg_share)
     map_yaml = _resolve_map_yaml(world_name, pkg_share)
@@ -359,10 +387,19 @@ def generate_launch_description():
         DeclareLaunchArgument('rviz', default_value='True', description='Launch RViz'),
         DeclareLaunchArgument('robot_name', default_value='diff_drive', description='Gazebo robot entity name'),
         # Maze default spawn moved away from origin so robot is immediately visible.
-        DeclareLaunchArgument(name='spawn_x', default_value='1.5'),
-        DeclareLaunchArgument(name='spawn_y', default_value='1.0'),
-        DeclareLaunchArgument(name='spawn_z', default_value='0.3'),
-        DeclareLaunchArgument(name='spawn_yaw', default_value='0.0'),
+        DeclareLaunchArgument(
+            name='spawn_x', default_value='auto',
+            description="Spawn X. 'auto' picks a per-world verified-safe default (see "
+                        "_WORLD_SPAWN_DEFAULTS); an explicit value always overrides it."),
+        DeclareLaunchArgument(
+            name='spawn_y', default_value='auto',
+            description="Spawn Y. 'auto' picks a per-world verified-safe default."),
+        DeclareLaunchArgument(
+            name='spawn_z', default_value='auto',
+            description="Spawn Z. 'auto' picks a per-world verified-safe default."),
+        DeclareLaunchArgument(
+            name='spawn_yaw', default_value='auto',
+            description="Spawn yaw. 'auto' picks a per-world verified-safe default."),
         DeclareLaunchArgument(
             name='map_prefix',
             default_value='',
