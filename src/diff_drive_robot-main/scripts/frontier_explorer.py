@@ -305,6 +305,8 @@ class FrontierExplorer(Node):
             if elapsed < 0.5:
                 self.get_logger().warn(
                     f'Spurious success in {elapsed:.2f}s — frontier not counted.')
+                if self._current_goal is not None:
+                    self._register_failure(*self._current_goal)
             else:
                 self.get_logger().info('Frontier reached. Searching for next...')
                 if self._current_goal is not None:
