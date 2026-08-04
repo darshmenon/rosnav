@@ -173,6 +173,13 @@ def _build_runtime_actions(context, pkg_share: str):
                         'Grid/3D': 'false',              # project to 2D for Nav2's /map
                         'Grid/CellSize': '0.05',
                         'Grid/RangeMax': '20.0',
+                        # NoiseFilteringRadius defaults to 0 (disabled); the 16-channel 3D
+                        # lidar's sparse vertical resolution makes normal-based ground
+                        # segmentation (Grid/NormalsSegmentation) noisy, sprinkling spurious
+                        # "obstacle" cells across otherwise-flat ground. Filter isolated points
+                        # before classification.
+                        'Grid/NoiseFilteringRadius': '0.1',
+                        'Grid/NoiseFilteringMinNeighbors': '5',
                         'Mem/IncrementalMemory': 'true',  # mapping mode (vs. localization)
                     }],
                     remappings=[('odom', '/odom'), ('scan_cloud', '/points')],

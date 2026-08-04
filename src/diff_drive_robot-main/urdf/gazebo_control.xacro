@@ -39,8 +39,6 @@
          <topic>joint_states</topic>
          <joint_name>right_wheel_joint</joint_name>
          <joint_name>left_wheel_joint</joint_name>
-           <joint_name>left_wheel_front_joint</joint_name>
-         <joint_name>right_wheel_front_joint</joint_name>
 
       </plugin>
    </gazebo>

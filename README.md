@@ -591,11 +591,31 @@ Requires `lidar_type:=3d` and `ros-humble-rtabmap-ros` — **fails safe**, not h
 | `office` | 22×~12 m | Central corridor, lobby, 2 meeting rooms, kitchen |
 | `empty` | 100×100 m | Flat open ground plane, no obstacles — baseline/smoke-test world |
 | `multi_terrain` | ~25 m long | Flat spawn area, then (along +X) a 12°/22° ramp pair, a 6-step staircase, a rough bump patch, and jittered discrete obstacles — for perception/costmap stress-testing. Adapted from a quadruped RL terrain course; a wheeled base won't climb the staircase, but it's still useful for nav/perception around obstacles it can't cross |
-| `outdoor` | 100×100 m bowl | Real heightmap terrain (gz-sim's Fuel-hosted "Heightmap Bowl", auto-downloaded and cached on first launch — needs network access once) |
+| `outdoor` | 129×129 m bowl | Real heightmap terrain (gz-sim's Fuel-hosted "Heightmap Bowl", auto-downloaded and cached on first launch — needs network access once) |
 
 All worlds except `outdoor` use SDF primitives only — no external model downloads, instant load. All 10 work with every drive type (`diff`, `mecanum`, `ackermann` — see [Mode 7](#mode-7--holonomic-mecanum-drive) and [Mode 9](#mode-9--ackermann-car-like-drive)) and either controller (`controller:=dwb|mppi`). `multi_terrain`/`outdoor` have no pre-built map yet — launch with `explore:=true` (SLAM mode).
 
-> **`outdoor` known issues:** first launch downloads the heightmap from Fuel, which can take longer than the spawn step's timeout — if the robot fails to appear, re-run the same launch command (the model is cached after the first successful download, so subsequent launches spawn immediately). Separately, `slam_toolbox` currently logs recurring `Received map message is malformed` / `Robot is out of bounds of the costmap` on this world — navigation itself, sensors, and the terrain rendering all work (verified: no shader crash, real `/scan`+`/odom` data, `bt_navigator` reaches `active`), but a full nav-goal-reached run hasn't been confirmed here yet. Likely needs an explicit flat `ground_plane` alongside the heightmap for `slam_toolbox` to anchor its occupancy grid — untriaged further.
+> ⚠️ **`outdoor` needs a non-default spawn**, or SLAM/nav never works: the default spot sits on the bowl's flat center, out of lidar range of any terrain, so the map stays 0×0 forever. Spawn on the slope instead:
+>
+> ```bash
+> ros2 launch diff_drive_robot slam_nav.launch.py world_name:=outdoor explore:=true \
+>   lidar_type:=3d slam_algo:=3d headless:=true \
+>   spawn_x:=40.0 spawn_y:=0.0 spawn_z:=9.0 spawn_yaw:=0.0
+> ```
+>
+> Verified working end-to-end. Also fixed a real bug found along the way: `frontier_explorer.py`/`frontier_coordinator.py` (and, same pattern, `coverage_planner.py`/`map_fusion.py`) subscribed to `/map` with the wrong QoS (VOLATILE vs. the publisher's TRANSIENT_LOCAL), which could permanently deadlock exploration.
+>
+> First launch downloads the heightmap from Fuel — re-run the same command if the robot doesn't appear (cached after that).
+
+> ⚠️ **`multi_terrain` + `slam_algo:=3d` also needs a non-default spawn.** The default spawn (1.5, 1.0) sits on the open flat pad before the ramps — wide-open, feature-poor ground gives RTAB-Map's ICP registration nothing to lock rotation/translation against (`RegistrationIcp.cpp: structural complexity is too low`), and the resulting drift shows up as false obstacles in the projected `/map`, boxing the robot in near spawn (confirmed live: every frontier past a ~1m pocket failed to plan). Spawning next to real geometry instead — e.g. at the foot of `ramp_12deg` — gives ICP something to anchor to and fixes it:
+>
+> ```bash
+> ros2 launch diff_drive_robot slam_nav.launch.py world_name:=multi_terrain explore:=true \
+>   lidar_type:=3d slam_algo:=3d headless:=true \
+>   spawn_x:=2.2 spawn_y:=-2.0 spawn_yaw:=0.0
+> ```
+>
+> Verified with this spawn: 3D SLAM mapped continuously (WM growing, no malformed-map errors) and frontier exploration reached 7 real goals, moving steadily away from spawn over ~50s, with one transient planner failure recovering on its own via the existing recovery behavior tree. Also found and fixed a real bug along the way: `frontier_explorer.py`'s existing "spurious success" guard (an instant/bogus `NavigateToPose` success under ~0.5s) detected the bad result but never counted it as a failure either, so a phantom frontier could be retried forever with zero progress — it now counts toward `max_frontier_retries` like any other failure, so it blacklists and exploration moves on.
 
 ```bash
 # Single robot, any world
