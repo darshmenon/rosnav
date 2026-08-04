@@ -46,6 +46,7 @@ import numpy as np
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 import tf2_ros
 
 from action_msgs.msg import GoalStatus
@@ -53,6 +54,13 @@ from geometry_msgs.msg import Point, PoseStamped
 from nav_msgs.msg import OccupancyGrid
 from nav2_msgs.action import NavigateToPose
 from std_msgs.msg import ColorRGBA, String
+
+_MAP_QOS = QoSProfile(
+    history=HistoryPolicy.KEEP_LAST,
+    depth=1,
+    reliability=ReliabilityPolicy.RELIABLE,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+)
 from visualization_msgs.msg import Marker, MarkerArray
 
 
@@ -148,7 +156,7 @@ class FrontierCoordinator(Node):
             MarkerArray, '/exploration/frontiers', 10)
 
         self.get_logger().info(f'Watching Nav2 servers: {self._robots}')
-        self.create_subscription(OccupancyGrid, map_topic, self._map_cb, 1)
+        self.create_subscription(OccupancyGrid, map_topic, self._map_cb, _MAP_QOS)
         self.create_timer(poll_period, self._cycle)
         self.get_logger().info(
             f'Frontier coordinator running '

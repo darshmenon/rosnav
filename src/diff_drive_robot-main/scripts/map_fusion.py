@@ -32,12 +32,20 @@ import tf2_ros
 from geometry_msgs.msg import PointStamped
 from nav_msgs.msg import OccupancyGrid
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import LaserScan
 from tf2_geometry_msgs import do_transform_point
 
 FREE = 0
 OCCUPIED = 100
 UNKNOWN = -1
+
+_MAP_QOS = QoSProfile(
+    history=HistoryPolicy.KEEP_LAST,
+    depth=1,
+    reliability=ReliabilityPolicy.RELIABLE,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+)
 
 
 class MapFusion(Node):
@@ -80,7 +88,7 @@ class MapFusion(Node):
         # slam_toolbox's own classification always wins once it catches up.
         self._overlay: dict[tuple[float, float], int] = {}
 
-        self.create_subscription(OccupancyGrid, base_map_topic, self._map_cb, 1)
+        self.create_subscription(OccupancyGrid, base_map_topic, self._map_cb, _MAP_QOS)
         for ns in self._robots:
             self.create_subscription(
                 LaserScan, f'/{ns}/scan',

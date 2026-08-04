@@ -15,6 +15,7 @@ Run alongside slam.launch.py (mapping mode):
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 import tf2_ros
 
 from nav_msgs.msg import OccupancyGrid
@@ -28,6 +29,13 @@ from collections import deque
 import subprocess
 import time
 import os
+
+_MAP_QOS = QoSProfile(
+    history=HistoryPolicy.KEEP_LAST,
+    depth=1,
+    reliability=ReliabilityPolicy.RELIABLE,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+)
 
 
 class FrontierExplorer(Node):
@@ -82,7 +90,7 @@ class FrontierExplorer(Node):
         # ------------------------------------------------------------------
         self._nav_client = ActionClient(self, NavigateToPose, action_name)
         self._map_sub = self.create_subscription(
-            OccupancyGrid, map_topic, self._map_callback, 1)
+            OccupancyGrid, map_topic, self._map_callback, _MAP_QOS)
 
         self.get_logger().info('Waiting for Nav2 action server...')
         self._nav_client.wait_for_server()

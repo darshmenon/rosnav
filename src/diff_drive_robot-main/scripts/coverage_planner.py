@@ -37,10 +37,18 @@ import numpy as np
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import OccupancyGrid
 from nav2_msgs.action import FollowWaypoints
+
+_MAP_QOS = QoSProfile(
+    history=HistoryPolicy.KEEP_LAST,
+    depth=1,
+    reliability=ReliabilityPolicy.RELIABLE,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+)
 
 try:
     import tf2_ros
@@ -103,7 +111,7 @@ class CoveragePlanner(Node):
 
         self._client = ActionClient(self, FollowWaypoints, f'{pre}/{action_ns}')
 
-        self.create_subscription(OccupancyGrid, map_topic, self._map_cb, 1)
+        self.create_subscription(OccupancyGrid, map_topic, self._map_cb, _MAP_QOS)
 
         self.get_logger().info(
             f'CoveragePlanner  ns={ns or "/"}  spacing={self._spacing}m  '
