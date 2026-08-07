@@ -29,6 +29,7 @@ A full autonomous robot navigation stack built on **Nav2**, **SLAM Toolbox**, an
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [Step-by-Step: Map a World and Save It](#step-by-step-map-a-world-and-save-it)
 - [All Launch Modes](#all-launch-modes)
 - [Fleet Management](#fleet-management)
 - [Open-RMF Traffic Scheduling](#open-rmf-traffic-scheduling-experimental)
@@ -108,7 +109,8 @@ sudo apt install -y \
   ros-humble-ros-gz ros-humble-ros-gz-bridge \
   ros-humble-xacro ros-humble-joint-state-publisher \
   ros-humble-nav2-bringup ros-humble-slam-toolbox \
-  ros-humble-navigation2 ros-humble-teleop-twist-keyboard
+  ros-humble-navigation2 ros-humble-teleop-twist-keyboard \
+  ros-humble-laser-filters ros-humble-rviz2
 
 mkdir -p ~/rosnav/src && cd ~/rosnav/src
 git clone https://github.com/darshmenon/rosnav.git
@@ -133,6 +135,105 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 ```
 
 Maps auto-save to `src/diff_drive_robot-main/maps/map_<world>.yaml` every 15 s during exploration.
+
+---
+
+## Step-by-Step: Map a World and Save It
+
+Launch → verify sensors → build a map → save it → localize with AMCL. Every command below was run and verified live.
+
+### 1 — Launch SLAM mode
+```bash
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze explore:=true headless:=true
+```
+`explore:=true` drives and maps on its own. Drop `headless:=true` to watch it in Gazebo/RViz.
+
+### 2 — Check the lidar
+```bash
+ros2 topic hz /scan
+```
+**Expect:** ~10 Hz. Nothing publishing → the bridge/lidar plugin didn't come up; check the launch log.
+
+### 3 — Check odometry
+```bash
+ros2 topic hz /odom
+ros2 topic echo /odom --once
+```
+**Expect:** ~50 Hz, `frame_id: odom`, `child_frame_id: base_link`.
+
+### 4 — Watch the map build
+```bash
+ros2 topic echo /map --once --field info
+```
+**Expect:** `width`/`height` growing as the robot explores. (Localization here is `slam_toolbox`, not AMCL — AMCL only starts in step 6.)
+
+**Visual instead of polling:** drop `headless:=true`, or run RViz separately —
+```bash
+ros2 run rviz2 rviz2 -d src/diff_drive_robot-main/rviz/bot.rviz
+```
+— then enable a **Map** display on `/map`; the grid fills in live.
+
+### 5 — Save the map
+Once size stops growing (step 4, or by eye in RViz):
+```bash
+ros2 run nav2_map_server map_saver_cli -f src/diff_drive_robot-main/maps/map_maze
+```
+**Writes:** `map_maze.yaml` + `map_maze.pgm`. Then `Ctrl+C` the SLAM launch.
+
+### 6 — Relaunch on the saved map with AMCL
+```bash
+ros2 launch diff_drive_robot robot.launch.py world_name:=maze map:=src/diff_drive_robot-main/maps/map_maze.yaml headless:=true
+```
+Localization-only mode: `map_server` publishes the static map, `amcl` estimates pose on it — no more mapping.
+
+### 7 — Check AMCL
+```bash
+ros2 topic echo /amcl_pose --once        # pose estimate
+ros2 topic hz /particle_cloud            # should shrink/converge as the robot moves
+ros2 run tf2_ros tf2_echo map base_link  # resolves once AMCL has localized
+```
+**Stuck at `(0,0,0)` with a wide particle cloud?** AMCL hasn't converged — drive the robot a bit (teleop / a nav goal), or seed it:
+```bash
+ros2 topic pub -1 /initialpose geometry_msgs/msg/PoseWithCovarianceStamped \
+  "{header: {frame_id: map}, pose: {pose: {position: {x: 0.0, y: 0.0}}}}"
+```
+
+### 8 — Optional: 3D map instead (RTAB-Map)
+Same flow, 3D lidar feeding [RTAB-Map](#real-3d-slam-slam_algo3d-rtab-map) instead of `slam_toolbox`:
+```bash
+sudo apt install ros-humble-rtabmap-ros   # skip if already installed
+ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze lidar_type:=3d slam_algo:=3d explore:=true headless:=true
+```
+```bash
+ros2 topic hz /points                       # ~5-10 Hz PointCloud2
+ros2 topic echo /map --once --field info    # 2D projection Nav2 actually plans on
+```
+**No manual save** — `Ctrl+C` (SIGINT) and RTAB-Map saves on clean shutdown:
+```
+rtabmap: Saving database/long-term memory... (located at ~/.ros/rtabmap.db)
+rtabmap: 2D occupancy grid map saved.
+```
+View the real 3D map (point cloud, trajectory, loop closures):
+```bash
+rtabmap-databaseViewer ~/.ros/rtabmap.db
+```
+Each run starts fresh (`-d` flag) — copy `~/.ros/rtabmap.db` elsewhere first to keep more than one.
+
+### 9 — Optional: same walkthrough, multi-robot fleet
+Default fleet mode: `robot1` runs SLAM, `robot2`+ localize with AMCL on `robot1`'s shared `/map` — everything below is namespaced per robot.
+```bash
+ros2 launch diff_drive_robot multi_robot.launch.py world:=maze headless:=true
+```
+```bash
+ros2 topic hz /robot1/scan              # SLAM robot's lidar, ~8-10 Hz
+ros2 topic hz /robot1/odom              # SLAM robot's odometry, ~35-50 Hz
+ros2 topic echo /robot2/amcl_pose --once     # robot2 localizing on robot1's map
+ros2 topic hz /robot2/particle_cloud
+```
+Save the one shared map exactly like step 5 — no namespace needed, `/map` is fleet-wide:
+```bash
+ros2 run nav2_map_server map_saver_cli -f src/diff_drive_robot-main/maps/map_maze
+```
 
 ---
 
@@ -461,6 +562,8 @@ servos in (lateral offset, yaw, distance) until it's centered and at the
 target stand-off distance. Automatically retries (restage or reverse+re-search)
 on a lost/missed marker, up to `max_retries`.
 
+Requires (not in the core install list): `sudo apt install ros-humble-cv-bridge python3-opencv`
+
 ```bash
 # Launch a world with the dock station + marker (hospital world only)
 ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital rviz:=true
@@ -516,7 +619,7 @@ Hungarian assignment across idle robots. Pure-Python — no scipy needed.
 
 ## Open-RMF Traffic Scheduling (experimental)
 
-The fleet-management stack above (task allocator, priority collision avoidance, deadlock recovery) is reactive — robots yield to each other only once a conflict is imminent. `rmf_fleet.launch.py` adds real [Open-RMF](https://osrf.github.io/ros2multirobotbook/) traffic scheduling on the same Nav2 stacks instead: `rmf_traffic_schedule` negotiates conflict-free itineraries across the whole fleet up front, and `rmf_task_dispatcher` assigns tasks to whichever registered robot can do them. Details, architecture, and known gaps: [`concepts.md` §11b](concepts.md#11b-open-rmf-traffic-scheduling-experimental).
+The fleet-management stack above is reactive — robots yield only once a conflict is imminent. `rmf_fleet.launch.py` adds real [Open-RMF](https://osrf.github.io/ros2multirobotbook/) traffic scheduling instead: `rmf_traffic_schedule` negotiates conflict-free itineraries up front, `rmf_task_dispatcher` assigns tasks to available robots. Details: [`concepts.md` §11b](concepts.md#11b-open-rmf-traffic-scheduling-experimental).
 
 Requires (apt, already installed if `ros-humble-rmf-*` shows up in `ros2 pkg list`):
 ```bash
@@ -549,19 +652,19 @@ ros2 launch diff_drive_robot slam_nav.launch.py lidar_type:=3d
 ros2 launch diff_drive_robot multi_robot.launch.py lidar_type:=3d
 ```
 
-`lidar_type:=2d` (default) publishes `sensor_msgs/msg/LaserScan` on `/scan` (`/{ns}/scan` in a fleet). `lidar_type:=3d` swaps in a 16-channel `gpu_lidar` (VLP-16 style) publishing `sensor_msgs/msg/PointCloud2` on `/points` (`/{ns}/points`) instead — mecanum/ackermann ignore this arg and always use 2D.
+`lidar_type:=2d` (default) publishes `sensor_msgs/msg/LaserScan` on `/scan` (`/{ns}/scan` in a fleet). `lidar_type:=3d` swaps in a 16-channel `gpu_lidar` (VLP-16 style) publishing `sensor_msgs/msg/PointCloud2` on `/points` (`/{ns}/points`) instead — mecanum/ackermann ignore this arg and stay 2D.
 
-Both costmaps (local + global) already list a `points` observation source alongside `scan` — Nav2 marks/clears obstacles from whichever one is actually publishing, so `lidar_type:=3d` feeds path planning directly, no separate config needed. Verified end-to-end: real 16×1800 `PointCloud2` data flows on `/points` (and per-robot `/{ns}/points` in a fleet) with correct `frame_id`, and the local costmap marks occupied cells from it with `/scan` absent.
+Both costmaps already list `points` as an observation source alongside `scan`, so `lidar_type:=3d` feeds path planning directly with no extra config. Verified: real 16×1800 `PointCloud2` data flows on `/points` with correct `frame_id`, and the local costmap marks occupied cells from it.
 
-> gz-sim's `gpu_lidar` publishes `gz.msgs.LaserScan` on the sensor's own topic and the real `gz.msgs.PointCloudPacked` on a nested `<topic>/points` — the bridge config bridges that nested topic and (in the fleet launch) remaps it down to a clean `/{ns}/points`.
+> gz-sim's `gpu_lidar` publishes `LaserScan` on its own topic and `PointCloudPacked` on a nested `<topic>/points` — the bridge config bridges that nested topic and remaps it to a clean `/{ns}/points`.
 
-**Mount height / vertical FOV are tunable, not hardcoded:**
+**Mount height / vertical FOV are tunable:**
 ```bash
 ros2 launch diff_drive_robot slam_nav.launch.py lidar_type:=3d lidar3d_height:=0.3 lidar3d_vfov_deg:=8
 ```
-`lidar3d_height` (default `0.25`) and `lidar3d_vfov_deg` (default `10`, the +/- half-angle) thread all the way through `rsp.launch.py` into `lidar3d.xacro`. The defaults fix a real self-collision bug found by inspecting actual point cloud data: at the original 2D-lidar mount height (0.175 m, only 0.025 m above the 0.15 m chassis top), the 3D sensor's added vertical spread put the robot's own chassis inside its downward FOV — closest returns were ~0.36 m at `y=+/-0.2` (matching the chassis edges) and landed at global `z~0.085`, *above* the costmap's `min_obstacle_height:=0.05` filter, so the robot would have seen a phantom obstacle hugging itself everywhere it went. Raising the mount to 0.25 m (0.10 m clearance) moved the closest real return out to ~0.92 m at plausible external-object coordinates — confirmed by direct point cloud inspection, not just log messages.
+`lidar3d_height` (default `0.25`) and `lidar3d_vfov_deg` (default `10`, +/- half-angle) thread through `rsp.launch.py` into `lidar3d.xacro`. The defaults fix a real self-collision bug: at the old 0.175 m mount height, the sensor's own chassis fell inside its downward FOV, registering as a phantom obstacle (`z~0.085`, above the costmap's `min_obstacle_height:=0.05`). 0.25 m clears it — closest real return moves out to ~0.92 m.
 
-By itself, `lidar_type:=3d` does **not** give you 3D SLAM — it only adds the point cloud as a second, height-filtered *obstacle source* into `slam_toolbox`'s existing 2D occupancy grid. For real 3D mapping, add `slam_algo:=3d` (see below).
+By itself, `lidar_type:=3d` does **not** give you 3D SLAM — it only adds the point cloud as a second, height-filtered obstacle source into `slam_toolbox`'s 2D grid. For real 3D mapping, add `slam_algo:=3d` below.
 
 ### Real 3D SLAM: `slam_algo:=3d` (RTAB-Map)
 
@@ -570,11 +673,11 @@ sudo apt install ros-humble-rtabmap-ros
 ros2 launch diff_drive_robot slam_nav.launch.py lidar_type:=3d slam_algo:=3d explore:=false
 ```
 
-Swaps `slam_toolbox` for `rtabmap_slam`'s `rtabmap` node — genuine 3D mapping (point cloud + loop closure), not just a 2D projection. It consumes the *existing* wheel `/odom` directly (same as `slam_toolbox` does today) rather than running RTAB-Map's own `icp_odometry`, specifically to avoid a two-parent TF conflict: two nodes both trying to publish `odom->base_link` would leave that frame with two competing parents, which tf2 doesn't allow. RTAB-Map only adds the `map->odom` layer on top — architecturally a drop-in swap, not a different TF tree. It still projects a 2D `/map` for Nav2 (`Grid/3D:=false`), so the rest of the navigation stack (costmaps, planner, controller, BT) is untouched.
+Swaps `slam_toolbox` for `rtabmap_slam`'s `rtabmap` node — genuine 3D mapping (point cloud + loop closure), not a 2D projection. It consumes the existing wheel `/odom` directly rather than running its own `icp_odometry`, to avoid two nodes fighting over the `odom->base_link` TF — RTAB-Map only adds `map->odom` on top. It still projects a 2D `/map` for Nav2 (`Grid/3D:=false`), so the rest of the nav stack is untouched.
 
-Verified end-to-end: `rtabmap` node starts cleanly, actively cycles ("Maps update" every ~1s), publishes real `/map`, `bt_navigator` reaches `active`, and a nav goal **`SUCCEEDED` in 5.1s**. Confirmed no regression on the default `slam_algo:=2d` path (`slam_toolbox`) with the same test.
+Verified: `rtabmap` starts cleanly, cycles ("Maps update" ~1s), publishes real `/map`, and a nav goal **`SUCCEEDED` in 5.1s** — no regression vs. the default `slam_algo:=2d` path.
 
-Requires `lidar_type:=3d` and `ros-humble-rtabmap-ros` — **fails safe**, not hard: if either is missing, the launch prints a warning and falls back to `slam_algo:=2d` rather than crashing.
+Requires `lidar_type:=3d` and `ros-humble-rtabmap-ros` — **fails safe**: missing either just falls back to `slam_algo:=2d` with a warning, no crash.
 
 ---
 
@@ -595,18 +698,15 @@ Requires `lidar_type:=3d` and `ros-humble-rtabmap-ros` — **fails safe**, not h
 
 All worlds except `outdoor` use SDF primitives only — no external model downloads, instant load. All 10 work with every drive type (`diff`, `mecanum`, `ackermann` — see [Mode 7](#mode-7--holonomic-mecanum-drive) and [Mode 9](#mode-9--ackermann-car-like-drive)) and either controller (`controller:=dwb|mppi`). `multi_terrain`/`outdoor` have no pre-built map yet — launch with `explore:=true` (SLAM mode).
 
-> ℹ️ **`outdoor` and `multi_terrain` auto-pick a safe spawn — no `spawn_x`/`spawn_y`/etc. needed.** `slam_nav.launch.py`'s `spawn_x`/`spawn_y`/`spawn_z`/`spawn_yaw` args default to `'auto'`, which resolves per-world (`_WORLD_SPAWN_DEFAULTS` in the launch file) instead of the old one-size-fits-all (1.5, 1.0):
+> ℹ️ **`outdoor`/`multi_terrain` auto-pick a safe spawn** — `spawn_x/y/z/yaw` default to `'auto'`, resolved per-world instead of one fixed default:
+> - `outdoor`: the generic default sat on the bowl's flat center, out of lidar range — `auto` spawns on the slope instead (40.0, 0.0, 9.0).
+> - `multi_terrain`: the generic default sat on open flat ground with nothing for RTAB-Map's ICP to lock onto, causing drift/false obstacles — `auto` spawns at the foot of `ramp_12deg` instead (2.2, -2.0).
 >
-> - `outdoor`'s generic default sits on the bowl's flat center, out of lidar range of any terrain, so the map stayed 0×0 forever — `auto` now spawns on the slope instead (40.0, 0.0, 9.0).
-> - `multi_terrain`'s generic default sits on the open flat pad before the ramps — wide-open, feature-poor ground gives RTAB-Map's ICP registration nothing to lock rotation/translation against (`RegistrationIcp.cpp: structural complexity is too low`), and the resulting drift showed up as false obstacles in the projected `/map`, boxing the robot in near spawn (confirmed live: every frontier past a ~1m pocket failed to plan). `auto` now spawns at the foot of `ramp_12deg` (2.2, -2.0) instead, giving ICP something real to anchor to.
+> An explicit `spawn_x`/etc. always overrides `auto`. Verified live: both worlds reach real navigation goals with default `auto` spawns.
 >
-> Passing an explicit `spawn_x`/`spawn_y`/etc. always overrides `auto` for that axis. Verified live with plain `world_name:=outdoor|multi_terrain explore:=true lidar_type:=3d slam_algo:=3d headless:=true` and no spawn args at all: `outdoor` reaches multiple `Goal succeeded`; `multi_terrain` reached 4+ real goals moving steadily away from spawn, with transient planner failures recovering on their own via the existing recovery behavior tree.
+> Also fixed along the way: `frontier_explorer`/`frontier_coordinator`/`coverage_planner`/`map_fusion` were subscribing to `/map` with the wrong QoS (could deadlock exploration permanently), and instant/bogus `NavigateToPose` successes now count toward `max_frontier_retries` instead of retrying forever.
 >
-> An earlier attempt fixed this by adding a small static pillar next to `multi_terrain`'s default spawn instead (to give ICP an anchor without changing spawn behavior) — reverted after live testing showed it improved ICP registration quality but still left exploration stuck (0 real goals in 100+s), likely from its own inflated costmap footprint overlapping nearby frontier candidates. The per-world spawn default was the fix that actually worked.
->
-> Also fixed two real bugs found along the way: (1) `frontier_explorer.py`/`frontier_coordinator.py` (and, same pattern, `coverage_planner.py`/`map_fusion.py`) subscribed to `/map` with the wrong QoS (VOLATILE vs. the publisher's TRANSIENT_LOCAL), which could permanently deadlock exploration; (2) `frontier_explorer.py`'s "spurious success" guard (an instant/bogus `NavigateToPose` success under ~0.5s) detected the bad result but never counted it as a failure either, so a phantom frontier could be retried forever with zero progress — it now counts toward `max_frontier_retries` like any other failure.
->
-> `outdoor` first launch downloads the heightmap from Fuel — re-run the same command if the robot doesn't appear (cached after that).
+> `outdoor`'s first launch downloads the heightmap from Fuel — re-run if the robot doesn't appear (cached after).
 
 ```bash
 # Single robot, any world
