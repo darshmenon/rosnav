@@ -1,0 +1,73 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>rosnav_bot</name>
+  <version>0.1.0</version>
+  <description>Autonomous differential drive robot with SLAM and navigation</description>
+  <maintainer email="adoojonathan412@gmail.com">adoodevv</maintainer>
+  <license>Apache 2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+
+  <!-- Core dependencies -->
+  <depend>rclpy</depend>
+  <depend>nav2_bringup</depend>
+  <depend>slam_toolbox</depend>
+  <depend>ros_gz_sim</depend>
+  <depend>ros_gz_bridge</depend>
+  
+  <!-- Sensor & Message dependencies -->
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <exec_depend>laser_filters</exec_depend>
+
+  <!-- Visual docking (aruco_dock.py) -->
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  
+  <!-- Navigation dependencies -->
+  <depend>nav2_msgs</depend>
+  <depend>nav2_common</depend>
+
+  <!-- Open-RMF full traffic scheduling (rmf_fleet_adapter.py / rmf_fleet.launch.py) -->
+  <exec_depend>rmf_fleet_adapter_python</exec_depend>
+  <exec_depend>rmf_traffic_ros2</exec_depend>
+  <exec_depend>rmf_task_ros2</exec_depend>
+  <exec_depend>rmf_task_msgs</exec_depend>
+  <exec_depend>rmf_fleet_msgs</exec_depend>
+
+  <!-- Native Nav2 docking (multi_robot.launch.py drive_type:=diff docking_server) -->
+  <exec_depend>opennav_docking</exec_depend>
+
+  <!-- Real 3D SLAM (slam_nav.launch.py lidar_type:=3d slam_algo:=3d) -->
+  <exec_depend>rtabmap_slam</exec_depend>
+
+  <!-- Python runtime dependencies -->
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>python3-scipy</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  
+  <!-- Gazebo dependencies – gz-sim7/common4/transport11 = Humble (GZ Garden)  -->
+  <!--                         gz-sim8/common5/transport13 = Jazzy  (GZ Harmonic) -->
+  <!-- The correct set will be installed for your ROS distro; the other is ignored. -->
+  <exec_depend>gz-sim7</exec_depend>
+  <exec_depend>gz-common4</exec_depend>
+  <exec_depend>gz-transport11</exec_depend>
+  <exec_depend>gz-sim8</exec_depend>
+  <exec_depend>gz-common5</exec_depend>
+  <exec_depend>gz-transport13</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <gazebo_ros gazebo_model_path="${prefix}/.."/>
+  </export>
+</package>

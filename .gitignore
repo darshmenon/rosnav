@@ -10,10 +10,10 @@ log/
 .rmf_schedule_node.yaml
 
 # Generated maps (keep folder + README only)
-src/diff_drive_robot-main/maps/*.pgm
-src/diff_drive_robot-main/maps/*.yaml
-src/diff_drive_robot-main/maps/*.data
-src/diff_drive_robot-main/maps/*.posegraph
+src/rosnav_bot/maps/*.pgm
+src/rosnav_bot/maps/*.yaml
+src/rosnav_bot/maps/*.data
+src/rosnav_bot/maps/*.posegraph
 
 # Python
 __pycache__/

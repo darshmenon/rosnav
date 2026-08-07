@@ -1,0 +1,14 @@
+# no_go_zones.yaml — Rectangular zones robots must avoid.
+# Published as a keepout mask by: ros2 run rosnav_bot bt_executor.py no_go
+# To permanently bake into costmap: set filter_mask_topic in nav2 params.
+no_go_zones:
+  - name: hazard_a
+    x_min: -5.0
+    x_max: -3.0
+    y_min: -2.0
+    y_max:  2.0
+  - name: restricted_b
+    x_min:  3.0
+    x_max:  5.0
+    y_min:  4.0
+    y_max:  6.0

@@ -125,16 +125,16 @@ source install/setup.bash
 
 ```bash
 # Explore the hospital — SLAM + Nav2 + frontier explorer in one command
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital explore:=true
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
 
 # Multi-robot fleet (2 robots, coordinated exploration)
-ros2 launch diff_drive_robot multi_robot.launch.py
+ros2 launch rosnav_bot multi_robot.launch.py
 
 # Keyboard control (any terminal)
 ros2 run teleop_twist_keyboard teleop_twist_keyboard
 ```
 
-Maps auto-save to `src/diff_drive_robot-main/maps/map_<world>.yaml` every 15 s during exploration.
+Maps auto-save to `src/rosnav_bot/maps/map_<world>.yaml` every 15 s during exploration.
 
 ---
 
@@ -144,7 +144,7 @@ Launch → verify sensors → build a map → save it → localize with AMCL. Ev
 
 ### 1 — Launch SLAM mode
 ```bash
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze explore:=true headless:=true
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=maze explore:=true headless:=true
 ```
 `explore:=true` drives and maps on its own. Drop `headless:=true` to watch it in Gazebo/RViz.
 
@@ -169,20 +169,20 @@ ros2 topic echo /map --once --field info
 
 **Visual instead of polling:** drop `headless:=true`, or run RViz separately —
 ```bash
-ros2 run rviz2 rviz2 -d src/diff_drive_robot-main/rviz/bot.rviz
+ros2 run rviz2 rviz2 -d src/rosnav_bot/rviz/bot.rviz
 ```
 — then enable a **Map** display on `/map`; the grid fills in live.
 
 ### 5 — Save the map
 Once size stops growing (step 4, or by eye in RViz):
 ```bash
-ros2 run nav2_map_server map_saver_cli -f src/diff_drive_robot-main/maps/map_maze
+ros2 run nav2_map_server map_saver_cli -f src/rosnav_bot/maps/map_maze
 ```
 **Writes:** `map_maze.yaml` + `map_maze.pgm`. Then `Ctrl+C` the SLAM launch.
 
 ### 6 — Relaunch on the saved map with AMCL
 ```bash
-ros2 launch diff_drive_robot robot.launch.py world_name:=maze map:=src/diff_drive_robot-main/maps/map_maze.yaml headless:=true
+ros2 launch rosnav_bot robot.launch.py world_name:=maze map:=src/rosnav_bot/maps/map_maze.yaml headless:=true
 ```
 Localization-only mode: `map_server` publishes the static map, `amcl` estimates pose on it — no more mapping.
 
@@ -202,7 +202,7 @@ ros2 topic pub -1 /initialpose geometry_msgs/msg/PoseWithCovarianceStamped \
 Same flow, 3D lidar feeding [RTAB-Map](#real-3d-slam-slam_algo3d-rtab-map) instead of `slam_toolbox`:
 ```bash
 sudo apt install ros-humble-rtabmap-ros   # skip if already installed
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=maze lidar_type:=3d slam_algo:=3d explore:=true headless:=true
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=maze lidar_type:=3d slam_algo:=3d explore:=true headless:=true
 ```
 ```bash
 ros2 topic hz /points                       # ~5-10 Hz PointCloud2
@@ -222,7 +222,7 @@ Each run starts fresh (`-d` flag) — copy `~/.ros/rtabmap.db` elsewhere first t
 ### 9 — Optional: same walkthrough, multi-robot fleet
 Default fleet mode: `robot1` runs SLAM, `robot2`+ localize with AMCL on `robot1`'s shared `/map` — everything below is namespaced per robot.
 ```bash
-ros2 launch diff_drive_robot multi_robot.launch.py world:=maze headless:=true
+ros2 launch rosnav_bot multi_robot.launch.py world:=maze headless:=true
 ```
 ```bash
 ros2 topic hz /robot1/scan              # SLAM robot's lidar, ~8-10 Hz
@@ -232,7 +232,7 @@ ros2 topic hz /robot2/particle_cloud
 ```
 Save the one shared map exactly like step 5 — no namespace needed, `/map` is fleet-wide:
 ```bash
-ros2 run nav2_map_server map_saver_cli -f src/diff_drive_robot-main/maps/map_maze
+ros2 run nav2_map_server map_saver_cli -f src/rosnav_bot/maps/map_maze
 ```
 
 ---
@@ -244,32 +244,32 @@ ros2 run nav2_map_server map_saver_cli -f src/diff_drive_robot-main/maps/map_maz
 #### Mode 1 — Autonomous SLAM + Frontier Exploration
 Gazebo + SLAM + Nav2 + RViz + frontier explorer. Robot maps the world on its own.
 ```bash
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital explore:=true
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
 ```
 
 #### Mode 2 — Manual SLAM
 Drive the robot yourself to build the map.
 ```bash
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital
 # Run frontier explorer later if needed:
-ros2 run diff_drive_robot frontier_explorer.py
+ros2 run rosnav_bot frontier_explorer.py
 ```
 In SLAM mode, localization comes from SLAM Toolbox (`map -> base_link`), not AMCL. RViz **2D Goal Pose** works after Nav2 reports `Managed nodes are active`; keep `safety:=true` enabled so Nav2 `/cmd_vel` is relayed to Gazebo's `/cmd_vel_safe`.
 
 #### Mode 3 — Pre-built Map + AMCL Localisation
 Load a saved map and navigate in localisation-only mode.
 ```bash
-ros2 launch diff_drive_robot robot.launch.py world:=/full/path/to/hospital.world
+ros2 launch rosnav_bot robot.launch.py world:=/full/path/to/hospital.world
 # Force a specific map:
-ros2 launch diff_drive_robot robot.launch.py map:=/full/path/to/my_map.yaml
+ros2 launch rosnav_bot robot.launch.py map:=/full/path/to/my_map.yaml
 ```
 
 #### Mode 4 — Coverage Sweep
 After mapping — boustrophedon lawnmower sweep over the full free space.
 ```bash
-ros2 run diff_drive_robot coverage_planner.py
+ros2 run rosnav_bot coverage_planner.py
 # Tighter rows for warehouse:
-ros2 run diff_drive_robot coverage_planner.py --ros-args -p sweep_spacing:=0.4
+ros2 run rosnav_bot coverage_planner.py --ros-args -p sweep_spacing:=0.4
 ```
 
 #### Mode 5 — 3-Tier Autonomy (Mission + Nav + Safety)
@@ -279,16 +279,16 @@ Nav Layer      ←  Nav2 BT + MPPI      path planning + control
 Safety Layer   ←  collision_monitor   stop / slowdown from scan
 ```
 ```bash
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital safety:=true
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital safety:=true
 
 # Separate terminal — start mission server
-ros2 run diff_drive_robot mission_server.py
+ros2 run rosnav_bot mission_server.py
 
 # Send missions
-ros2 run diff_drive_robot mission_server.py patrol robot1 1,2,0 3,4,90 0,0,180
-ros2 run diff_drive_robot mission_server.py goto robot1 3.0 -1.0 45
-ros2 run diff_drive_robot mission_server.py status
-ros2 run diff_drive_robot mission_server.py cancel
+ros2 run rosnav_bot mission_server.py patrol robot1 1,2,0 3,4,90 0,0,180
+ros2 run rosnav_bot mission_server.py goto robot1 3.0 -1.0 45
+ros2 run rosnav_bot mission_server.py status
+ros2 run rosnav_bot mission_server.py cancel
 ```
 
 #### Mode 6 — LLM Voice Navigation
@@ -299,10 +299,10 @@ Mic → Whisper STT → ollama LLM → NavigateToPose → Nav2
 ```
 ```bash
 # Start nav stack first
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital
 
 # Separate terminal — start LLM navigator
-ros2 run diff_drive_robot llm_nav.py
+ros2 run rosnav_bot llm_nav.py
 
 # Press Enter to speak, or type directly:
 # > go to room_b
@@ -318,7 +318,7 @@ The node retries for up to 60 s if Nav2 is still starting up.
 
 **Override defaults:**
 ```bash
-ros2 run diff_drive_robot llm_nav.py --ros-args \
+ros2 run rosnav_bot llm_nav.py --ros-args \
     -p whisper_model:=small \
     -p ollama_model:=llama2 \
     -p record_seconds:=6.0
@@ -329,7 +329,7 @@ ros2 run diff_drive_robot llm_nav.py --ros-args \
 #### Mode 7 — Holonomic (Mecanum) Drive
 Swap the standard 2-wheel diff-drive base for a 4-wheel mecanum base that can strafe sideways and move diagonally without rotating — useful in tight spaces. Works with any launch mode above via `drive_type:=mecanum`.
 ```bash
-ros2 launch diff_drive_robot robot.launch.py drive_type:=mecanum
+ros2 launch rosnav_bot robot.launch.py drive_type:=mecanum
 
 # strafe sideways with no rotation:
 ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
@@ -340,7 +340,7 @@ Details on what changes under the hood: [concepts.md § 18](concepts.md#18-mecan
 #### Mode 8 — MPPI Controller (Humble)
 Swap DWB (default local controller on Humble) for `nav2_mppi_controller`. Works with any single-robot launch mode via `controller:=mppi`. Jazzy already defaults to MPPI, so this switch is a no-op there.
 ```bash
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital controller:=mppi
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital controller:=mppi
 ```
 Uses a project-tuned `nav2_params_mppi.yaml` (same costmaps/BT/footprint as the default config, DiffDrive motion model, tuned critics). Verified end-to-end in Gazebo: MPPI-driven robot reaches goals and triggers the same recovery BT on failure as DWB.
 
@@ -349,15 +349,15 @@ Uses a project-tuned `nav2_params_mppi.yaml` (same costmaps/BT/footprint as the 
 #### Mode 9 — Ackermann (Car-Like) Drive
 Front-steered, rear-driven base — two fixed rear wheels, two front wheels on steering knuckles. Uses Gazebo's native `AckermannSteering` system plugin and always runs MPPI (with `AckermannConstraints.min_turning_r`) since DWB has no turning-radius constraint.
 ```bash
-ros2 launch diff_drive_robot robot.launch.py drive_type:=ackermann
+ros2 launch rosnav_bot robot.launch.py drive_type:=ackermann
 ```
 For mapping by driving the car-like base, use SLAM mode:
 ```bash
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital drive_type:=ackermann
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital drive_type:=ackermann
 ```
 For the full visual launch with Gazebo GUI + RViz + working 2D Goal Pose:
 ```bash
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital drive_type:=ackermann rviz:=true headless:=false safety:=true
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital drive_type:=ackermann rviz:=true headless:=false safety:=true
 ```
 Details: [concepts.md § 18b](concepts.md#18b-ackermann-car-like-drive).
 
@@ -377,13 +377,13 @@ whose Nav2 server isn't ready yet and avoiding recently failed goals.
 
 ```bash
 # SLAM + coordinated exploration (default)
-ros2 launch diff_drive_robot multi_robot.launch.py
+ros2 launch rosnav_bot multi_robot.launch.py
 
 # Different world
-ros2 launch diff_drive_robot multi_robot.launch.py world:=warehouse
+ros2 launch rosnav_bot multi_robot.launch.py world:=warehouse
 
 # Headless (SSH / CI)
-ros2 launch diff_drive_robot multi_robot.launch.py headless:=true
+ros2 launch rosnav_bot multi_robot.launch.py headless:=true
 ```
 
 #### Fleet size and spawn safety
@@ -394,11 +394,11 @@ other robots, and relocates blocked spawn points within `spawn_search_radius`.
 If no free point is found, launch fails before Gazebo spawns a robot into a wall.
 
 ```bash
-ros2 launch diff_drive_robot multi_robot.launch.py robot_count:=4 robot_layout:=grid
-ros2 launch diff_drive_robot multi_robot.launch.py robot_count:=6 robot_layout:=circle spawn_spacing:=1.4
+ros2 launch rosnav_bot multi_robot.launch.py robot_count:=4 robot_layout:=grid
+ros2 launch rosnav_bot multi_robot.launch.py robot_count:=6 robot_layout:=circle spawn_spacing:=1.4
 
 # Exact custom poses override generated count/layout
-ros2 launch diff_drive_robot multi_robot.launch.py \
+ros2 launch rosnav_bot multi_robot.launch.py \
   robots_json:='[{"name":"robot1","x":-2,"y":-1},{"name":"robot2","x":-0.8,"y":-1},{"name":"robot3","x":0.5,"y":-1}]'
 ```
 
@@ -409,10 +409,10 @@ coordinator — picks up the generated robot list automatically.
 Same `drive_type`/`controller` choice as single-robot mode (Modes 7–9 above), applied to every robot in the fleet:
 ```bash
 # Fleet of mecanum (holonomic) robots
-ros2 launch diff_drive_robot multi_robot.launch.py drive_type:=mecanum
+ros2 launch rosnav_bot multi_robot.launch.py drive_type:=mecanum
 
 # Fleet of Ackermann (car-like) robots
-ros2 launch diff_drive_robot multi_robot.launch.py drive_type:=ackermann
+ros2 launch rosnav_bot multi_robot.launch.py drive_type:=ackermann
 ```
 `diff` (the default) keeps the existing hand-tuned fleet nav2 params. `mecanum`/`ackermann` have no separate fleet-tuned file — they reuse and auto-namespace the single-robot `nav2_params_*.yaml` at launch time instead, so footprint/controller tuning stays in one place per drive type.
 
@@ -422,18 +422,18 @@ weighted scoring. You can switch back to simpler behavior without editing code.
 
 ```bash
 # Default: reachable frontiers, info gain minus travel distance
-ros2 launch diff_drive_robot multi_robot.launch.py frontier_detector:=wfd frontier_scorer:=weighted
+ros2 launch rosnav_bot multi_robot.launch.py frontier_detector:=wfd frontier_scorer:=weighted
 
 # Simpler baseline for comparison
-ros2 launch diff_drive_robot multi_robot.launch.py frontier_detector:=classic frontier_scorer:=nearest
+ros2 launch rosnav_bot multi_robot.launch.py frontier_detector:=classic frontier_scorer:=nearest
 
 # Fuse non-SLAM robots' scans into /map_fused for faster shared mapping
-ros2 launch diff_drive_robot multi_robot.launch.py merge_scans:=true
+ros2 launch rosnav_bot multi_robot.launch.py merge_scans:=true
 
 # Experimental: every robot runs SLAM, maps merge into /map_merged
 # (known-frame merge from spawn poses — not unknown-pose map matching;
 # use a dedicated map-merge backend if robots start unaligned)
-ros2 launch diff_drive_robot multi_robot.launch.py slam_mode:=multi
+ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi
 ```
 
 If Nav2 reports `Failed to make progress` or `0 poses`, the coordinator avoids
@@ -446,7 +446,7 @@ with at least `frontier_clearance_radius` clearance from occupied map cells.
 ros2 topic echo /exploration/stats
 
 # Full fleet management stack
-ros2 launch diff_drive_robot multi_robot.launch.py fleet_mgmt:=true
+ros2 launch rosnav_bot multi_robot.launch.py fleet_mgmt:=true
 ```
 
 RViz can show frontier candidates, assigned goals, visited goals, and assignment
@@ -524,27 +524,27 @@ ros2 topic echo /exploration/stats
 ### CLI
 
 ```bash
-ros2 run diff_drive_robot fleet_manager.py list               # list active robots
-ros2 run diff_drive_robot fleet_manager.py status             # SLAM / Nav2 / map state
-ros2 run diff_drive_robot fleet_manager.py add robot3 1.0 2.0 # spawn robot at (1,2)
-ros2 run diff_drive_robot fleet_manager.py teleop robot1      # keyboard drive
-ros2 run diff_drive_robot fleet_manager.py goto robot2 3.0 -1.0
-ros2 run diff_drive_robot fleet_manager.py dock robot1        # navigate to charging_dock
-ros2 run diff_drive_robot fleet_manager.py undock robot1      # back away 0.5 m from the dock
-ros2 run diff_drive_robot fleet_manager.py explore robot2
-ros2 run diff_drive_robot fleet_manager.py savemap src/diff_drive_robot-main/maps/map_hospital
-ros2 run diff_drive_robot fleet_manager.py health             # per-robot health report
+ros2 run rosnav_bot fleet_manager.py list               # list active robots
+ros2 run rosnav_bot fleet_manager.py status             # SLAM / Nav2 / map state
+ros2 run rosnav_bot fleet_manager.py add robot3 1.0 2.0 # spawn robot at (1,2)
+ros2 run rosnav_bot fleet_manager.py teleop robot1      # keyboard drive
+ros2 run rosnav_bot fleet_manager.py goto robot2 3.0 -1.0
+ros2 run rosnav_bot fleet_manager.py dock robot1        # navigate to charging_dock
+ros2 run rosnav_bot fleet_manager.py undock robot1      # back away 0.5 m from the dock
+ros2 run rosnav_bot fleet_manager.py explore robot2
+ros2 run rosnav_bot fleet_manager.py savemap src/rosnav_bot/maps/map_hospital
+ros2 run rosnav_bot fleet_manager.py health             # per-robot health report
 
 # Missions (mission_server must be running)
-ros2 run diff_drive_robot fleet_manager.py mission robot1 patrol 1,2,0 3,4,90 0,0,180
-ros2 run diff_drive_robot fleet_manager.py mission robot1 status
-ros2 run diff_drive_robot fleet_manager.py mission robot1 cancel
+ros2 run rosnav_bot fleet_manager.py mission robot1 patrol 1,2,0 3,4,90 0,0,180
+ros2 run rosnav_bot fleet_manager.py mission robot1 status
+ros2 run rosnav_bot fleet_manager.py mission robot1 cancel
 
 # Task queue
-ros2 run diff_drive_robot fleet_manager.py tasks add 2.0 1.5 0 pickup_A
-ros2 run diff_drive_robot fleet_manager.py tasks add 4.0 -1.0 90 dock_B
-ros2 run diff_drive_robot fleet_manager.py tasks status
-ros2 run diff_drive_robot fleet_manager.py tasks clear
+ros2 run rosnav_bot fleet_manager.py tasks add 2.0 1.5 0 pickup_A
+ros2 run rosnav_bot fleet_manager.py tasks add 4.0 -1.0 90 dock_B
+ros2 run rosnav_bot fleet_manager.py tasks status
+ros2 run rosnav_bot fleet_manager.py tasks clear
 ```
 
 ### ArUco Visual Docking
@@ -566,14 +566,14 @@ Requires (not in the core install list): `sudo apt install ros-humble-cv-bridge 
 
 ```bash
 # Launch a world with the dock station + marker (hospital world only)
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital rviz:=true
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital rviz:=true
 
 # Dock / undock (single robot — pass '' as the namespace)
-ros2 run diff_drive_robot fleet_manager.py dock '' charging_dock
-ros2 run diff_drive_robot fleet_manager.py undock '' 0.5 0.05
+ros2 run rosnav_bot fleet_manager.py dock '' charging_dock
+ros2 run rosnav_bot fleet_manager.py undock '' 0.5 0.05
 
 # Run just the visual-approach node directly (skips the Nav2 staging step)
-ros2 run diff_drive_robot aruco_dock.py --ros-args -p dock_name:=charging_dock
+ros2 run rosnav_bot aruco_dock.py --ros-args -p dock_name:=charging_dock
 ```
 
 Per-dock settings (marker ID/size, target distance, staging pose, retries) live in
@@ -584,34 +584,34 @@ or add an RViz `Image` display on `/camera/image_raw`.
 
 ### GUI
 ```bash
-ros2 run diff_drive_robot fleet_gui.py
+ros2 run rosnav_bot fleet_gui.py
 ```
 Click on the map to send goals, use sliders for teleop, spawn robots, save the SLAM map — all in one window.
 
 ### Multi-robot teleop
 ```bash
-ros2 run diff_drive_robot multi_teleop.py
+ros2 run rosnav_bot multi_teleop.py
 # WASD to drive, R to switch robot, N to spawn new
 ```
 
 ### Dynamic obstacle tracker
 ```bash
-ros2 run diff_drive_robot obstacle_tracker.py
+ros2 run rosnav_bot obstacle_tracker.py
 # Visualise in RViz: MarkerArray on /obstacle_tracker/markers
 ros2 topic echo /obstacle_tracker/state
 ```
 
 ### Fleet health monitor
 ```bash
-ros2 run diff_drive_robot fleet_health.py
+ros2 run rosnav_bot fleet_health.py
 ros2 topic echo /fleet/health
 ```
 Tracks odom/scan Hz, Nav2 node presence, collision state, and mission state per robot. Reports `OK` / `WARN` / `ERROR` at 1 Hz.
 
 ### Task allocator
 ```bash
-ros2 run diff_drive_robot task_allocator.py  # or fleet_mgmt:=true in multi_robot
-ros2 run diff_drive_robot fleet_manager.py tasks add 2.0 1.5 0 pickup_A
+ros2 run rosnav_bot task_allocator.py  # or fleet_mgmt:=true in multi_robot
+ros2 run rosnav_bot fleet_manager.py tasks add 2.0 1.5 0 pickup_A
 ```
 Hungarian assignment across idle robots. Pure-Python — no scipy needed.
 
@@ -629,13 +629,13 @@ sudo apt install ros-humble-rmf-fleet-adapter-python ros-humble-rmf-traffic-ros2
 
 ```bash
 # 1. Static-map fleet — RMF's nav graph needs fixed map-frame coordinates
-ros2 launch diff_drive_robot multi_robot.launch.py explore:=false robot_count:=2
+ros2 launch rosnav_bot multi_robot.launch.py explore:=false robot_count:=2
 
 # 2. RMF traffic scheduling + task dispatch + fleet adapter (separate terminal)
-ros2 launch diff_drive_robot rmf_fleet.launch.py robot_count:=2
+ros2 launch rosnav_bot rmf_fleet.launch.py robot_count:=2
 
 # 3. Submit a patrol task and watch the fleet negotiate shared corridor space
-ros2 run diff_drive_robot rmf_submit_task.py patrol room_a room_b --rounds 2
+ros2 run rosnav_bot rmf_submit_task.py patrol room_a room_b --rounds 2
 ```
 
 ---
@@ -646,10 +646,10 @@ The URDF supports both 2D and 3D LiDAR, selected with a launch argument — no m
 
 ```bash
 # Single robot
-ros2 launch diff_drive_robot slam_nav.launch.py lidar_type:=3d
+ros2 launch rosnav_bot slam_nav.launch.py lidar_type:=3d
 
 # Fleet — every robot gets 3D lidar
-ros2 launch diff_drive_robot multi_robot.launch.py lidar_type:=3d
+ros2 launch rosnav_bot multi_robot.launch.py lidar_type:=3d
 ```
 
 `lidar_type:=2d` (default) publishes `sensor_msgs/msg/LaserScan` on `/scan` (`/{ns}/scan` in a fleet). `lidar_type:=3d` swaps in a 16-channel `gpu_lidar` (VLP-16 style) publishing `sensor_msgs/msg/PointCloud2` on `/points` (`/{ns}/points`) instead — mecanum/ackermann ignore this arg and stay 2D.
@@ -660,7 +660,7 @@ Both costmaps already list `points` as an observation source alongside `scan`, s
 
 **Mount height / vertical FOV are tunable:**
 ```bash
-ros2 launch diff_drive_robot slam_nav.launch.py lidar_type:=3d lidar3d_height:=0.3 lidar3d_vfov_deg:=8
+ros2 launch rosnav_bot slam_nav.launch.py lidar_type:=3d lidar3d_height:=0.3 lidar3d_vfov_deg:=8
 ```
 `lidar3d_height` (default `0.25`) and `lidar3d_vfov_deg` (default `10`, +/- half-angle) thread through `rsp.launch.py` into `lidar3d.xacro`. The defaults fix a real self-collision bug: at the old 0.175 m mount height, the sensor's own chassis fell inside its downward FOV, registering as a phantom obstacle (`z~0.085`, above the costmap's `min_obstacle_height:=0.05`). 0.25 m clears it — closest real return moves out to ~0.92 m.
 
@@ -670,7 +670,7 @@ By itself, `lidar_type:=3d` does **not** give you 3D SLAM — it only adds the p
 
 ```bash
 sudo apt install ros-humble-rtabmap-ros
-ros2 launch diff_drive_robot slam_nav.launch.py lidar_type:=3d slam_algo:=3d explore:=false
+ros2 launch rosnav_bot slam_nav.launch.py lidar_type:=3d slam_algo:=3d explore:=false
 ```
 
 Swaps `slam_toolbox` for `rtabmap_slam`'s `rtabmap` node — genuine 3D mapping (point cloud + loop closure), not a 2D projection. It consumes the existing wheel `/odom` directly rather than running its own `icp_odometry`, to avoid two nodes fighting over the `odom->base_link` TF — RTAB-Map only adds `map->odom` on top. It still projects a 2D `/map` for Nav2 (`Grid/3D:=false`), so the rest of the nav stack is untouched.
@@ -710,12 +710,12 @@ All worlds except `outdoor` use SDF primitives only — no external model downlo
 
 ```bash
 # Single robot, any world
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=warehouse explore:=true
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=warehouse explore:=true
 
 # Multi-robot, any world
-ros2 launch diff_drive_robot multi_robot.launch.py world:=warehouse
-ros2 launch diff_drive_robot multi_robot.launch.py world:=house
-ros2 launch diff_drive_robot multi_robot.launch.py world:=corridor explore:=false
+ros2 launch rosnav_bot multi_robot.launch.py world:=warehouse
+ros2 launch rosnav_bot multi_robot.launch.py world:=house
+ros2 launch rosnav_bot multi_robot.launch.py world:=corridor explore:=false
 ```
 
 ---
@@ -726,7 +726,7 @@ ros2 launch diff_drive_robot multi_robot.launch.py world:=corridor explore:=fals
 |---|---|
 | `FATAL: plugin X does not exist` | Check `$ROS_DISTRO` is sourced correctly — wrong distro params loaded |
 | `SmacPlannerHybrid` not found | `sudo apt install ros-$ROS_DISTRO-nav2-smac-planner` |
-| Map not saving | Confirm `explore:=true`; maps write to `src/diff_drive_robot-main/maps/` |
+| Map not saving | Confirm `explore:=true`; maps write to `src/rosnav_bot/maps/` |
 | `No frontiers` in explorer logs | Check for `TF_OLD_DATA` / dropped scans; kill stale Gazebo/ROS processes |
 | Robot not moving | `ros2 topic hz /cmd_vel` — if 0, Nav2 lifecycle failed; check node list |
 | 2D Goal Pose accepted but robot does not move | Keep `safety:=true`; Gazebo subscribes to `/cmd_vel_safe`, and the safety relay forwards Nav2 `/cmd_vel` there |

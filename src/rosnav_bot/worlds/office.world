@@ -1,0 +1,150 @@
+<?xml version="1.0" ?>
+<!--
+  office.world — Open-plan office for multi-robot navigation testing.
+  All primitives, no external downloads.
+
+  Layout (22 m × 16 m, x: -11 to +11, y: -8 to +8):
+    Entry door      : East wall gap  y = -1.0 to +1.0
+    Main corridor   : y = -1.2 to +1.2  (2.4 m wide, full E-W length)
+    North wing:
+      Lobby/Reception : x = -11 to  -5  (6 m)
+      Meeting room A  : x =  -5 to  +2  (7 m)
+      Meeting room B  : x =  +2 to  +8  (6 m)
+      Kitchen         : x =  +8 to +11  (3 m)
+    South wing:
+      Open workspace  : x = -11 to  +4  (15 m, cubicle dividers)
+      Server room     : x =  +4 to  +8  (4 m)
+      Break room      : x =  +8 to +11  (3 m)
+
+  Robot spawn: corridor west end, x = -9 to -3, y = -0.5 to +0.5
+
+  Launch:
+    ros2 launch rosnav_bot multi_robot.launch.py world:=office
+    ros2 launch rosnav_bot slam_nav.launch.py world_name:=office explore:=true
+-->
+<sdf version='1.8'>
+  <world name='office'>
+
+    <physics name='1ms' type='ignored'>
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system"
+            name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system"
+            name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system"
+            name="ignition::gazebo::systems::SceneBroadcaster"/>
+    <plugin filename="ignition-gazebo-sensors-system"
+            name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="ignition-gazebo-contact-system"
+            name="ignition::gazebo::systems::Contact"/>
+
+    <light name='sun' type='directional'>
+      <pose>0 0 20 0 0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>-0.1 0.1 -0.95</direction>
+      <diffuse>1.0 0.98 0.96 1</diffuse>
+      <specular>0.3 0.3 0.3 1</specular>
+    </light>
+    <light name='light_w' type='point'>
+      <pose>-6 0 3 0 0 0</pose>
+      <diffuse>0.9 0.9 1.0 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>20</range><linear>0.04</linear></attenuation>
+    </light>
+    <light name='light_e' type='point'>
+      <pose>6 0 3 0 0 0</pose>
+      <diffuse>0.9 0.9 1.0 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>20</range><linear>0.04</linear></attenuation>
+    </light>
+
+    <!-- Ground plane -->
+    <model name='ground_plane'>
+      <static>true</static>
+      <link name='link'>
+        <collision name='c'>
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+        </collision>
+        <visual name='v'>
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+          <material><ambient>0.80 0.80 0.80 1</ambient><diffuse>0.80 0.80 0.80 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ── Floor zone pads (h=0.005 m) ───────────────────────────────────── -->
+    <model name='zone_corridor'><static>true</static><pose>0 0 0.003 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>22 2.4 0.005</size></box></geometry></collision><visual name='v'><geometry><box><size>22 2.4 0.005</size></box></geometry><material><ambient>0.82 0.82 0.84 0.8</ambient><diffuse>0.82 0.82 0.84 0.8</diffuse></material></visual></link></model>
+    <model name='zone_lobby'><static>true</static><pose>-8 4.6 0.003 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>6 6.8 0.005</size></box></geometry></collision><visual name='v'><geometry><box><size>6 6.8 0.005</size></box></geometry><material><ambient>0.72 0.82 0.92 0.7</ambient><diffuse>0.72 0.82 0.92 0.7</diffuse></material></visual></link></model>
+    <model name='zone_mtg_a'><static>true</static><pose>-1.5 4.6 0.003 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>7 6.8 0.005</size></box></geometry></collision><visual name='v'><geometry><box><size>7 6.8 0.005</size></box></geometry><material><ambient>0.75 0.90 0.75 0.7</ambient><diffuse>0.75 0.90 0.75 0.7</diffuse></material></visual></link></model>
+    <model name='zone_mtg_b'><static>true</static><pose>5 4.6 0.003 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>6 6.8 0.005</size></box></geometry></collision><visual name='v'><geometry><box><size>6 6.8 0.005</size></box></geometry><material><ambient>0.78 0.93 0.78 0.7</ambient><diffuse>0.78 0.93 0.78 0.7</diffuse></material></visual></link></model>
+    <model name='zone_kitchen'><static>true</static><pose>9.5 4.6 0.003 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>3 6.8 0.005</size></box></geometry></collision><visual name='v'><geometry><box><size>3 6.8 0.005</size></box></geometry><material><ambient>0.96 0.92 0.72 0.7</ambient><diffuse>0.96 0.92 0.72 0.7</diffuse></material></visual></link></model>
+    <model name='zone_workspace'><static>true</static><pose>-3.5 -4.6 0.003 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>15 6.8 0.005</size></box></geometry></collision><visual name='v'><geometry><box><size>15 6.8 0.005</size></box></geometry><material><ambient>0.92 0.88 0.78 0.7</ambient><diffuse>0.92 0.88 0.78 0.7</diffuse></material></visual></link></model>
+    <model name='zone_server'><static>true</static><pose>6 -4.6 0.003 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>4 6.8 0.005</size></box></geometry></collision><visual name='v'><geometry><box><size>4 6.8 0.005</size></box></geometry><material><ambient>0.62 0.72 0.82 0.7</ambient><diffuse>0.62 0.72 0.82 0.7</diffuse></material></visual></link></model>
+    <model name='zone_break'><static>true</static><pose>9.5 -4.6 0.003 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>3 6.8 0.005</size></box></geometry></collision><visual name='v'><geometry><box><size>3 6.8 0.005</size></box></geometry><material><ambient>0.95 0.82 0.72 0.7</ambient><diffuse>0.95 0.82 0.72 0.7</diffuse></material></visual></link></model>
+
+    <!-- ── Outer walls (22 m × 16 m, 2.5 m tall) ────────────────────────── -->
+    <model name='wall_north'><static>true</static><pose>0 8 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>22.4 0.2 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>22.4 0.2 2.5</size></box></geometry><material><ambient>0.88 0.86 0.82 1</ambient><diffuse>0.88 0.86 0.82 1</diffuse></material></visual></link></model>
+    <model name='wall_south'><static>true</static><pose>0 -8 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>22.4 0.2 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>22.4 0.2 2.5</size></box></geometry><material><ambient>0.88 0.86 0.82 1</ambient><diffuse>0.88 0.86 0.82 1</diffuse></material></visual></link></model>
+    <model name='wall_west'><static>true</static><pose>-11 0 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.2 16 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>0.2 16 2.5</size></box></geometry><material><ambient>0.88 0.86 0.82 1</ambient><diffuse>0.88 0.86 0.82 1</diffuse></material></visual></link></model>
+    <!-- East wall: 2 m entry gap at y = -1 to +1 -->
+    <model name='wall_east_n'><static>true</static><pose>11 4.5 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.2 7 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>0.2 7 2.5</size></box></geometry><material><ambient>0.88 0.86 0.82 1</ambient><diffuse>0.88 0.86 0.82 1</diffuse></material></visual></link></model>
+    <model name='wall_east_s'><static>true</static><pose>11 -4.5 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.2 7 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>0.2 7 2.5</size></box></geometry><material><ambient>0.88 0.86 0.82 1</ambient><diffuse>0.88 0.86 0.82 1</diffuse></material></visual></link></model>
+
+    <!-- ── North corridor wall (y=1.2) — 4 door openings 1.2 m wide ──────── -->
+    <!-- Lobby door at x=-8, MtgA at x=-1.5, MtgB at x=+5, Kitchen at x=+9.5 -->
+    <model name='ncw_1'><static>true</static><pose>-9.8 1.2 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.4 0.2 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>2.4 0.2 2.5</size></box></geometry><material><ambient>0.72 0.70 0.65 1</ambient><diffuse>0.72 0.70 0.65 1</diffuse></material></visual></link></model>
+    <model name='ncw_2'><static>true</static><pose>-4.75 1.2 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>5.3 0.2 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>5.3 0.2 2.5</size></box></geometry><material><ambient>0.72 0.70 0.65 1</ambient><diffuse>0.72 0.70 0.65 1</diffuse></material></visual></link></model>
+    <model name='ncw_3'><static>true</static><pose>1.75 1.2 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>5.3 0.2 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>5.3 0.2 2.5</size></box></geometry><material><ambient>0.72 0.70 0.65 1</ambient><diffuse>0.72 0.70 0.65 1</diffuse></material></visual></link></model>
+    <model name='ncw_4'><static>true</static><pose>7.25 1.2 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>3.3 0.2 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>3.3 0.2 2.5</size></box></geometry><material><ambient>0.72 0.70 0.65 1</ambient><diffuse>0.72 0.70 0.65 1</diffuse></material></visual></link></model>
+    <model name='ncw_5'><static>true</static><pose>10.55 1.2 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.9 0.2 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>0.9 0.2 2.5</size></box></geometry><material><ambient>0.72 0.70 0.65 1</ambient><diffuse>0.72 0.70 0.65 1</diffuse></material></visual></link></model>
+
+    <!-- ── South corridor wall (y=-1.2) — 3 door openings 1.2 m wide ─────── -->
+    <!-- OpenWS door at x=-3.5, Server at x=+6, Break at x=+9.5 -->
+    <model name='scw_1'><static>true</static><pose>-7.55 -1.2 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>6.9 0.2 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>6.9 0.2 2.5</size></box></geometry><material><ambient>0.72 0.70 0.65 1</ambient><diffuse>0.72 0.70 0.65 1</diffuse></material></visual></link></model>
+    <model name='scw_2'><static>true</static><pose>1.25 -1.2 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>8.3 0.2 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>8.3 0.2 2.5</size></box></geometry><material><ambient>0.72 0.70 0.65 1</ambient><diffuse>0.72 0.70 0.65 1</diffuse></material></visual></link></model>
+    <model name='scw_3'><static>true</static><pose>7.75 -1.2 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.3 0.2 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>2.3 0.2 2.5</size></box></geometry><material><ambient>0.72 0.70 0.65 1</ambient><diffuse>0.72 0.70 0.65 1</diffuse></material></visual></link></model>
+    <model name='scw_4'><static>true</static><pose>10.55 -1.2 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.9 0.2 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>0.9 0.2 2.5</size></box></geometry><material><ambient>0.72 0.70 0.65 1</ambient><diffuse>0.72 0.70 0.65 1</diffuse></material></visual></link></model>
+
+    <!-- ── North wing room dividers (y = 1.2 to 8) ───────────────────────── -->
+    <model name='ndiv_lobby_mtga'><static>true</static><pose>-5 4.6 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.2 6.8 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>0.2 6.8 2.5</size></box></geometry><material><ambient>0.72 0.70 0.65 1</ambient><diffuse>0.72 0.70 0.65 1</diffuse></material></visual></link></model>
+    <model name='ndiv_mtga_mtgb'><static>true</static><pose>2 4.6 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.2 6.8 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>0.2 6.8 2.5</size></box></geometry><material><ambient>0.72 0.70 0.65 1</ambient><diffuse>0.72 0.70 0.65 1</diffuse></material></visual></link></model>
+    <model name='ndiv_mtgb_kit'><static>true</static><pose>8 4.6 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.2 6.8 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>0.2 6.8 2.5</size></box></geometry><material><ambient>0.72 0.70 0.65 1</ambient><diffuse>0.72 0.70 0.65 1</diffuse></material></visual></link></model>
+
+    <!-- ── South wing room dividers (y = -8 to -1.2) ────────────────────── -->
+    <model name='sdiv_ws_srv'><static>true</static><pose>4 -4.6 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.2 6.8 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>0.2 6.8 2.5</size></box></geometry><material><ambient>0.72 0.70 0.65 1</ambient><diffuse>0.72 0.70 0.65 1</diffuse></material></visual></link></model>
+    <model name='sdiv_srv_brk'><static>true</static><pose>8 -4.6 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.2 6.8 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>0.2 6.8 2.5</size></box></geometry><material><ambient>0.72 0.70 0.65 1</ambient><diffuse>0.72 0.70 0.65 1</diffuse></material></visual></link></model>
+
+    <!-- ── Cubicle dividers in open workspace (0.9 m tall) ───────────────── -->
+    <!-- Horizontal rows (E-W): x = -9 to +2, centered at x = -3.5 -->
+    <model name='cub_row1'><static>true</static><pose>-3.5 -6.0 0.45 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>11 0.08 0.9</size></box></geometry></collision><visual name='v'><geometry><box><size>11 0.08 0.9</size></box></geometry><material><ambient>0.52 0.50 0.46 1</ambient><diffuse>0.52 0.50 0.46 1</diffuse></material></visual></link></model>
+    <model name='cub_row2'><static>true</static><pose>-3.5 -3.5 0.45 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>11 0.08 0.9</size></box></geometry></collision><visual name='v'><geometry><box><size>11 0.08 0.9</size></box></geometry><material><ambient>0.52 0.50 0.46 1</ambient><diffuse>0.52 0.50 0.46 1</diffuse></material></visual></link></model>
+    <!-- Vertical columns (N-S): y = -7.6 to -1.6, centered at y = -4.6 -->
+    <model name='cub_col1'><static>true</static><pose>-8 -4.6 0.45 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.08 6.0 0.9</size></box></geometry></collision><visual name='v'><geometry><box><size>0.08 6.0 0.9</size></box></geometry><material><ambient>0.52 0.50 0.46 1</ambient><diffuse>0.52 0.50 0.46 1</diffuse></material></visual></link></model>
+    <model name='cub_col2'><static>true</static><pose>-5 -4.6 0.45 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.08 6.0 0.9</size></box></geometry></collision><visual name='v'><geometry><box><size>0.08 6.0 0.9</size></box></geometry><material><ambient>0.52 0.50 0.46 1</ambient><diffuse>0.52 0.50 0.46 1</diffuse></material></visual></link></model>
+    <model name='cub_col3'><static>true</static><pose>-2 -4.6 0.45 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.08 6.0 0.9</size></box></geometry></collision><visual name='v'><geometry><box><size>0.08 6.0 0.9</size></box></geometry><material><ambient>0.52 0.50 0.46 1</ambient><diffuse>0.52 0.50 0.46 1</diffuse></material></visual></link></model>
+
+    <!-- ── Furniture ─────────────────────────────────────────────────────── -->
+    <!-- Reception desk -->
+    <model name='reception_desk'><static>true</static><pose>-8 5.5 0.4 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.5 0.7 0.8</size></box></geometry></collision><visual name='v'><geometry><box><size>2.5 0.7 0.8</size></box></geometry><material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material></visual></link></model>
+    <!-- Meeting table A -->
+    <model name='table_mtg_a'><static>true</static><pose>-1.5 5.5 0.375 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>3.0 1.2 0.75</size></box></geometry></collision><visual name='v'><geometry><box><size>3.0 1.2 0.75</size></box></geometry><material><ambient>0.58 0.48 0.36 1</ambient><diffuse>0.58 0.48 0.36 1</diffuse></material></visual></link></model>
+    <!-- Meeting table B -->
+    <model name='table_mtg_b'><static>true</static><pose>5 5.5 0.375 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.5 1.2 0.75</size></box></geometry></collision><visual name='v'><geometry><box><size>2.5 1.2 0.75</size></box></geometry><material><ambient>0.58 0.48 0.36 1</ambient><diffuse>0.58 0.48 0.36 1</diffuse></material></visual></link></model>
+    <!-- Kitchen counter along north wall -->
+    <model name='kitchen_counter'><static>true</static><pose>9.5 7.4 0.45 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.7 0.9</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.7 0.9</size></box></geometry><material><ambient>0.72 0.68 0.58 1</ambient><diffuse>0.72 0.68 0.58 1</diffuse></material></visual></link></model>
+    <!-- Server racks (2 units) -->
+    <model name='server_rack_a'><static>true</static><pose>5.0 -5 1.0 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.7 0.6 2.0</size></box></geometry></collision><visual name='v'><geometry><box><size>0.7 0.6 2.0</size></box></geometry><material><ambient>0.22 0.28 0.38 1</ambient><diffuse>0.22 0.28 0.38 1</diffuse></material></visual></link></model>
+    <model name='server_rack_b'><static>true</static><pose>6.5 -5 1.0 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.7 0.6 2.0</size></box></geometry></collision><visual name='v'><geometry><box><size>0.7 0.6 2.0</size></box></geometry><material><ambient>0.22 0.28 0.38 1</ambient><diffuse>0.22 0.28 0.38 1</diffuse></material></visual></link></model>
+    <!-- Break room table -->
+    <model name='break_table'><static>true</static><pose>9.5 -5 0.375 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>1.4 1.0 0.75</size></box></geometry></collision><visual name='v'><geometry><box><size>1.4 1.0 0.75</size></box></geometry><material><ambient>0.60 0.52 0.42 1</ambient><diffuse>0.60 0.52 0.42 1</diffuse></material></visual></link></model>
+    <!-- Charging dock (against lobby north wall) -->
+    <model name='charger'><static>true</static><pose>-10 7.5 0.3 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.6 0.4 0.6</size></box></geometry></collision><visual name='v'><geometry><box><size>0.6 0.4 0.6</size></box></geometry><material><ambient>0.1 0.7 0.2 1</ambient><diffuse>0.1 0.7 0.2 1</diffuse></material></visual></link></model>
+
+  </world>
+</sdf>

@@ -47,12 +47,12 @@ The output is a `/map` topic (OccupancyGrid) used by Nav2.
 
 ```
 Run to build the map:
-  ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital
+  ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital
 
 Run to auto-explore and progressively save the map:
-  ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital explore:=true
+  ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
 
-Maps will automatically be saved to `src/diff_drive_robot-main/maps/map_hospital` or `map_obstacles`.
+Maps will automatically be saved to `src/rosnav_bot/maps/map_hospital` or `map_obstacles`.
 ```
 
 ---
@@ -133,7 +133,7 @@ Configured under `controller_server → FollowPath` in `nav2_params.yaml`.
 3. Nav2 navigates to each in sequence, reporting feedback after each one.
 
 ```bash
-ros2 run diff_drive_robot waypoint_nav.py
+ros2 run rosnav_bot waypoint_nav.py
 ```
 
 Edit `WAYPOINTS` at the top of the script to change the route.
@@ -153,7 +153,7 @@ Edit `WAYPOINTS` at the top of the script to change the route.
 
 ```bash
 # Single command — SLAM + Nav2 + frontier explorer + auto-save
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital explore:=true
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
 ```
 
 Recent reliability fixes in `frontier_explorer.py`:
@@ -198,8 +198,8 @@ Spawn validation (on by default) relocates any robot whose generated/given pose
 falls inside a wall, other robot, or outside a `zone_*` spawn area.
 
 ```bash
-ros2 launch diff_drive_robot multi_robot.launch.py robot_count:=4 robot_layout:=grid
-ros2 launch diff_drive_robot multi_robot.launch.py \
+ros2 launch rosnav_bot multi_robot.launch.py robot_count:=4 robot_layout:=grid
+ros2 launch rosnav_bot multi_robot.launch.py \
   robots_json:='[{"name":"robot1","x":-2,"y":-1},{"name":"robot2","x":-0.8,"y":-1}]'
 ```
 
@@ -225,13 +225,13 @@ topics get `/<ns>` inserted).
 
 ```bash
 # SLAM + frontier exploration in hospital (default)
-ros2 launch diff_drive_robot multi_robot.launch.py
+ros2 launch rosnav_bot multi_robot.launch.py
 
 # Pre-built map mode
-ros2 launch diff_drive_robot multi_robot.launch.py explore:=false
+ros2 launch rosnav_bot multi_robot.launch.py explore:=false
 
 # Different world
-ros2 launch diff_drive_robot multi_robot.launch.py world:=obstacles explore:=false
+ros2 launch rosnav_bot multi_robot.launch.py world:=obstacles explore:=false
 
 # Send goal to robot1
 ros2 action send_goal /robot1/navigate_to_pose nav2_msgs/action/NavigateToPose \
@@ -254,8 +254,8 @@ ros2 action send_goal /robot2/navigate_to_pose nav2_msgs/action/NavigateToPose \
 ### Fleet-wide drive type
 `drive_type`/`controller` — the same choice single-robot mode offers (§18, §18b) — apply to the whole fleet:
 ```bash
-ros2 launch diff_drive_robot multi_robot.launch.py drive_type:=mecanum
-ros2 launch diff_drive_robot multi_robot.launch.py drive_type:=ackermann
+ros2 launch rosnav_bot multi_robot.launch.py drive_type:=mecanum
+ros2 launch rosnav_bot multi_robot.launch.py drive_type:=ackermann
 ```
 `diff` (default) is unchanged — it still uses the hand-tuned `nav2_multirobot_params.yaml`.
 `mecanum`/`ackermann` have no hand-tuned fleet template, so `_make_robot_params()`
@@ -282,7 +282,7 @@ way the diff-drive template was, so treat those as a starting point.
 The optional fleet-management layer is enabled with:
 
 ```bash
-ros2 launch diff_drive_robot multi_robot.launch.py fleet_mgmt:=true
+ros2 launch rosnav_bot multi_robot.launch.py fleet_mgmt:=true
 ```
 
 It starts five cooperating nodes:
@@ -367,10 +367,10 @@ Pieces:
 |---|---|---|
 | `rmf_traffic_schedule` | `rmf_traffic_ros2` | Traffic scheduler — negotiates conflict-free paths across the fleet |
 | `rmf_task_dispatcher` | `rmf_task_ros2` | Assigns submitted tasks to registered robots |
-| `rmf_fleet_adapter.py` | this package | Thin entry point → `diff_drive_robot.rmf.adapter.main()`. Registers `robot1..robotN` as one RMF fleet; bridges RMF path commands to each robot's existing `/{ns}/navigate_to_pose` |
+| `rmf_fleet_adapter.py` | this package | Thin entry point → `rosnav_bot.rmf.adapter.main()`. Registers `robot1..robotN` as one RMF fleet; bridges RMF path commands to each robot's existing `/{ns}/navigate_to_pose` |
 | `rmf_submit_task.py` | this package | CLI to submit a patrol task over `/task_api_requests` |
 
-The adapter logic lives in the `diff_drive_robot/rmf/` Python package, not in the script itself:
+The adapter logic lives in the `rosnav_bot/rmf/` Python package, not in the script itself:
 
 | Module | Role |
 |---|---|
@@ -394,13 +394,13 @@ Run:
 
 ```bash
 # 1. Static-map fleet (RMF's graph needs fixed map-frame coordinates)
-ros2 launch diff_drive_robot multi_robot.launch.py explore:=false robot_count:=2
+ros2 launch rosnav_bot multi_robot.launch.py explore:=false robot_count:=2
 
 # 2. RMF traffic scheduling + task dispatch + fleet adapter
-ros2 launch diff_drive_robot rmf_fleet.launch.py robot_count:=2
+ros2 launch rosnav_bot rmf_fleet.launch.py robot_count:=2
 
 # 3. Submit a patrol task and watch the fleet negotiate shared corridor space
-ros2 run diff_drive_robot rmf_submit_task.py patrol room_a room_b --rounds 2
+ros2 run rosnav_bot rmf_submit_task.py patrol room_a room_b --rounds 2
 ```
 
 `rmf_submit_task.py`'s payload shape (envelope + `task_request` fields) is verified against the upstream `open-rmf/rmf_api_msgs` JSON schemas and `open-rmf/rmf_demos`'s `dispatch_patrol.py` reference implementation — not yet exercised against a live `rmf_task_dispatcher` in this repo, but the shape itself is confirmed correct. If a live dispatcher still rejects it, `ros2 topic echo /task_api_responses` while resubmitting will show why.
@@ -495,21 +495,21 @@ Mount the camera link at any offset from `chassis`:
 
 ### `fleet_manager.py` — Product-like fleet CLI
 ```bash
-ros2 run diff_drive_robot fleet_manager.py list          # list active robots
-ros2 run diff_drive_robot fleet_manager.py status        # map/SLAM/Nav2 status
-ros2 run diff_drive_robot fleet_manager.py add robot3 1.0 2.0   # dynamic spawn
-ros2 run diff_drive_robot fleet_manager.py teleop robot1 # keyboard control
-ros2 run diff_drive_robot fleet_manager.py goto robot2 3.0 -1.0 # nav goal
-ros2 run diff_drive_robot fleet_manager.py dock robot1           # navigate to charging_dock
-ros2 run diff_drive_robot fleet_manager.py undock robot1         # back away 0.5 m from the dock
-ros2 run diff_drive_robot fleet_manager.py explore robot2        # frontier
-ros2 run diff_drive_robot fleet_manager.py savemap /tmp/my_map   # save SLAM map
-ros2 run diff_drive_robot fleet_manager.py stop robot1           # cancel nav
+ros2 run rosnav_bot fleet_manager.py list          # list active robots
+ros2 run rosnav_bot fleet_manager.py status        # map/SLAM/Nav2 status
+ros2 run rosnav_bot fleet_manager.py add robot3 1.0 2.0   # dynamic spawn
+ros2 run rosnav_bot fleet_manager.py teleop robot1 # keyboard control
+ros2 run rosnav_bot fleet_manager.py goto robot2 3.0 -1.0 # nav goal
+ros2 run rosnav_bot fleet_manager.py dock robot1           # navigate to charging_dock
+ros2 run rosnav_bot fleet_manager.py undock robot1         # back away 0.5 m from the dock
+ros2 run rosnav_bot fleet_manager.py explore robot2        # frontier
+ros2 run rosnav_bot fleet_manager.py savemap /tmp/my_map   # save SLAM map
+ros2 run rosnav_bot fleet_manager.py stop robot1           # cancel nav
 ```
 
 ### `multi_teleop.py` — Interactive multi-robot keyboard teleop
 ```bash
-ros2 run diff_drive_robot multi_teleop.py
+ros2 run rosnav_bot multi_teleop.py
 # → shows robot list, select one, drive it, switch with R, spawn new with N
 ```
 
@@ -533,9 +533,9 @@ Uses only `/scan` (LiDAR) and `/odom`, no map required. Good for unstructured en
 
 For this repo, a cleaner layout helps debugging and repeatability:
 
-- Keep ROS package source under `src/diff_drive_robot-main/` only.
+- Keep ROS package source under `src/rosnav_bot/` only.
 - Move generated/runtime artifacts out of root into:
-  - `src/diff_drive_robot-main/maps/` for generated `map_*.yaml` and `map_*.pgm`
+  - `src/rosnav_bot/maps/` for generated `map_*.yaml` and `map_*.pgm`
   - `logs/` for launch or benchmark logs
 - Add `scripts/` at repo root only for workflow wrappers (build/test/run), not ROS nodes.
 - Keep docs in `docs/` (`README.md` for quickstart, `concepts.md` for deep reference).
@@ -579,7 +579,7 @@ uses.
 
 ### Try it
 ```bash
-ros2 launch diff_drive_robot robot.launch.py drive_type:=mecanum headless:=true rviz:=false
+ros2 launch rosnav_bot robot.launch.py drive_type:=mecanum headless:=true rviz:=false
 
 # strafe sideways with no rotation:
 ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
@@ -609,10 +609,10 @@ vehicle can actually steer.
 
 ### Try it
 ```bash
-ros2 launch diff_drive_robot robot.launch.py drive_type:=ackermann headless:=true rviz:=false
+ros2 launch rosnav_bot robot.launch.py drive_type:=ackermann headless:=true rviz:=false
 
 # Mapping by manually driving the car-like base:
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital drive_type:=ackermann
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital drive_type:=ackermann
 
 # drive forward while turning — steering angle emerges from angular.z:
 ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
@@ -657,7 +657,7 @@ source ~/rosnav/install/setup.bash
 
 # Build after any changes
 cd ~/rosnav
-colcon build --symlink-install --packages-select diff_drive_robot
+colcon build --symlink-install --packages-select rosnav_bot
 ```
 
 Map selection behavior:
@@ -703,18 +703,18 @@ ros2 node list | grep -E "amcl|planner|controller|bt_navigator"
 ros2 topic hz /cmd_vel
 
 # Save map after SLAM mapping (world-aware naming)
-ros2 run nav2_map_server map_saver_cli -f src/diff_drive_robot-main/maps/map_hospital
-ros2 run nav2_map_server map_saver_cli -f src/diff_drive_robot-main/maps/map_obstacles
+ros2 run nav2_map_server map_saver_cli -f src/rosnav_bot/maps/map_hospital
+ros2 run nav2_map_server map_saver_cli -f src/rosnav_bot/maps/map_obstacles
 
 # Load custom waypoints
-ros2 run diff_drive_robot waypoint_nav.py --ros-args \
+ros2 run rosnav_bot waypoint_nav.py --ros-args \
     -p waypoints_file:=~/rosnav/waypoints.yaml
 
 # Run frontier exploration (slam_nav.launch.py must be active)
-ros2 run diff_drive_robot frontier_explorer.py
+ros2 run rosnav_bot frontier_explorer.py
 
 # Reset robot to origin
-ros2 run diff_drive_robot reset_pose.py --ros-args \
+ros2 run rosnav_bot reset_pose.py --ros-args \
     -p world_name:=obstacles -p robot_name:=diff_drive
 ```
 
@@ -770,10 +770,10 @@ Each layer is independent — the safety layer can stop the robot regardless of 
 
 ```bash
 # Launch with slam_nav (safety:=true is default):
-ros2 launch diff_drive_robot slam_nav.launch.py world_name:=hospital safety:=true
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital safety:=true
 
 # Or run standalone:
-ros2 run diff_drive_robot collision_monitor.py --ros-args \
+ros2 run rosnav_bot collision_monitor.py --ros-args \
     -p stop_distance:=0.35 -p watch_all_around:=true
 
 # Monitor state:
@@ -808,27 +808,27 @@ Cancel with `action: cancel`:
 
 ```bash
 # Start daemon:
-ros2 run diff_drive_robot mission_server.py
+ros2 run rosnav_bot mission_server.py
 
 # Patrol robot1 through 3 waypoints:
-ros2 run diff_drive_robot mission_server.py patrol robot1 1,2,0 3,4,90 0,0,180
+ros2 run rosnav_bot mission_server.py patrol robot1 1,2,0 3,4,90 0,0,180
 
 # Single goal:
-ros2 run diff_drive_robot mission_server.py goto robot1 3.0 -1.0 45
+ros2 run rosnav_bot mission_server.py goto robot1 3.0 -1.0 45
 
 # Check all robots:
-ros2 run diff_drive_robot mission_server.py status
+ros2 run rosnav_bot mission_server.py status
 
 # Check just one robot:
-ros2 run diff_drive_robot mission_server.py status robot1
+ros2 run rosnav_bot mission_server.py status robot1
 
 # Cancel:
-ros2 run diff_drive_robot mission_server.py cancel
+ros2 run rosnav_bot mission_server.py cancel
 
 # Via fleet_manager:
-ros2 run diff_drive_robot fleet_manager.py mission robot1 patrol 1,2,0 3,4,90
-ros2 run diff_drive_robot fleet_manager.py mission robot1 status
-ros2 run diff_drive_robot fleet_manager.py collision robot1
+ros2 run rosnav_bot fleet_manager.py mission robot1 patrol 1,2,0 3,4,90
+ros2 run rosnav_bot fleet_manager.py mission robot1 status
+ros2 run rosnav_bot fleet_manager.py collision robot1
 ```
 
 ---
@@ -948,13 +948,13 @@ To revert to Nav2's built-in BT, set that value to `""`.
 
 ```bash
 # Single robot coverage after mapping:
-ros2 run diff_drive_robot coverage_planner.py
+ros2 run rosnav_bot coverage_planner.py
 
 # Tighter sweep (warehouse):
-ros2 run diff_drive_robot coverage_planner.py --ros-args -p sweep_spacing:=0.4
+ros2 run rosnav_bot coverage_planner.py --ros-args -p sweep_spacing:=0.4
 
 # Multi-robot:
-ros2 run diff_drive_robot coverage_planner.py --ros-args -p robot_ns:=robot2
+ros2 run rosnav_bot coverage_planner.py --ros-args -p robot_ns:=robot2
 ```
 
 ---
@@ -988,18 +988,18 @@ ros2 run diff_drive_robot coverage_planner.py --ros-args -p robot_ns:=robot2
 
 ```bash
 # Start daemons (or launch `multi_robot.launch.py fleet_mgmt:=true`):
-ros2 run diff_drive_robot task_allocator.py
+ros2 run rosnav_bot task_allocator.py
 
 # Add tasks:
-ros2 run diff_drive_robot task_allocator.py add 2.0 1.5 0 pickup_A
-ros2 run diff_drive_robot task_allocator.py add 4.0 -1.0 90 dock_B
-ros2 run diff_drive_robot task_allocator.py add 0.0 3.0 180
+ros2 run rosnav_bot task_allocator.py add 2.0 1.5 0 pickup_A
+ros2 run rosnav_bot task_allocator.py add 4.0 -1.0 90 dock_B
+ros2 run rosnav_bot task_allocator.py add 0.0 3.0 180
 
 # Monitor:
-ros2 run diff_drive_robot task_allocator.py status
+ros2 run rosnav_bot task_allocator.py status
 
 # Or via fleet_manager:
-ros2 run diff_drive_robot fleet_manager.py tasks add 2.0 1.5 0 pickup_A
-ros2 run diff_drive_robot fleet_manager.py tasks status
-ros2 run diff_drive_robot fleet_manager.py tasks clear
+ros2 run rosnav_bot fleet_manager.py tasks add 2.0 1.5 0 pickup_A
+ros2 run rosnav_bot fleet_manager.py tasks status
+ros2 run rosnav_bot fleet_manager.py tasks clear
 ```
