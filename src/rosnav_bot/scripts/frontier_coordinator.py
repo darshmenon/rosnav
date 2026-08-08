@@ -17,7 +17,11 @@ assign_radius     Radius (m) within which a frontier counts as taken (default 1.
 poll_period       Seconds between assignment cycles (default 2.0)
 map_topic         OccupancyGrid topic (default /map)
 min_goal_distance Ignore frontiers closer than this to the robot (default 0.35)
-frontier_clearance_radius Minimum map clearance around frontier goals (default 0.30)
+frontier_clearance_radius Minimum map clearance around frontier goals (default 0.40).
+                  Must exceed the largest robot_radius in use (0.34 for mppi configs)
+                  or goal cells can land inside the costmap's lethal inscribed zone,
+                  causing "GridBased: failed to create plan" even though the raw map
+                  shows the cell as free.
 failed_goal_radius Radius for matching failed frontier goals (default 0.75)
 failed_goal_cooldown Seconds to avoid a failed frontier area (default 45)
 distance_weight   Weighted scorer distance penalty (default 1.0)
@@ -82,7 +86,7 @@ class FrontierCoordinator(Node):
         self.declare_parameter('poll_period', 2.0)
         self.declare_parameter('map_topic', '/map')
         self.declare_parameter('min_goal_distance', 0.35)
-        self.declare_parameter('frontier_clearance_radius', 0.30)
+        self.declare_parameter('frontier_clearance_radius', 0.40)
         self.declare_parameter('failed_goal_radius', 0.75)
         self.declare_parameter('failed_goal_cooldown', 45.0)
         self.declare_parameter('distance_weight', 1.0)
@@ -130,6 +134,7 @@ class FrontierCoordinator(Node):
 
         self._map: OccupancyGrid | None = None
         self._map_saved = False
+        self._ever_assigned_goal = False
         self._start_time = self.get_clock().now()
         self._last_frontier_count = 0
         self._failed_goals = 0
@@ -216,9 +221,11 @@ class FrontierCoordinator(Node):
                     continue
                 self._assigned[r] = goal
                 self._state[r] = _State.NAVIGATING
+                self._ever_assigned_goal = True
                 self.get_logger().info(f'[{r}] assigned ({goal[0]:.2f}, {goal[1]:.2f})')
                 self._send_goal(r, goal[0], goal[1])
-        elif not frontiers and all(s == _State.IDLE for s in self._state.values()):
+        elif (not frontiers and self._ever_assigned_goal
+              and all(s == _State.IDLE for s in self._state.values())):
             self.get_logger().info('Exploration complete — no frontiers remain.')
             self._save_map()
 

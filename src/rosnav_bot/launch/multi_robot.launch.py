@@ -1005,12 +1005,15 @@ def _build_all(context, pkg_share: str):
 
     # ── RViz ─────────────────────────────────────────────────────────────────
     if not headless:
+        rviz_config = LaunchConfiguration('rviz_config').perform(context).strip()
+        if not rviz_config:
+            rviz_config = 'multi_robot_merged.rviz' if slam_mode == 'multi' else 'multi_robot.rviz'
         actions.append(GroupAction(
             condition=IfCondition(LaunchConfiguration('rviz')),
             actions=[Node(
                 package='rviz2',
                 executable='rviz2',
-                arguments=['-d', os.path.join(pkg_share, 'rviz', 'multi_robot.rviz')],
+                arguments=['-d', os.path.join(pkg_share, 'rviz', rviz_config)],
                 output='screen')]))
 
     return actions
@@ -1027,6 +1030,10 @@ def generate_launch_description():
             description='Pre-built map yaml path. Ignored when explore:=true'),
         DeclareLaunchArgument(
             'rviz', default_value='True', description='Launch RViz'),
+        DeclareLaunchArgument(
+            'rviz_config', default_value='',
+            description='RViz config filename under rviz/. Default auto-picks '
+                        'multi_robot_merged.rviz (slam_mode:=multi) or multi_robot.rviz (slam_mode:=single).'),
         DeclareLaunchArgument(
             'explore', default_value='true',
             description='true = SLAM + frontier exploration (default). '

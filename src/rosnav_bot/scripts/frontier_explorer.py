@@ -84,6 +84,7 @@ class FrontierExplorer(Node):
         self._goal_sent_time: float = 0.0
         self._iteration = 0
         self._map_saved = False
+        self._logged_init_wait = False
 
         # ------------------------------------------------------------------
         # ROS interfaces
@@ -113,6 +114,13 @@ class FrontierExplorer(Node):
 
         frontiers = self._find_frontiers()
         if not frontiers:
+            if self._iteration == 0:
+                if not self._logged_init_wait:
+                    self.get_logger().info(
+                        'No frontiers yet — map still initializing, waiting before '
+                        'treating this as exploration-complete.')
+                    self._logged_init_wait = True
+                return
             self.get_logger().info('No frontiers — exploration complete.')
             self._save_map_once()
             return
