@@ -20,6 +20,10 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 
+# Ultralytics auto-downloaded YOLO weights (yolo_detector.py) — fetched on
+# first run wherever ros2 launch's cwd happens to be; not source, don't track.
+*.pt
+
 # OS
 .DS_Store
 *.swp

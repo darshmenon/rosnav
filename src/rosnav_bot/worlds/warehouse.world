@@ -1,7 +1,11 @@
 <?xml version="1.0" ?>
 <!--
   warehouse.world — Large warehouse environment for multi-robot fleet testing.
-  All primitives: loads instantly, no external model downloads required.
+  Structure (walls/shelves/pillars/pallets) is all primitives: loads instantly,
+  no downloads needed for those. A handful of real-world objects (person, chair,
+  fire hydrant, suitcase — for yolo_detector.py / enable_yolo:=true testing) are
+  pulled from Gazebo Fuel via <include><uri>, which gz sim downloads once and
+  caches locally (~/.gz/fuel) — needs internet on first launch only.
 
   Layout (24 m × 20 m):
     Staging / spawn zone  :  x = -11 to -4,  y = -8 to 8  (western open area)
@@ -317,6 +321,38 @@
         </visual>
       </link>
     </model>
+
+    <!-- ── Detectable objects (Gazebo Fuel, OpenRobotics collection) ──────
+         For yolo_detector.py testing — these map to COCO classes (person,
+         chair, fire hydrant, suitcase) so YOLOv8 actually finds something,
+         unlike the primitive shelves/pallets above. Placed in open staging-
+         zone floor and by the loading dock, clear of the robot spawn path
+         and shelf rows. Downloaded + cached by gz sim on first launch. -->
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Standing person</uri>
+      <name>person_1</name>
+      <pose>-7 5 0 0 0 0</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Walking person</uri>
+      <name>person_2</name>
+      <pose>-7 -5 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/foldable_chair</uri>
+      <name>chair_1</name>
+      <pose>-8.5 2 0 0 0 0</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Fire hydrant</uri>
+      <name>fire_hydrant_1</name>
+      <pose>-8.5 -2 0 0 0 0</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Suitcase1</uri>
+      <name>suitcase_1</name>
+      <pose>10.5 0 0 0 0 0</pose>
+    </include>
 
   </world>
 </sdf>
