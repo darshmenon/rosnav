@@ -30,6 +30,7 @@ A full autonomous robot navigation stack built on **Nav2**, **SLAM Toolbox**, an
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Step-by-Step: Map a World and Save It](#step-by-step-map-a-world-and-save-it)
+- [Frontier Exploration](#frontier-exploration)
 - [All Launch Modes](#all-launch-modes)
 - [Fleet Management](#fleet-management)
 - [Open-RMF Traffic Scheduling](#open-rmf-traffic-scheduling-experimental)
@@ -131,7 +132,8 @@ source /opt/ros/humble/setup.bash
 source install/setup.bash   # after: make build
 
 # Shortest path — Makefile shortcuts (see `make help`)
-make explore                         # hospital SLAM + frontier
+make map                             # hospital SLAM only — drive yourself, no frontier
+make explore                         # hospital SLAM + frontier (see Frontier Exploration below)
 make fleet ROBOTS=2                  # 2-robot coordinated explore
 make yolo                            # warehouse + YOLO
 make fleet-mgmt                      # missions / tasks / health
@@ -144,7 +146,10 @@ make dock                            # hospital (then fleet_manager dock)
 Same launches without Make:
 
 ```bash
-# Single robot — explore + map
+# Single robot — SLAM only, drive yourself (no frontier explorer)
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital
+
+# Single robot — SLAM + autonomous frontier explore
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
 
 # Multi-robot fleet (2 robots, coordinated exploration)
@@ -172,7 +177,7 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 ```
 
 Optional vars for Make: `WORLD=maze HEADLESS=true ROBOTS=4`  
-Maps auto-save to `src/rosnav_bot/maps/map_<world>.yaml` during exploration (`make save-map MAP=src/rosnav_bot/maps/map_hospital`).
+Maps auto-save to `src/rosnav_bot/maps/map_<world>.yaml` during exploration (`make save-map MAP=src/rosnav_bot/maps/map_hospital`). Details on what the frontier explorer actually does: [Frontier Exploration](#frontier-exploration).
 
 ---
 
@@ -282,26 +287,38 @@ ros2 run nav2_map_server map_saver_cli -t /map_merged -f src/rosnav_bot/maps/map
 
 ---
 
+## Frontier Exploration
+
+What `frontier_explorer.py` actually does: picks a reachable unexplored cell on the live SLAM map and drives Nav2 there (`NavigateToPose`), retrying a blocked goal up to `max_frontier_retries` before moving on. Stops once nothing's left to explore.
+
+**Map saving:** autosaves progressively every 10 iterations plus a final save on completion/`Ctrl+C`, via `map_saver_cli -t <map_topic> -f <map_save_path>` (default `src/rosnav_bot/maps/map_<world>.yaml`). `slam_mode:=multi` saves `/map_merged` instead of `/map`.
+
+**AMCL handoff:** once a map exists, relaunch on it in localization-only mode — no more SLAM, no more explorer:
+```bash
+ros2 launch rosnav_bot robot.launch.py map:=src/rosnav_bot/maps/map_hospital.yaml
+```
+`map_server` publishes the static map, `amcl` estimates pose on it. Full walkthrough: [Step-by-Step tutorial](#step-by-step-map-a-world-and-save-it) (steps 5–7).
+
+**Running it:**
+```bash
+# Fully autonomous
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
+
+# Drive yourself, start the explorer later if you want it
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital
+ros2 run rosnav_bot frontier_explorer.py
+```
+Manual mode localizes via SLAM Toolbox, not AMCL; keep `safety:=true` so Nav2 `/cmd_vel` reaches Gazebo's `/cmd_vel_safe`.
+
+**Multi-robot:** `frontier_coordinator` replaces `frontier_explorer` — assigns each robot a unique frontier, skips robots whose Nav2 isn't ready, avoids recently failed goals. Tuning/params: [Multi-Robot](#multi-robot) below.
+
+---
+
 ## All Launch Modes
 
 ### Single Robot
 
-#### Mode 1 — Autonomous SLAM + Frontier Exploration
-Gazebo + SLAM + Nav2 + RViz + frontier explorer. Robot maps the world on its own.
-```bash
-ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
-```
-
-#### Mode 2 — Manual SLAM
-Drive the robot yourself to build the map.
-```bash
-ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital
-# Run frontier explorer later if needed:
-ros2 run rosnav_bot frontier_explorer.py
-```
-In SLAM mode, localization comes from SLAM Toolbox (`map -> base_link`), not AMCL. RViz **2D Goal Pose** works after Nav2 reports `Managed nodes are active`; keep `safety:=true` enabled so Nav2 `/cmd_vel` is relayed to Gazebo's `/cmd_vel_safe`.
-
-#### Mode 3 — Pre-built Map + AMCL Localisation
+#### Mode 1 — Pre-built Map + AMCL Localisation
 Load a saved map and navigate in localisation-only mode.
 ```bash
 ros2 launch rosnav_bot robot.launch.py world:=/full/path/to/hospital.world
@@ -309,7 +326,7 @@ ros2 launch rosnav_bot robot.launch.py world:=/full/path/to/hospital.world
 ros2 launch rosnav_bot robot.launch.py map:=/full/path/to/my_map.yaml
 ```
 
-#### Mode 4 — Coverage Sweep
+#### Mode 2 — Coverage Sweep
 After mapping — boustrophedon lawnmower sweep over free space from the live `/map` OccupancyGrid (not hardcoded obstacles). Needs Nav2 `FollowWaypoints`.
 ```bash
 ros2 run rosnav_bot coverage_planner.py
@@ -317,7 +334,7 @@ ros2 run rosnav_bot coverage_planner.py
 ros2 run rosnav_bot coverage_planner.py --ros-args -p sweep_spacing:=0.4
 ```
 
-#### Mode 5 — 3-Tier Autonomy (Mission + Nav + Safety)
+#### Mode 3 — 3-Tier Autonomy (Mission + Nav + Safety)
 ```
 Mission Layer  ←  mission_server.py   patrol / sequence / goto
 Nav Layer      ←  Nav2 BT + MPPI      path planning + control
@@ -336,7 +353,7 @@ ros2 run rosnav_bot mission_server.py status
 ros2 run rosnav_bot mission_server.py cancel
 ```
 
-#### Mode 6 — LLM Voice Navigation
+#### Mode 4 — LLM Voice Navigation
 Speak or type plain-English commands; Whisper transcribes, ollama parses, Nav2 executes.
 
 ```
@@ -371,7 +388,7 @@ ros2 run rosnav_bot llm_nav.py --ros-args \
 
 **Requirements:** `ollama serve` running with a model pulled (`ollama pull llama2`).
 
-#### Mode 7 — Holonomic (Mecanum) Drive
+#### Mode 5 — Holonomic (Mecanum) Drive
 Swap the standard 2-wheel diff-drive base for a 4-wheel mecanum base that can strafe sideways and move diagonally without rotating — useful in tight spaces. Works with any launch mode above via `drive_type:=mecanum`.
 ```bash
 ros2 launch rosnav_bot robot.launch.py drive_type:=mecanum
@@ -382,7 +399,7 @@ ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
 ```
 Details on what changes under the hood: [concepts.md § 18](concepts.md#18-mecanum-holonomic-drive).
 
-#### Mode 8 — MPPI Controller (Humble)
+#### Mode 6 — MPPI Controller (Humble)
 Swap DWB (default local controller on Humble) for `nav2_mppi_controller`. Works with any single-robot launch mode via `controller:=mppi`. Jazzy already defaults to MPPI, so this switch is a no-op there.
 ```bash
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital controller:=mppi
@@ -391,7 +408,7 @@ Uses a project-tuned `nav2_params_mppi.yaml` (same costmaps/BT/footprint as the 
 
 > **Tight spaces (e.g. `maze`):** MPPI noticeably outperformed DWB during frontier exploration testing — DWB repeatedly failed at the same narrow corner even after exhausting recovery retries, while MPPI cleared it on the first attempt. If frontier exploration keeps stalling at the same spot in a cluttered world, try `controller:=mppi`.
 
-#### Mode 9 — Ackermann (Car-Like) Drive
+#### Mode 7 — Ackermann (Car-Like) Drive
 Front-steered, rear-driven base — two fixed rear wheels, two front wheels on steering knuckles. Uses Gazebo's native `AckermannSteering` system plugin and always runs MPPI (with `AckermannConstraints.min_turning_r`) since DWB has no turning-radius constraint.
 ```bash
 ros2 launch rosnav_bot robot.launch.py drive_type:=ackermann
@@ -406,7 +423,7 @@ ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital drive_type:=acker
 ```
 Details: [concepts.md § 18b](concepts.md#18b-ackermann-car-like-drive).
 
-#### Mode 10 — YOLO Object Detection (pluggable, off by default)
+#### Mode 8 — YOLO Object Detection (pluggable, off by default)
 Optional add-on node — nothing else in the stack depends on it. Requires `pip install ultralytics` (not a rosdep).
 ```bash
 pip install ultralytics
@@ -414,7 +431,7 @@ ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital enable_yolo:=true
 ```
 Publishes `yolo/detections` (`vision_msgs/Detection2DArray`) and `yolo/image_annotated` off the robot's `camera/image_raw`. Tune with `yolo_model`, `yolo_confidence`, `yolo_classes`. `world_name:=warehouse` has a few Fuel-downloaded objects (people, chair, fire hydrant, suitcase) to detect — see concepts.md for where they are. Details: [concepts.md § 13](concepts.md#13-adding-a-camera-sensor-rgb--depth).
 
-#### Mode 11 — MiR100 Chassis Skin (visual only, `drive_type:=diff` only)
+#### Mode 9 — MiR100 Chassis Skin (visual only, `drive_type:=diff` only)
 Swaps the default box chassis for a MiR100-shaped mesh (vendored from [DFKI-NI/mir_robot](https://github.com/DFKI-NI/mir_robot), scaled to the same 0.55×0.4×0.15 footprint/wheelbase). Visual only — wheels, sensors, physics, and nav2 tuning are all unchanged, so it works with any launch mode above.
 ```bash
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital robot_model:=mir100
@@ -469,7 +486,7 @@ Everything else — TF, Nav2 params, scan fusion, fleet tools, frontier
 coordinator — picks up the generated robot list automatically.
 
 #### Fleet-wide AMR type
-Same `drive_type`/`controller` choice as single-robot mode (Modes 7–9 above), applied to every robot in the fleet:
+Same `drive_type`/`controller` choice as single-robot mode (Modes 5–7 above), applied to every robot in the fleet:
 ```bash
 # Fleet of mecanum (holonomic) robots
 ros2 launch rosnav_bot multi_robot.launch.py drive_type:=mecanum
@@ -789,7 +806,7 @@ Requires `lidar_type:=3d` and `ros-humble-rtabmap-ros` — **fails safe**: missi
 | `multi_terrain` | ~25 m long | Flat spawn area, then (along +X) a 12°/22° ramp pair, a 6-step staircase, a rough bump patch, and jittered discrete obstacles — for perception/costmap stress-testing. Adapted from a quadruped RL terrain course; a wheeled base won't climb the staircase, but it's still useful for nav/perception around obstacles it can't cross |
 | `outdoor` | 129×129 m bowl | Real heightmap terrain (gz-sim's Fuel-hosted "Heightmap Bowl", auto-downloaded and cached on first launch — needs network access once) |
 
-All worlds except `outdoor` and `warehouse_depot` use SDF primitives only — no external model downloads, instant load. `warehouse_depot` uses a local vendored Depot model (`models/Depot`); if missing, run `bash src/rosnav_bot/scripts/download_depot_model.sh` (Gazebo Fuel HTTP — no git). All listed worlds work with every drive type (`diff`, `mecanum`, `ackermann` — see [Mode 7](#mode-7--holonomic-mecanum-drive) and [Mode 9](#mode-9--ackermann-car-like-drive)) and either controller (`controller:=dwb|mppi`). `multi_terrain`/`outdoor`/`warehouse_depot` have no pre-built map yet — launch with `explore:=true` (SLAM mode).
+All worlds except `outdoor` and `warehouse_depot` use SDF primitives only — no external model downloads, instant load. `warehouse_depot` uses a local vendored Depot model (`models/Depot`); if missing, run `bash src/rosnav_bot/scripts/download_depot_model.sh` (Gazebo Fuel HTTP — no git). All listed worlds work with every drive type (`diff`, `mecanum`, `ackermann` — see [Mode 5](#mode-5--holonomic-mecanum-drive) and [Mode 7](#mode-7--ackermann-car-like-drive)) and either controller (`controller:=dwb|mppi`). `multi_terrain`/`outdoor`/`warehouse_depot` have no pre-built map yet — launch with `explore:=true` (SLAM mode).
 
 > ℹ️ **`outdoor`/`multi_terrain` auto-pick a safe spawn** — `spawn_x/y/z/yaw` default to `'auto'`, resolved per-world instead of one fixed default:
 > - `outdoor`: the generic default sat on the bowl's flat center, out of lidar range — `auto` spawns on the slope instead (40.0, 0.0, 9.0).
