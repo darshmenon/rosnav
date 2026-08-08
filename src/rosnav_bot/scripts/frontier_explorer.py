@@ -63,7 +63,8 @@ class FrontierExplorer(Node):
         self._min_goal_dist = self.get_parameter('min_goal_distance').value
         self._map_save_path = self.get_parameter('map_save_path').value.strip()
         self._max_retries   = self.get_parameter('max_frontier_retries').value
-        map_topic           = self.get_parameter('map_topic').value
+        self._map_topic     = self.get_parameter('map_topic').value
+        map_topic           = self._map_topic
         action_name         = self.get_parameter('action_name').value
         poll_period         = self.get_parameter('poll_period').value
 
@@ -136,9 +137,12 @@ class FrontierExplorer(Node):
 
         self._iteration += 1
         if self._map_save_path and self._iteration % 10 == 0:
-            self.get_logger().info(f'Progressively auto-saving map to {self._map_save_path} ...')
+            self.get_logger().info(
+                f'Progressively auto-saving map to {self._map_save_path} '
+                f'(topic={self._map_topic}) ...')
             subprocess.Popen(
-                ['ros2', 'run', 'nav2_map_server', 'map_saver_cli', '-f', self._map_save_path],
+                ['ros2', 'run', 'nav2_map_server', 'map_saver_cli',
+                 '-t', self._map_topic, '-f', self._map_save_path],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
 
@@ -155,7 +159,8 @@ class FrontierExplorer(Node):
             self.get_logger().info(f'Final map save to {self._map_save_path} ...')
             try:
                 subprocess.run(
-                    ['ros2', 'run', 'nav2_map_server', 'map_saver_cli', '-f', self._map_save_path],
+                    ['ros2', 'run', 'nav2_map_server', 'map_saver_cli',
+                     '-t', self._map_topic, '-f', self._map_save_path],
                     check=True
                 )
                 self.get_logger().info('Map saved successfully.')
@@ -287,10 +292,12 @@ class FrontierExplorer(Node):
         if save_dir:
             os.makedirs(save_dir, exist_ok=True)
 
-        self.get_logger().info(f'Auto-saving map to: {save_prefix}')
+        self.get_logger().info(
+            f'Auto-saving map to: {save_prefix} (topic={self._map_topic})')
         try:
             subprocess.run(
-                ['ros2', 'run', 'nav2_map_server', 'map_saver_cli', '-f', save_prefix],
+                ['ros2', 'run', 'nav2_map_server', 'map_saver_cli',
+                 '-t', self._map_topic, '-f', save_prefix],
                 check=True,
             )
             self._map_saved = True

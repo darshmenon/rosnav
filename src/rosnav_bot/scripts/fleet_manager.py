@@ -5,7 +5,7 @@ fleet_manager.py — Product-like fleet management CLI.
 Commands
 ────────
   list           List all active robots and their states
-  status         Show map, SLAM, and Nav2 status
+  status         Show map, SLAM, and Nav2 status (/map, /map_merged, /map_fused)
   add <ns> <x> <y>   Dynamically spawn a robot into a running simulation
   remove <ns>    Kill a robot's Nav2 stack (Gazebo entity stays)
   teleop <ns>    Interactive keyboard control for one robot
@@ -15,7 +15,7 @@ Commands
   undock <ns> [dist] [speed] Back away, then spin to docks.yaml exit yaw
   explore <ns>   Start frontier exploration on a robot
   stop <ns>      Stop navigation / teleop for a robot
-  savemap [path] Save the current SLAM map
+  savemap [path] Save map (auto-picks /map_merged, /map_fused, or /map)
   locations      List all named locations from locations.yaml
   mission <ns> patrol <loc_or_wp> …   Loop through waypoints/locations
   mission <ns> sequence <loc_or_wp> … Visit once in order
@@ -188,18 +188,24 @@ def _yaw_to_quat(yaw: float) -> tuple[float, float, float, float]:
 
 # ─────────────────────────────────────────────────────────────────────────────
 class FleetNode(Node):
+    # Map topics used by single-SLAM (/map), multi-SLAM (/map_merged), and
+    # scan-fusion (/map_fused). Status reports whichever is live.
+    _MAP_CANDIDATES = ('/map', '/map_merged', '/map_fused')
+
     def __init__(self):
         super().__init__('fleet_manager')
         self._pubs: dict[str, any] = {}
-        self._map_received = False
+        self._map_topics_received: set[str] = set()
 
         qos = QoSProfile(depth=1,
                          durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
-        self._map_sub = self.create_subscription(
-            OccupancyGrid, '/map', self._map_cb, qos)
+        for topic in self._MAP_CANDIDATES:
+            self.create_subscription(
+                OccupancyGrid, topic,
+                lambda _msg, t=topic: self._map_cb(t), qos)
 
-    def _map_cb(self, _):
-        self._map_received = True
+    def _map_cb(self, topic: str):
+        self._map_topics_received.add(topic)
 
     def _pub(self, ns: str):
         if ns not in self._pubs:
@@ -232,11 +238,13 @@ class FleetNode(Node):
         nodes = [n for n in self.get_node_names() if n]
         slam  = any('slam_toolbox' in n.lower() for n in nodes)
         nav   = any('bt_navigator' in n.lower() for n in nodes)
+        live_maps = [t for t in self._MAP_CANDIDATES if t in self._map_topics_received]
+        map_status = ', '.join(live_maps) if live_maps else 'none'
         print('\n── System Status ─────────────────────────────────────')
         print(f'  Active robots : {robots or "none"}')
         print(f'  SLAM running  : {"✓" if slam else "✗"}')
         print(f'  Nav2 running  : {"✓" if nav else "✗"}')
-        print(f'  /map available: {"✓" if self._map_received else "✗"}')
+        print(f'  Map available : {map_status}')
         print('──────────────────────────────────────────────────────\n')
 
     def cmd_add(self, ns: str, x: float, y: float):
@@ -501,9 +509,23 @@ class FleetNode(Node):
     def cmd_savemap(self, path: str):
         import os as _os
         _os.makedirs(_os.path.dirname(path) if '/' in path else '.', exist_ok=True)
-        print(f'Saving map to {path} …')
+        # Prefer merged/fused maps when present (multi-SLAM / scan fusion).
+        topic = '/map'
+        for candidate in ('/map_merged', '/map_fused', '/map'):
+            if candidate in self._map_topics_received:
+                topic = candidate
+                break
+        else:
+            # Fall back to whatever is advertised right now.
+            advertised = {t for t, _ in self.get_topic_names_and_types()}
+            for candidate in ('/map_merged', '/map_fused', '/map'):
+                if candidate in advertised:
+                    topic = candidate
+                    break
+        print(f'Saving map from {topic} → {path} …')
         r = subprocess.run(
-            ['ros2', 'run', 'nav2_map_server', 'map_saver_cli', '-f', path],
+            ['ros2', 'run', 'nav2_map_server', 'map_saver_cli',
+             '-t', topic, '-f', path],
             capture_output=True, text=True)
         if r.returncode == 0:
             print(f'Map saved: {path}.yaml / {path}.pgm')

@@ -32,6 +32,7 @@ publish_markers   Publish RViz MarkerArray debug overlays (default true)
 nav_wait_warn_sec Seconds between warnings for missing Nav2 action servers (default 15)
 tf_wait_warn_sec  Seconds between warnings for missing robot map TF (default 15)
 map_save_path     File prefix for final map save, e.g. /path/to/maps/map (default '')
+                  Uses map_saver_cli -t <map_topic> so /map_merged works in slam_mode:=multi
 
 Published topics
 ----------------
@@ -117,7 +118,8 @@ class FrontierCoordinator(Node):
         self._nav_wait_warn_sec = self.get_parameter('nav_wait_warn_sec').value
         self._tf_wait_warn_sec = self.get_parameter('tf_wait_warn_sec').value
         self._save_path   = self.get_parameter('map_save_path').value.strip()
-        map_topic         = self.get_parameter('map_topic').value
+        self._map_topic   = self.get_parameter('map_topic').value
+        map_topic         = self._map_topic
         poll_period       = self.get_parameter('poll_period').value
 
         if self._detector not in ('classic', 'wfd'):
@@ -476,10 +478,12 @@ class FrontierCoordinator(Node):
         save_dir = os.path.dirname(self._save_path)
         if save_dir:
             os.makedirs(save_dir, exist_ok=True)
-        self.get_logger().info(f'Saving map → {self._save_path}')
+        self.get_logger().info(
+            f'Saving map → {self._save_path} (topic={self._map_topic})')
         try:
             subprocess.run(
-                ['ros2', 'run', 'nav2_map_server', 'map_saver_cli', '-f', self._save_path],
+                ['ros2', 'run', 'nav2_map_server', 'map_saver_cli',
+                 '-t', self._map_topic, '-f', self._save_path],
                 check=True)
             self._map_saved = True
             self.get_logger().info('Map saved.')
