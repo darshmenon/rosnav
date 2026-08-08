@@ -13,6 +13,9 @@
         <xacro:include filename="lidar.xacro" />
     </xacro:unless>
 
-    <xacro:include filename="camera.xacro" />
+    <xacro:arg name="enable_camera" default="false"/>
+    <xacro:if value="${'$(arg enable_camera)' == 'true'}">
+        <xacro:include filename="camera.xacro" />
+    </xacro:if>
 
 </robot>

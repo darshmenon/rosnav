@@ -18,11 +18,30 @@ import re
 import xml.etree.ElementTree as ET
 
 from ament_index_python.packages import get_package_share_directory
-from launch.actions import IncludeLaunchDescription
+from launch.actions import GroupAction, IncludeLaunchDescription, SetEnvironmentVariable
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 
 ROS_DISTRO = os.environ.get('ROS_DISTRO', 'humble')
+
+
+def models_resource_path(pkg_share: str = None) -> str:
+    """Absolute path to share/rosnav_bot/models (parent of model://Depot)."""
+    pkg_share = pkg_share or get_package_share_directory('rosnav_bot')
+    return os.path.join(pkg_share, 'models')
+
+
+def with_gz_model_path(action, pkg_share: str = None):
+    """Ensure GZ_SIM_RESOURCE_PATH includes vendored models/ (offline Depot)."""
+    models_dir = models_resource_path(pkg_share)
+    existing = os.environ.get('GZ_SIM_RESOURCE_PATH', '')
+    parts = [p for p in existing.split(':') if p]
+    if models_dir not in parts:
+        parts.insert(0, models_dir)
+    return GroupAction([
+        SetEnvironmentVariable('GZ_SIM_RESOURCE_PATH', ':'.join(parts)),
+        action,
+    ])
 
 
 def truthy(value: str) -> bool:
@@ -47,7 +66,13 @@ def resolve_gazebo_world_name(world_path: str) -> str:
     return fallback
 
 
-def urdf_filename_for(drive_type: str) -> str:
+def urdf_filename_for(drive_type: str, robot_model: str = 'custom') -> str:
+    if robot_model == 'mir100':
+        if drive_type != 'diff':
+            print(f'[rosnav_bot] robot_model=mir100 only supported for drive_type:=diff '
+                  f'(got drive_type:={drive_type}) — ignoring robot_model')
+        else:
+            return 'robot_mir100.urdf.xacro'
     if drive_type == 'mecanum':
         return 'robot_mecanum.urdf.xacro'
     if drive_type == 'ackermann':
@@ -80,27 +105,29 @@ def patch_pkg_share_placeholder(raw_params_path: str, pkg_share: str) -> str:
     return out_path
 
 
-def gazebo_server_action(world_path: str):
+def gazebo_server_action(world_path: str, pkg_share: str = None):
     ros_gz_share = get_package_share_directory('ros_gz_sim')
-    return IncludeLaunchDescription(
+    gz = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(ros_gz_share, 'launch', 'gz_sim.launch.py')),
         launch_arguments={
             'gz_args': f'-r -s -v1 {world_path}',
             'on_exit_shutdown': 'true',
         }.items(),
     )
+    return with_gz_model_path(gz, pkg_share)
 
 
-def gazebo_client_action():
+def gazebo_client_action(pkg_share: str = None):
     ros_gz_share = get_package_share_directory('ros_gz_sim')
-    return IncludeLaunchDescription(
+    gz = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(ros_gz_share, 'launch', 'gz_sim.launch.py')),
         launch_arguments={'gz_args': '-g'}.items(),
     )
+    return with_gz_model_path(gz, pkg_share)
 
 
 def rsp_include(pkg_share: str, urdf_path, frame_prefix='', namespace='', lidar_type='2d',
-                 lidar3d_height='0.25', lidar3d_vfov_deg='10'):
+                 lidar3d_height='0.25', lidar3d_vfov_deg='10', enable_camera='false'):
     return IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(pkg_share, 'launch', 'rsp.launch.py')),
         launch_arguments={
@@ -111,6 +138,7 @@ def rsp_include(pkg_share: str, urdf_path, frame_prefix='', namespace='', lidar_
             'lidar_type': lidar_type,
             'lidar3d_height': lidar3d_height,
             'lidar3d_vfov_deg': lidar3d_vfov_deg,
+            'enable_camera': enable_camera,
         }.items(),
     )
 

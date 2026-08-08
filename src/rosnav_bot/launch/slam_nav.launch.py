@@ -77,6 +77,8 @@ def _resolve_map_yaml(world_name: str, pkg_share: str) -> str:
 _WORLD_SPAWN_DEFAULTS = {
     'outdoor': {'x': '40.0', 'y': '0.0', 'z': '9.0', 'yaw': '0.0'},
     'multi_terrain': {'x': '2.2', 'y': '-2.0', 'z': '0.3', 'yaw': '0.0'},
+    # Open aisle near west wall of OpenRobotics Depot (~30×15 m)
+    'warehouse_depot': {'x': '-11.0', 'y': '0.0', 'z': '0.3', 'yaw': '0.0'},
 }
 _GENERIC_SPAWN_DEFAULT = {'x': '1.5', 'y': '1.0', 'z': '0.3', 'yaw': '0.0'}
 
@@ -102,6 +104,7 @@ def _build_runtime_actions(context, pkg_share: str):
     robot_name = LaunchConfiguration('robot_name')
     controller = LaunchConfiguration('controller').perform(context).strip().lower()
     drive_type = LaunchConfiguration('drive_type').perform(context).strip().lower()
+    robot_model = LaunchConfiguration('robot_model').perform(context).strip().lower()
     lidar_type = LaunchConfiguration('lidar_type').perform(context).strip().lower()
     if lidar_type == '3d' and drive_type != 'diff':
         print(f'[slam_nav] lidar_type=3d only supported for drive_type:=diff '
@@ -137,16 +140,22 @@ def _build_runtime_actions(context, pkg_share: str):
         LaunchConfiguration('map_prefix').perform(context).strip(), world_name, pkg_share)
     map_yaml = _resolve_map_yaml(world_name, pkg_share)
 
-    urdf_filename = _common.urdf_filename_for(drive_type)
+    enable_camera_arg = LaunchConfiguration('enable_camera').perform(context).strip().lower()
+    enable_yolo_arg = LaunchConfiguration('enable_yolo').perform(context).strip().lower()
+    # yolo_detector.py has nothing to detect on without the camera, so
+    # enable_yolo:=true pulls it in even if enable_camera wasn't set explicitly.
+    enable_camera = 'true' if (_common.truthy(enable_camera_arg) or _common.truthy(enable_yolo_arg)) else 'false'
+    urdf_filename = _common.urdf_filename_for(drive_type, robot_model)
     rsp = _common.rsp_include(
         pkg_share, os.path.join(pkg_share, 'urdf', urdf_filename), lidar_type=lidar_type,
-        lidar3d_height=lidar3d_height, lidar3d_vfov_deg=lidar3d_vfov_deg)
+        lidar3d_height=lidar3d_height, lidar3d_vfov_deg=lidar3d_vfov_deg,
+        enable_camera=enable_camera)
 
-    gazebo_server = _common.gazebo_server_action(world_path)
+    gazebo_server = _common.gazebo_server_action(world_path, pkg_share)
 
     gazebo_client = GroupAction(
         condition=UnlessCondition(headless),
-        actions=[_common.gazebo_client_action()],
+        actions=[_common.gazebo_client_action(pkg_share)],
     )
 
     spawn_robot = _common.spawn_robot_node(
@@ -349,6 +358,30 @@ def _build_runtime_actions(context, pkg_share: str):
         ]
     frontier_node = GroupAction(actions=actions) if actions else LogInfo(msg='[slam_nav] Frontier explorer disabled.')
 
+    # ── Object Detection: YOLO (optional, off by default) ────────────────
+    enable_yolo = LaunchConfiguration('enable_yolo')
+    yolo_detector = GroupAction(
+        condition=IfCondition(enable_yolo),
+        actions=[
+            LogInfo(msg='[slam_nav] YOLO object detection ENABLED (starting in 12s)…'),
+            TimerAction(
+                period=12.0,
+                actions=[Node(
+                    package='rosnav_bot',
+                    executable='yolo_detector.py',
+                    name='yolo_detector',
+                    output='screen',
+                    parameters=[{
+                        'model_path': LaunchConfiguration('yolo_model'),
+                        'confidence': LaunchConfiguration('yolo_confidence'),
+                        'classes': LaunchConfiguration('yolo_classes'),
+                        'use_sim_time': True,
+                    }],
+                )]
+            ),
+        ]
+    )
+
     mode = 'SLAM+frontier' if (use_slam and actions) else ('SLAM' if use_slam else f'nav-on-map ({os.path.basename(map_yaml)})')
     return [
         LogInfo(msg=f'[slam_nav.launch] mode={mode}, ROS_DISTRO={ROS_DISTRO}, controller={controller}, drive_type={drive_type}'),
@@ -367,6 +400,7 @@ def _build_runtime_actions(context, pkg_share: str):
         collision_monitor,
         mission_server,
         frontier_node,
+        yolo_detector,
     ]
 
 
@@ -386,6 +420,11 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument('rviz', default_value='True', description='Launch RViz'),
         DeclareLaunchArgument('robot_name', default_value='diff_drive', description='Gazebo robot entity name'),
+        DeclareLaunchArgument(
+            name='enable_camera', default_value='false',
+            description='Include the RGB camera sensor (used by aruco_dock.py and '
+                        'yolo_detector.py). Off by default to save render cost — set '
+                        'true when you need docking or YOLO object detection.'),
         # Maze default spawn moved away from origin so robot is immediately visible.
         DeclareLaunchArgument(
             name='spawn_x', default_value='auto',
@@ -414,6 +453,20 @@ def generate_launch_description():
             name='safety', default_value='true',
             description='Launch collision monitor safety layer'),
         DeclareLaunchArgument(
+            name='enable_yolo', default_value='false',
+            description='Launch the pluggable yolo_detector.py object-detection node on '
+                        'the robot camera. Off by default; requires `pip install ultralytics`.'),
+        DeclareLaunchArgument(
+            name='yolo_model', default_value='yolov8n.pt',
+            description='Ultralytics model name/path for yolo_detector.py (enable_yolo:=true only).'),
+        DeclareLaunchArgument(
+            name='yolo_confidence', default_value='0.5',
+            description='YOLO detection confidence threshold (enable_yolo:=true only).'),
+        DeclareLaunchArgument(
+            name='yolo_classes', default_value='',
+            description='Comma-separated class-name allow-list for YOLO (e.g. "person,chair"). '
+                        'Empty = all classes (enable_yolo:=true only).'),
+        DeclareLaunchArgument(
             name='headless', default_value='false',
             description='Skip Gazebo GUI and RViz (server + nav only)'),
         DeclareLaunchArgument(
@@ -423,6 +476,13 @@ def generate_launch_description():
             name='drive_type',
             default_value='diff',
             description='Drive base: "diff" (default), "mecanum" (holonomic, 4 driven wheels), or "ackermann" (car-like front steering). Ackermann always uses MPPI params.'),
+        DeclareLaunchArgument(
+            name='robot_model',
+            default_value='custom',
+            description='Chassis visual skin: "custom" (default, this repo\'s own simple box '
+                        'chassis) or "mir100" (MiR100-shaped mesh, vendored from DFKI-NI/mir_robot, '
+                        'scaled to the same footprint/wheelbase — visual only, same physics/nav2 '
+                        'tuning). mir100 only supported with drive_type:=diff.'),
         DeclareLaunchArgument(
             name='lidar_type',
             default_value='2d',

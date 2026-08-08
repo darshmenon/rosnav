@@ -33,8 +33,10 @@ A full autonomous robot navigation stack built on **Nav2**, **SLAM Toolbox**, an
 - [All Launch Modes](#all-launch-modes)
 - [Fleet Management](#fleet-management)
 - [Open-RMF Traffic Scheduling](#open-rmf-traffic-scheduling-experimental)
+- [3D LiDAR](#3d-lidar-optional-drive_typediff-only)
 - [Worlds](#worlds)
 - [Troubleshooting](#troubleshooting)
+- [Architecture](#architecture)
 
 ---
 
@@ -83,6 +85,7 @@ A full autonomous robot navigation stack built on **Nav2**, **SLAM Toolbox**, an
 - Multi-robot keyboard teleop with robot switcher
 - Coverage path planner (boustrophedon sweep)
 - Fleet health monitor at 1 Hz on `/fleet/health`
+- Pluggable YOLO object detection (`enable_yolo:=true`, off by default)
 
 </td>
 </tr>
@@ -124,17 +127,52 @@ source install/setup.bash
 ## Quick Start
 
 ```bash
-# Explore the hospital — SLAM + Nav2 + frontier explorer in one command
+source /opt/ros/humble/setup.bash
+source install/setup.bash   # after: make build
+
+# Shortest path — Makefile shortcuts (see `make help`)
+make explore                         # hospital SLAM + frontier
+make fleet ROBOTS=2                  # 2-robot coordinated explore
+make yolo                            # warehouse + YOLO
+make fleet-mgmt                      # missions / tasks / health
+make multi-slam                      # per-robot SLAM → /map_merged
+make slam3d                          # 3D lidar + RTAB-Map
+make ackermann   # or: make mecanum
+make dock                            # hospital (then fleet_manager dock)
+```
+
+Same launches without Make:
+
+```bash
+# Single robot — explore + map
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
 
 # Multi-robot fleet (2 robots, coordinated exploration)
-ros2 launch rosnav_bot multi_robot.launch.py
+ros2 launch rosnav_bot multi_robot.launch.py world:=hospital robot_count:=2
 
-# Keyboard control (any terminal)
+# YOLO on warehouse (needs: pip install ultralytics)
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=warehouse explore:=true enable_yolo:=true
+
+# Fleet management stack
+ros2 launch rosnav_bot multi_robot.launch.py fleet_mgmt:=true
+
+# Multi-SLAM merge
+ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi
+
+# 3D SLAM (needs: ros-humble-rtabmap-ros)
+ros2 launch rosnav_bot slam_nav.launch.py lidar_type:=3d slam_algo:=3d explore:=true
+
+# Ackermann / mecanum
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital drive_type:=ackermann explore:=true
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital drive_type:=mecanum explore:=true
+
+# Keyboard teleop (any terminal)
 ros2 run teleop_twist_keyboard teleop_twist_keyboard
+# or: make teleop
 ```
 
-Maps auto-save to `src/rosnav_bot/maps/map_<world>.yaml` every 15 s during exploration.
+Optional vars for Make: `WORLD=maze HEADLESS=true ROBOTS=4`  
+Maps auto-save to `src/rosnav_bot/maps/map_<world>.yaml` during exploration (`make save-map MAP=src/rosnav_bot/maps/map_hospital`).
 
 ---
 
@@ -235,6 +273,13 @@ Save the one shared map exactly like step 5 — no namespace needed, `/map` is f
 ros2 run nav2_map_server map_saver_cli -f src/rosnav_bot/maps/map_maze
 ```
 
+**Multi-SLAM** (`slam_mode:=multi`) has no shared `/map` — each robot publishes `/{ns}/map`, merged into `/map_merged`. Save that topic instead (auto-save from `frontier_coordinator` already passes `-t` for the active map topic):
+```bash
+ros2 launch rosnav_bot multi_robot.launch.py world:=maze slam_mode:=multi headless:=true
+ros2 run nav2_map_server map_saver_cli -t /map_merged -f src/rosnav_bot/maps/map_maze
+# or: ros2 run rosnav_bot fleet_manager.py savemap src/rosnav_bot/maps/map_maze
+```
+
 ---
 
 ## All Launch Modes
@@ -265,7 +310,7 @@ ros2 launch rosnav_bot robot.launch.py map:=/full/path/to/my_map.yaml
 ```
 
 #### Mode 4 — Coverage Sweep
-After mapping — boustrophedon lawnmower sweep over the full free space.
+After mapping — boustrophedon lawnmower sweep over free space from the live `/map` OccupancyGrid (not hardcoded obstacles). Needs Nav2 `FollowWaypoints`.
 ```bash
 ros2 run rosnav_bot coverage_planner.py
 # Tighter rows for warehouse:
@@ -361,6 +406,24 @@ ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital drive_type:=acker
 ```
 Details: [concepts.md § 18b](concepts.md#18b-ackermann-car-like-drive).
 
+#### Mode 10 — YOLO Object Detection (pluggable, off by default)
+Optional add-on node — nothing else in the stack depends on it. Requires `pip install ultralytics` (not a rosdep).
+```bash
+pip install ultralytics
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital enable_yolo:=true
+```
+Publishes `yolo/detections` (`vision_msgs/Detection2DArray`) and `yolo/image_annotated` off the robot's `camera/image_raw`. Tune with `yolo_model`, `yolo_confidence`, `yolo_classes`. `world_name:=warehouse` has a few Fuel-downloaded objects (people, chair, fire hydrant, suitcase) to detect — see concepts.md for where they are. Details: [concepts.md § 13](concepts.md#13-adding-a-camera-sensor-rgb--depth).
+
+#### Mode 11 — MiR100 Chassis Skin (visual only, `drive_type:=diff` only)
+Swaps the default box chassis for a MiR100-shaped mesh (vendored from [DFKI-NI/mir_robot](https://github.com/DFKI-NI/mir_robot), scaled to the same 0.55×0.4×0.15 footprint/wheelbase). Visual only — wheels, sensors, physics, and nav2 tuning are all unchanged, so it works with any launch mode above.
+```bash
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital robot_model:=mir100
+
+# Fleet-wide, same flag on multi_robot.launch.py:
+ros2 launch rosnav_bot multi_robot.launch.py robot_model:=mir100
+```
+License: BSD-3-Clause, see `meshes/mir100/README.md`.
+
 ---
 
 ### Multi-Robot
@@ -435,6 +498,10 @@ ros2 launch rosnav_bot multi_robot.launch.py merge_scans:=true
 # use a dedicated map-merge backend if robots start unaligned)
 ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi
 ```
+
+In `slam_mode:=multi`, Nav2 + `frontier_coordinator` plan on `/map_merged`.
+Auto-save and `fleet_manager.py savemap` both target that topic (not `/map`).
+Watch merge progress with `ros2 topic echo /map_merged --once --field info`.
 
 If Nav2 reports `Failed to make progress` or `0 poses`, the coordinator avoids
 that frontier area for `failed_goal_cooldown` seconds and selects frontier goals
@@ -515,6 +582,10 @@ ros2 topic echo /robot1/odom --once
 
 # Watch exploration metrics
 ros2 topic echo /exploration/stats
+
+# Multi-SLAM: confirm merge (slam_mode:=multi only)
+ros2 topic echo /map_merged --once --field info
+ros2 run rosnav_bot fleet_manager.py status   # Map available: /map_merged
 ```
 
 ---
@@ -525,14 +596,14 @@ ros2 topic echo /exploration/stats
 
 ```bash
 ros2 run rosnav_bot fleet_manager.py list               # list active robots
-ros2 run rosnav_bot fleet_manager.py status             # SLAM / Nav2 / map state
+ros2 run rosnav_bot fleet_manager.py status             # SLAM / Nav2 / map (/map, /map_merged, /map_fused)
 ros2 run rosnav_bot fleet_manager.py add robot3 1.0 2.0 # spawn robot at (1,2)
 ros2 run rosnav_bot fleet_manager.py teleop robot1      # keyboard drive
 ros2 run rosnav_bot fleet_manager.py goto robot2 3.0 -1.0
 ros2 run rosnav_bot fleet_manager.py dock robot1        # navigate to charging_dock
 ros2 run rosnav_bot fleet_manager.py undock robot1      # back away 0.5 m from the dock
 ros2 run rosnav_bot fleet_manager.py explore robot2
-ros2 run rosnav_bot fleet_manager.py savemap src/rosnav_bot/maps/map_hospital
+ros2 run rosnav_bot fleet_manager.py savemap src/rosnav_bot/maps/map_hospital  # auto-picks /map_merged|/map_fused|/map
 ros2 run rosnav_bot fleet_manager.py health             # per-robot health report
 
 # Missions (mission_server must be running)
@@ -546,6 +617,26 @@ ros2 run rosnav_bot fleet_manager.py tasks add 4.0 -1.0 90 dock_B
 ros2 run rosnav_bot fleet_manager.py tasks status
 ros2 run rosnav_bot fleet_manager.py tasks clear
 ```
+
+### Camera (optional, `enable_camera`)
+
+The RGB camera (used by `aruco_dock.py` and `yolo_detector.py`) is **off by
+default** — rendering a camera sensor is one of Gazebo's more expensive
+sensor types, and most launches (plain SLAM/frontier exploration) never touch
+it. Turn it on explicitly when you need docking or YOLO detection:
+
+```bash
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital enable_camera:=true
+```
+
+`enable_yolo:=true` (see YOLO section) pulls the camera in automatically even
+if `enable_camera` wasn't set explicitly — `yolo_detector.py` has nothing to
+detect on without it. `aruco_dock.py` has no such fallback, so docking still
+needs `enable_camera:=true` set explicitly.
+
+With it off (the default), `/camera/image_raw` simply doesn't exist — nothing
+else in the stack depends on it, so navigation/SLAM/frontier exploration are
+unaffected either way.
 
 ### ArUco Visual Docking
 
@@ -566,7 +657,8 @@ Requires (not in the core install list): `sudo apt install ros-humble-cv-bridge 
 
 ```bash
 # Launch a world with the dock station + marker (hospital world only)
-ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital rviz:=true
+# enable_camera:=true is required — aruco_dock.py has nothing to detect without it
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital rviz:=true enable_camera:=true
 
 # Dock / undock (single robot — pass '' as the namespace)
 ros2 run rosnav_bot fleet_manager.py dock '' charging_dock
@@ -687,7 +779,8 @@ Requires `lidar_type:=3d` and `ros-humble-rtabmap-ros` — **fails safe**: missi
 |---|---|---|
 | `maze` | — | Enclosed maze, ideal for exploration |
 | `obstacles` | — | Open field with barrel obstacles |
-| `warehouse` | 24×20 m | 5 shelf rows, loading dock, staging zone, pillars, pallet stacks |
+| `warehouse` | 24×20 m | 5 shelf rows, loading dock, staging zone, pillars, pallet stacks (SDF primitives) |
+| `warehouse_depot` | ~30×15 m | OpenRobotics Depot PBR warehouse (vendored under `models/Depot`, Fuel download — no git) + collision shells for Nav2 |
 | `house` | 16×12 m | Living room, kitchen, hallway, 2 bedrooms, bathroom, furniture |
 | `corridor` | — | Narrow corridor with branching rooms |
 | `hospital` | 26×18 m | Central corridor, north/south patient bays, nurse station, storage |
@@ -696,7 +789,7 @@ Requires `lidar_type:=3d` and `ros-humble-rtabmap-ros` — **fails safe**: missi
 | `multi_terrain` | ~25 m long | Flat spawn area, then (along +X) a 12°/22° ramp pair, a 6-step staircase, a rough bump patch, and jittered discrete obstacles — for perception/costmap stress-testing. Adapted from a quadruped RL terrain course; a wheeled base won't climb the staircase, but it's still useful for nav/perception around obstacles it can't cross |
 | `outdoor` | 129×129 m bowl | Real heightmap terrain (gz-sim's Fuel-hosted "Heightmap Bowl", auto-downloaded and cached on first launch — needs network access once) |
 
-All worlds except `outdoor` use SDF primitives only — no external model downloads, instant load. All 10 work with every drive type (`diff`, `mecanum`, `ackermann` — see [Mode 7](#mode-7--holonomic-mecanum-drive) and [Mode 9](#mode-9--ackermann-car-like-drive)) and either controller (`controller:=dwb|mppi`). `multi_terrain`/`outdoor` have no pre-built map yet — launch with `explore:=true` (SLAM mode).
+All worlds except `outdoor` and `warehouse_depot` use SDF primitives only — no external model downloads, instant load. `warehouse_depot` uses a local vendored Depot model (`models/Depot`); if missing, run `bash src/rosnav_bot/scripts/download_depot_model.sh` (Gazebo Fuel HTTP — no git). All listed worlds work with every drive type (`diff`, `mecanum`, `ackermann` — see [Mode 7](#mode-7--holonomic-mecanum-drive) and [Mode 9](#mode-9--ackermann-car-like-drive)) and either controller (`controller:=dwb|mppi`). `multi_terrain`/`outdoor`/`warehouse_depot` have no pre-built map yet — launch with `explore:=true` (SLAM mode).
 
 > ℹ️ **`outdoor`/`multi_terrain` auto-pick a safe spawn** — `spawn_x/y/z/yaw` default to `'auto'`, resolved per-world instead of one fixed default:
 > - `outdoor`: the generic default sat on the bowl's flat center, out of lidar range — `auto` spawns on the slope instead (40.0, 0.0, 9.0).
@@ -711,9 +804,11 @@ All worlds except `outdoor` use SDF primitives only — no external model downlo
 ```bash
 # Single robot, any world
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=warehouse explore:=true
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=warehouse_depot explore:=true
 
 # Multi-robot, any world
 ros2 launch rosnav_bot multi_robot.launch.py world:=warehouse
+ros2 launch rosnav_bot multi_robot.launch.py world:=warehouse_depot
 ros2 launch rosnav_bot multi_robot.launch.py world:=house
 ros2 launch rosnav_bot multi_robot.launch.py world:=corridor explore:=false
 ```
@@ -726,7 +821,7 @@ ros2 launch rosnav_bot multi_robot.launch.py world:=corridor explore:=false
 |---|---|
 | `FATAL: plugin X does not exist` | Check `$ROS_DISTRO` is sourced correctly — wrong distro params loaded |
 | `SmacPlannerHybrid` not found | `sudo apt install ros-$ROS_DISTRO-nav2-smac-planner` |
-| Map not saving | Confirm `explore:=true`; maps write to `src/rosnav_bot/maps/` |
+| Map not saving | Confirm `explore:=true`; maps write to `src/rosnav_bot/maps/`. For `slam_mode:=multi`, save `/map_merged` (`map_saver_cli -t /map_merged` or `fleet_manager.py savemap`) — there is no `/map` |
 | `No frontiers` in explorer logs | Check for `TF_OLD_DATA` / dropped scans; kill stale Gazebo/ROS processes |
 | Robot not moving | `ros2 topic hz /cmd_vel` — if 0, Nav2 lifecycle failed; check node list |
 | 2D Goal Pose accepted but robot does not move | Keep `safety:=true`; Gazebo subscribes to `/cmd_vel_safe`, and the safety relay forwards Nav2 `/cmd_vel` there |
