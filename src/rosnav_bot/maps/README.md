@@ -12,6 +12,8 @@ Available worlds
   empty       — flat open space
   office      — 22×16 m open-plan office (lobby, meeting rooms, cubicles, server room)
   hospital    — 26×18 m hospital floor (patient rooms, nurse station, 4 m corridor)
+  outdoor     — 129×129 m heightmap bowl (no pre-built map — use explore:=true)
+  multi_terrain — ramps/stairs/rough patch (no pre-built map — use explore:=true)
 
 Multi-robot launch
 
@@ -35,7 +37,8 @@ Notes
   localize on that shared map with AMCL.
 - Multi-SLAM mode: `ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi`
   starts one SLAM Toolbox instance per robot and merges `/robotN/map` into
-  `/map_merged`.
+  `/map_merged`. Frontier auto-save and `fleet_manager.py savemap` use
+  `-t /map_merged` (there is no shared `/map` in this mode).
 - Current launch expects a global `/tf` tree for both robots.
 
 Map generation
@@ -46,5 +49,13 @@ To generate a fresh map for any world:
 To manually save the current SLAM map:
   ros2 run nav2_map_server map_saver_cli -f src/rosnav_bot/maps/map_maze
 
-To use fleet_manager to save:
+Multi-SLAM (`slam_mode:=multi`) publishes `/map_merged` instead of `/map`:
+  ros2 run nav2_map_server map_saver_cli -t /map_merged -f src/rosnav_bot/maps/map_maze
+
+To use fleet_manager to save (auto-picks /map_merged, /map_fused, or /map):
   ros2 run rosnav_bot fleet_manager.py savemap src/rosnav_bot/maps/map_maze
+
+To generate outdoor / multi_terrain maps (none shipped yet):
+  ros2 launch rosnav_bot slam_nav.launch.py world_name:=outdoor explore:=true
+  ros2 launch rosnav_bot slam_nav.launch.py world_name:=multi_terrain explore:=true
+  # then: map_saver_cli -f src/rosnav_bot/maps/map_outdoor

@@ -162,6 +162,7 @@ Recent reliability fixes in `frontier_explorer.py`:
 - Added `min_goal_distance` filter so very near centroids are skipped (prevents no-op goals).
 - If TF is not ready yet, the node waits instead of using a fake `(0, 0)` position.
 - Added `map_save_path` parameter so completed exploration auto-saves map via `map_saver_cli`.
+- Auto-save passes `map_saver_cli -t <map_topic>` so multi-SLAM (`/map_merged`) and scan-fusion (`/map_fused`) maps save correctly — not only `/map`.
 
 ---
 
@@ -189,6 +190,27 @@ map_server ──► /map (shared, static)
   amcl                  amcl
   planner               planner
   controller            controller
+```
+
+### Architecture — Multi-SLAM mode (`explore:=true`, `slam_mode:=multi`)
+Experimental. Every robot runs its own namespaced `slam_toolbox` (`/{ns}/map`).
+`map_merge_known.py` stitches those grids into `/map_merged` using **known spawn
+offsets** (not unknown-pose map matching). Nav2 + `frontier_coordinator` consume
+`/map_merged`. There is no shared `/map` topic in this mode.
+
+```
+robot1 slam_toolbox ──► /robot1/map ─┐
+robot2 slam_toolbox ──► /robot2/map ─┼─► map_merge_known ──► /map_merged
+robotN slam_toolbox ──► /robotN/map ─┘         │
+                                               ▼
+                              Nav2 + frontier_coordinator
+```
+
+```bash
+ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi
+# Save the merged map (frontier auto-save already uses -t /map_merged):
+ros2 run nav2_map_server map_saver_cli -t /map_merged -f src/rosnav_bot/maps/map_hospital
+ros2 run rosnav_bot fleet_manager.py savemap src/rosnav_bot/maps/map_hospital
 ```
 
 ### Scalability — adding more robots
@@ -489,6 +511,36 @@ Mount the camera link at any offset from `chassis`:
 </joint>
 ```
 
+### YOLO object detection (`yolo_detector.py`) — pluggable, off by default
+Optional add-on node — nothing else in the stack depends on it, and it's disabled
+unless explicitly turned on.
+
+```bash
+pip install ultralytics   # not a rosdep, install once
+ros2 launch rosnav_bot slam_nav.launch.py enable_yolo:=true
+# tune it:
+ros2 launch rosnav_bot slam_nav.launch.py enable_yolo:=true \
+  yolo_model:=yolov8n.pt yolo_confidence:=0.6 yolo_classes:=person,chair
+```
+Subscribes to `camera/image_raw`, runs Ultralytics YOLO inference at a fixed,
+throttled rate (`max_rate_hz` param, decoupled from the camera's publish rate
+so slow inference never backs up the image queue), and publishes:
+- `yolo/detections` (`vision_msgs/Detection2DArray`)
+- `yolo/image_annotated` (`sensor_msgs/Image`, boxes + labels drawn in)
+
+If `ultralytics` isn't installed, the node logs the install command and exits
+rather than spinning uselessly. Runs standalone too:
+`ros2 run rosnav_bot yolo_detector.py --ros-args -p namespace:=robot1`.
+
+**Testing it:** `worlds/warehouse.world` includes a few Gazebo Fuel objects that
+map to real COCO classes — 2 people, a chair, a fire hydrant, a suitcase (the
+rest of the world is hand-built primitives; see the world file header). gz sim
+downloads and caches them on first launch (`~/.gz/fuel`, one-time, needs
+internet); after that it's instant like everything else. They're spread near
+the staging-zone edges and loading dock, out of the camera's 8 m range from
+the *default* generic spawn — drive/explore toward them, or override
+`spawn_x`/`spawn_y`/`spawn_yaw` to start closer, to get a detection quickly.
+
 ---
 
 ## 14. New Tool Scripts
@@ -496,16 +548,19 @@ Mount the camera link at any offset from `chassis`:
 ### `fleet_manager.py` — Product-like fleet CLI
 ```bash
 ros2 run rosnav_bot fleet_manager.py list          # list active robots
-ros2 run rosnav_bot fleet_manager.py status        # map/SLAM/Nav2 status
+ros2 run rosnav_bot fleet_manager.py status        # map/SLAM/Nav2 (/map, /map_merged, /map_fused)
 ros2 run rosnav_bot fleet_manager.py add robot3 1.0 2.0   # dynamic spawn
 ros2 run rosnav_bot fleet_manager.py teleop robot1 # keyboard control
 ros2 run rosnav_bot fleet_manager.py goto robot2 3.0 -1.0 # nav goal
 ros2 run rosnav_bot fleet_manager.py dock robot1           # navigate to charging_dock
 ros2 run rosnav_bot fleet_manager.py undock robot1         # back away 0.5 m from the dock
 ros2 run rosnav_bot fleet_manager.py explore robot2        # frontier
-ros2 run rosnav_bot fleet_manager.py savemap /tmp/my_map   # save SLAM map
+ros2 run rosnav_bot fleet_manager.py savemap /tmp/my_map   # auto-picks /map_merged|/map_fused|/map
 ros2 run rosnav_bot fleet_manager.py stop robot1           # cancel nav
 ```
+
+`status` and `savemap` watch `/map`, `/map_merged`, and `/map_fused`, so multi-SLAM
+and scan-fusion fleets report/save the right OccupancyGrid without remapping by hand.
 
 ### `multi_teleop.py` — Interactive multi-robot keyboard teleop
 ```bash
@@ -534,12 +589,9 @@ Uses only `/scan` (LiDAR) and `/odom`, no map required. Good for unstructured en
 For this repo, a cleaner layout helps debugging and repeatability:
 
 - Keep ROS package source under `src/rosnav_bot/` only.
-- Move generated/runtime artifacts out of root into:
-  - `src/rosnav_bot/maps/` for generated `map_*.yaml` and `map_*.pgm`
-  - `logs/` for launch or benchmark logs
-- Add `scripts/` at repo root only for workflow wrappers (build/test/run), not ROS nodes.
-- Keep docs in `docs/` (`README.md` for quickstart, `concepts.md` for deep reference).
-- Add `Makefile` or `justfile` commands for common flows (`build`, `slam-nav`, `frontier`, `save-map`).
+- Generated maps live in `src/rosnav_bot/maps/` (`map_*.yaml` / `map_*.pgm`).
+- Docs at repo root: `README.md` (quickstart), `concepts.md` (deep reference).
+- Launch everything with `ros2 launch` / `ros2 run` — see README §2–§5.
 
 
 ## 17. A* Path Planner (`path_planning.py`)
@@ -548,7 +600,19 @@ Standalone global planner using the **A\* algorithm**:
 - Converts the world to a discrete grid.
 - Uses Euclidean distance as the heuristic.
 - Supports 8-direction movement (including diagonals).
-- Currently uses hardcoded obstacles — future: subscribe to `/map` OccupancyGrid.
+- Subscribes to `/map` (`OccupancyGrid`) and treats occupied/unknown cells as obstacles (with `safety_margin` inflation).
+- If no map arrives within `map_wait_sec`, falls back to a tiny hardcoded demo obstacle set for offline smoke tests.
+
+> Note: this is a teaching/demo planner — Nav2's `planner_server` is what the stack uses in real runs. Coverage (`coverage_planner.py`) already plans from `/map` independently of this script.
+
+```bash
+# With a live map (SLAM or map_server):
+ros2 run rosnav_bot path_planning.py
+
+# Custom start/goal (metres, map frame):
+ros2 run rosnav_bot path_planning.py --ros-args \
+  -p start_x:=0.0 -p start_y:=0.0 -p goal_x:=3.0 -p goal_y:=-1.0
+```
 
 ---
 
@@ -621,6 +685,47 @@ ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
 
 ---
 
+## 19. MiR100 Chassis Skin (`robot_model:=mir100`)
+
+Swaps the chassis **visual only** — wheels, sensors (lidar/camera), physics,
+and nav2 footprint/tuning are untouched. Only valid with `drive_type:=diff`
+(the default).
+
+```bash
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital robot_model:=mir100
+ros2 launch rosnav_bot multi_robot.launch.py robot_model:=mir100   # fleet-wide
+```
+
+### How it's built
+- `urdf/robot_core_mir100.xacro` — same as `robot_core.xacro` (identical wheel
+  joints, inertials, Gazebo friction) except the chassis `<visual>` is a
+  `<mesh>` (`meshes/mir100/visual/mir_100_base.stl`) instead of a `<box>`.
+  `<collision>` stays the original box, so costmap/physics behavior is
+  unchanged.
+- `urdf/robot_mir100.urdf.xacro` — top-level file, mirrors `robot.urdf.xacro`
+  but includes `robot_core_mir100.xacro`.
+- `_common.urdf_filename_for(drive_type, robot_model)` picks it when
+  `robot_model=mir100` (falls back to the normal diff/mecanum/ackermann
+  selection otherwise, with a warning if `robot_model=mir100` is combined
+  with a non-diff `drive_type`).
+
+### Mesh vendoring
+`meshes/mir100/visual/*.stl` are downloaded as static assets from
+[DFKI-NI/mir_robot](https://github.com/DFKI-NI/mir_robot) (`humble` branch) —
+**not** a git submodule or remote; this repo stays self-contained. BSD-3-Clause,
+see `meshes/mir100/README.md` for attribution.
+
+### Scale/placement math
+The real MiR100 mesh is ~0.9 × 0.58 × 0.3 m (native STL units). Scaled by
+`0.61` and placed at chassis-local origin `(0.275, 0, -0.047)`, it lands at
+x:[0.001, 0.549] y:[-0.178, 0.179] z:[-0.035, 0.169] — matching this robot's
+existing 0.55 × 0.4 × 0.15 footprint almost exactly (verified by loading the
+STL and computing its bounding box directly), clearing the ground (wheel
+radius puts ground at z=-0.075) and not overlapping the wheels (which sit at
+y=±0.205 to ±0.245, outside the mesh's y-span).
+
+---
+
 ## Quick Reference — Launch Files
 
 | Launch file | What it does | Key args |
@@ -638,7 +743,7 @@ ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
 | Script | What it does | Key ROS params |
 |---|---|---|
 | `navigation.py` | Custom obstacle-avoidance FSM (no Nav2 needed) | `goal_x`, `goal_y`, `base_speed`, `obstacle_threshold` |
-| `path_planning.py` | Standalone A* path planner | `grid_size_x/y`, `resolution`, `safety_margin` |
+| `path_planning.py` | Standalone A* path planner (from `/map`, hardcoded fallback) | `map_topic`, `grid_size_x/y`, `resolution`, `safety_margin`, `start_x/y`, `goal_x/y` |
 | `waypoint_nav.py` | Navigate through a sequence of waypoints via Nav2 | `waypoints_file`, `frame_id` |
 | `frontier_explorer.py` | Autonomous map exploration via frontier detection + optional auto-save | `min_frontier_size`, `revisit_radius`, `poll_period`, `map_save_path` |
 | `check_odometry.py` | Debug odometry data | — |
@@ -673,7 +778,9 @@ After launching any launch file, open RViz and add these displays:
 
 | Display | Topic | What it confirms |
 |---|---|---|
-| Map | `/map` | Map is loaded and being published |
+| Map | `/map` | Map is loaded and being published (single-SLAM / map_server) |
+| Map | `/map_merged` | Multi-SLAM merge live (`slam_mode:=multi`) |
+| Map | `/map_fused` | Scan-fusion layer live (`merge_scans:=true`) |
 | RobotModel | — | URDF loaded, TF tree working |
 | LaserScan | `/scan` | LiDAR data flowing from Gazebo |
 | Pose | `/amcl_pose` | AMCL is localising the robot (only in `robot.launch.py`) |
@@ -705,6 +812,10 @@ ros2 topic hz /cmd_vel
 # Save map after SLAM mapping (world-aware naming)
 ros2 run nav2_map_server map_saver_cli -f src/rosnav_bot/maps/map_hospital
 ros2 run nav2_map_server map_saver_cli -f src/rosnav_bot/maps/map_obstacles
+
+# Multi-SLAM / scan-fusion: pick the merged topic explicitly
+ros2 run nav2_map_server map_saver_cli -t /map_merged -f src/rosnav_bot/maps/map_hospital
+ros2 run rosnav_bot fleet_manager.py savemap src/rosnav_bot/maps/map_hospital  # auto-picks topic
 
 # Load custom waypoints
 ros2 run rosnav_bot waypoint_nav.py --ros-args \
@@ -917,6 +1028,8 @@ To revert to Nav2's built-in BT, set that value to `""`.
 ## 23. Coverage Path Planner
 
 `scripts/coverage_planner.py` computes a **boustrophedon** (lawnmower) sweep path over the free space of the current map and executes it via Nav2's `FollowWaypoints`.
+
+It is already **map-driven**: it subscribes to `/map` (`OccupancyGrid`), treats `grid == 0` as free, erodes by `robot_radius`, then sweeps. Hardcoded obstacles belong to the standalone A* demo (`path_planning.py`), not coverage.
 
 **Algorithm:**
 1. Receive `/map` (OccupancyGrid from SLAM or map_server).
