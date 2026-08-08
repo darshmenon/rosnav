@@ -1,4 +1,5 @@
 import os
+import sys
 import xml.etree.ElementTree as ET
 from launch import LaunchDescription
 from launch_ros.actions import Node
@@ -15,6 +16,9 @@ from launch.actions import (
     TimerAction,
 )
 from nav2_common.launch import RewrittenYaml
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _common  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Distro-agnostic helper: works on Humble (GZ Fortress/Garden) and Jazzy (GZ Harmonic)
@@ -214,24 +218,33 @@ def generate_launch_description():
         }.items()
     )
 
-    # Gazebo server (headless)
-    gazebo_server = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(get_package_share_directory('ros_gz_sim'), 'launch', 'gz_sim.launch.py')
+    # Gazebo server/client — GZ_SIM_RESOURCE_PATH includes models/ for offline Depot
+    gazebo_server = _common.with_gz_model_path(
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(get_package_share_directory('ros_gz_sim'), 'launch', 'gz_sim.launch.py')
+            ),
+            launch_arguments={
+                'gz_args': ['-r -s -v1 ', world],
+                'on_exit_shutdown': 'true'
+            }.items()
         ),
-        launch_arguments={
-            'gz_args': ['-r -s -v1 ', world],
-            'on_exit_shutdown': 'true'
-        }.items()
+        pkg_share,
     )
 
-    # Gazebo client (GUI) — skipped when headless:=true
-    gazebo_client = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(get_package_share_directory('ros_gz_sim'), 'launch', 'gz_sim.launch.py')
-        ),
-        launch_arguments={'gz_args': '-g'}.items(),
+    gazebo_client = GroupAction(
         condition=UnlessCondition(headless),
+        actions=[
+            _common.with_gz_model_path(
+                IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource(
+                        os.path.join(get_package_share_directory('ros_gz_sim'), 'launch', 'gz_sim.launch.py')
+                    ),
+                    launch_arguments={'gz_args': '-g'}.items(),
+                ),
+                pkg_share,
+            )
+        ],
     )
 
     # Spawn robot

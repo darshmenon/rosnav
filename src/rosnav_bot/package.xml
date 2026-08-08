@@ -73,6 +73,7 @@
 
   <export>
     <build_type>ament_cmake</build_type>
-    <gazebo_ros gazebo_model_path="${prefix}/.."/>
+    <!-- Parent of models/Depot so Gazebo resolves model://Depot offline -->
+    <gazebo_ros gazebo_model_path="${prefix}/models"/>
   </export>
 </package>

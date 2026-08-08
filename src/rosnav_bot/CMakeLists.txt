@@ -46,12 +46,13 @@ install(
     scripts/bt_executor.py
     scripts/multi_coverage.py
     scripts/aruco_dock.py
+    scripts/yolo_detector.py
     scripts/rmf_fleet_adapter.py
     scripts/rmf_submit_task.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(
-  DIRECTORY launch urdf config worlds rviz maps bt_editor
+  DIRECTORY launch urdf config worlds rviz maps bt_editor models meshes
   DESTINATION share/${PROJECT_NAME}
 )
 if(BUILD_TESTING)

@@ -1,0 +1,174 @@
+<?xml version="1.0" ?>
+<!--
+  warehouse_depot.world — OpenRobotics Depot (PBR warehouse) + collision shells.
+
+  Visuals come from the vendored local model at models/Depot (downloaded from
+  Gazebo Fuel via `gz fuel download`, NOT git). Offline-friendly: no Fuel /
+  network needed at launch once models/Depot is present.
+
+  Depot's stock SDF only collides with a floor plane — walls/shelves are
+  visual-only — so this world adds opaque collision boxes for building walls,
+  shelf blocks, and pillars so lidar / Nav2 costmaps see the layout.
+
+  Approximate footprint: ~30 m × 15 m interior.
+
+  Launch:
+    ros2 launch rosnav_bot slam_nav.launch.py world_name:=warehouse_depot explore:=true
+    ros2 launch rosnav_bot multi_robot.launch.py world:=warehouse_depot
+-->
+<sdf version='1.8'>
+  <world name='warehouse_depot'>
+
+    <physics name='4ms' type='ignored'>
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system"
+            name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system"
+            name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system"
+            name="ignition::gazebo::systems::SceneBroadcaster"/>
+    <plugin filename="ignition-gazebo-sensors-system"
+            name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="ignition-gazebo-contact-system"
+            name="ignition::gazebo::systems::Contact"/>
+
+    <light name='sun' type='directional'>
+      <pose>0 0 20 0 0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>-0.2 0.1 -0.9</direction>
+      <diffuse>1.0 0.98 0.95 1</diffuse>
+      <specular>0.3 0.3 0.3 1</specular>
+    </light>
+    <light name='light_center' type='point'>
+      <pose>0 0 6 0 0 0</pose>
+      <diffuse>0.85 0.85 0.9 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>25</range><linear>0.03</linear></attenuation>
+    </light>
+
+    <model name='ground_plane'>
+      <static>true</static>
+      <link name='link'>
+        <collision name='c'>
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+        </collision>
+        <visual name='v'>
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+          <material>
+            <ambient>0.55 0.55 0.55 1</ambient>
+            <diffuse>0.55 0.55 0.55 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Local vendored Fuel model (models/Depot). Requires GZ_SIM_RESOURCE_PATH
+         to include <pkg_share>/models — launch files set this automatically. -->
+    <include>
+      <uri>model://Depot</uri>
+      <name>Depot</name>
+      <pose>0 0 0 0 0 0</pose>
+      <static>true</static>
+    </include>
+
+    <!-- Collision shells aligned to Depot visuals (walls / shelves / pillars).
+         Invisible (no visual tags) — lidar and physics only. -->
+    <model name='depot_collisions'>
+      <static>true</static>
+      <pose>0 0 0 0 0 0</pose>
+
+      <!-- Outer walls -->
+      <link name='wall_south'>
+        <pose>0 -7.6129 4.5 0 0 0</pose>
+        <collision name='c'><geometry><box><size>30.167 0.08 9</size></box></geometry></collision>
+      </link>
+      <link name='wall_north'>
+        <pose>0 7.2875 4.5 0 0 0</pose>
+        <collision name='c'><geometry><box><size>30.167 0.08 9</size></box></geometry></collision>
+      </link>
+      <link name='wall_west'>
+        <pose>-15 0 4.5 0 0 0</pose>
+        <collision name='c'><geometry><box><size>0.08 15.360 9</size></box></geometry></collision>
+      </link>
+      <link name='wall_east'>
+        <pose>15 0 4.5 0 0 0</pose>
+        <collision name='c'><geometry><box><size>0.08 15.360 9</size></box></geometry></collision>
+      </link>
+
+      <!-- Shelf / crate blocks (south aisle row) -->
+      <link name='shelf_s0'>
+        <pose>0.22268 -4.7268 0.68506 0 0 0</pose>
+        <collision name='c'><geometry><box><size>1.288 1.422 1.288</size></box></geometry></collision>
+      </link>
+      <link name='shelf_s1'>
+        <pose>3.1727 -4.7268 0.68506 0 0 0</pose>
+        <collision name='c'><geometry><box><size>1.288 1.422 1.288</size></box></geometry></collision>
+      </link>
+      <link name='shelf_s2'>
+        <pose>5.95268 -4.7268 0.68506 0 0 0</pose>
+        <collision name='c'><geometry><box><size>1.288 1.422 1.288</size></box></geometry></collision>
+      </link>
+      <link name='shelf_s3'>
+        <pose>8.55887 -4.7268 0.68506 0 0 0</pose>
+        <collision name='c'><geometry><box><size>1.288 1.422 1.288</size></box></geometry></collision>
+      </link>
+      <link name='shelf_s4'>
+        <pose>11.326 -4.7268 0.68506 0 0 0</pose>
+        <collision name='c'><geometry><box><size>1.288 1.422 1.288</size></box></geometry></collision>
+      </link>
+
+      <!-- Shelf / crate blocks (mid-south row) -->
+      <link name='shelf_m0'>
+        <pose>0.22268 -2.37448 0.68506 0 0 0</pose>
+        <collision name='c'><geometry><box><size>1.288 1.422 1.288</size></box></geometry></collision>
+      </link>
+      <link name='shelf_m1'>
+        <pose>3.1727 -2.37448 0.68506 0 0 0</pose>
+        <collision name='c'><geometry><box><size>1.288 1.422 1.288</size></box></geometry></collision>
+      </link>
+      <link name='shelf_m2'>
+        <pose>5.95268 -2.37448 0.68506 0 0 0</pose>
+        <collision name='c'><geometry><box><size>1.288 1.422 1.288</size></box></geometry></collision>
+      </link>
+      <link name='shelf_m3'>
+        <pose>8.55887 -2.37448 0.68506 0 0 0</pose>
+        <collision name='c'><geometry><box><size>1.288 1.422 1.288</size></box></geometry></collision>
+      </link>
+      <link name='shelf_m4'>
+        <pose>11.326 -2.37448 0.68506 0 0 0</pose>
+        <collision name='c'><geometry><box><size>1.288 1.422 1.288</size></box></geometry></collision>
+      </link>
+
+      <!-- Extra shelf / obstacle near north aisle -->
+      <link name='shelf_n0'>
+        <pose>-1.2268 4.1557 0.68506 0 0 -1.028</pose>
+        <collision name='c'><geometry><box><size>1.288 1.422 1.288</size></box></geometry></collision>
+      </link>
+
+      <!-- Support pillars -->
+      <link name='pillar_nw'>
+        <pose>-7.5402 3.6151 1 0 0 0</pose>
+        <collision name='c'><geometry><box><size>0.465 0.465 2</size></box></geometry></collision>
+      </link>
+      <link name='pillar_ne'>
+        <pose>7.4575 3.6151 1 0 0 0</pose>
+        <collision name='c'><geometry><box><size>0.465 0.465 2</size></box></geometry></collision>
+      </link>
+      <link name='pillar_sw'>
+        <pose>-7.5402 -3.8857 1 0 0 0</pose>
+        <collision name='c'><geometry><box><size>0.465 0.465 2</size></box></geometry></collision>
+      </link>
+      <link name='pillar_se'>
+        <pose>7.4575 -3.8857 1 0 0 0</pose>
+        <collision name='c'><geometry><box><size>0.465 0.465 2</size></box></geometry></collision>
+      </link>
+    </model>
+
+  </world>
+</sdf>

@@ -550,6 +550,7 @@ def _build_all(context, pkg_share: str):
     amcl_start_delay = float(LaunchConfiguration('amcl_start_delay').perform(context).strip())
     robots_json = LaunchConfiguration('robots_json').perform(context).strip()
     drive_type = LaunchConfiguration('drive_type').perform(context).strip().lower()
+    robot_model = LaunchConfiguration('robot_model').perform(context).strip().lower()
     controller = LaunchConfiguration('controller').perform(context).strip().lower()
     lidar_type = LaunchConfiguration('lidar_type').perform(context).strip().lower()
     if lidar_type == '3d' and drive_type != 'diff':
@@ -562,7 +563,7 @@ def _build_all(context, pkg_share: str):
         raise ValueError('slam_mode must be one of: single, multi')
 
     slam_pkg     = get_package_share_directory('slam_toolbox')
-    urdf_filename = _common.urdf_filename_for(drive_type)
+    urdf_filename = _common.urdf_filename_for(drive_type, robot_model)
 
     # Resolve world file
     if os.path.isabs(world_arg) and os.path.isfile(world_arg):
@@ -602,9 +603,9 @@ def _build_all(context, pkg_share: str):
         actions.append(LogInfo(msg=f'[multi_robot] adjusted spawn: {msg}'))
 
     # ── Gazebo server + GUI ───────────────────────────────────────────────────
-    actions.append(_common.gazebo_server_action(world_path))
+    actions.append(_common.gazebo_server_action(world_path, pkg_share))
     if not headless:
-        actions.append(_common.gazebo_client_action())
+        actions.append(_common.gazebo_client_action(pkg_share))
 
     # Bridge the Gazebo clock exactly once.
     # Multiple /clock bridges can race and produce backward time jumps.
@@ -1050,6 +1051,11 @@ def generate_launch_description():
                         '"mecanum" (holonomic) or "ackermann" (car-like steering). '
                         'mecanum/ackermann reuse the single-robot nav2_params_*.yaml, namespaced '
                         'per-robot at launch time — see slam_nav.launch.py for the same drive types.'),
+        DeclareLaunchArgument(
+            'robot_model', default_value='custom',
+            description='Fleet-wide chassis visual skin: "custom" (default, this repo\'s own '
+                        'simple box chassis) or "mir100" (MiR100-shaped mesh, scaled to the same '
+                        'footprint — visual only). Only supported with drive_type:=diff.'),
         DeclareLaunchArgument(
             'lidar_type', default_value='2d',
             description='Fleet-wide lidar: "2d" (default, LaserScan on /{ns}/scan) or "3d" '

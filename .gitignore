@@ -24,6 +24,10 @@ __pycache__/
 # first run wherever ros2 launch's cwd happens to be; not source, don't track.
 *.pt
 
+# Vendored Fuel Depot (~96 MB meshes/textures). Re-fetch without git:
+#   bash src/rosnav_bot/scripts/download_depot_model.sh
+src/rosnav_bot/models/Depot/
+
 # OS
 .DS_Store
 *.swp
