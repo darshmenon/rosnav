@@ -48,7 +48,7 @@ Usage
   ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi
 
   # Swap frontier plugins without editing code
-  ros2 launch rosnav_bot multi_robot.launch.py frontier_detector:=wfd frontier_scorer:=weighted
+  ros2 launch rosnav_bot multi_robot.launch.py frontier_detector:=wfd frontier_scorer:=utility
 
   # Spawn more robots without editing this file
   ros2 launch rosnav_bot multi_robot.launch.py robot_count:=4 robot_layout:=grid
@@ -524,8 +524,14 @@ def _build_all(context, pkg_share: str):
     slam_mode = LaunchConfiguration('slam_mode').perform(context).strip().lower()
     frontier_detector = LaunchConfiguration('frontier_detector').perform(context).strip()
     frontier_scorer = LaunchConfiguration('frontier_scorer').perform(context).strip()
+    explore_bt = LaunchConfiguration('explore_bt').perform(context).strip()
     distance_weight = float(LaunchConfiguration('distance_weight').perform(context).strip())
     info_gain_weight = float(LaunchConfiguration('info_gain_weight').perform(context).strip())
+    potential_scale = float(LaunchConfiguration('potential_scale').perform(context).strip())
+    gain_scale = float(LaunchConfiguration('gain_scale').perform(context).strip())
+    validate_on_costmap = _truthy(LaunchConfiguration('validate_on_costmap').perform(context))
+    costmap_max_cost = int(float(LaunchConfiguration('costmap_max_cost').perform(context).strip()))
+    goal_pullback = float(LaunchConfiguration('goal_pullback').perform(context).strip())
     hysteresis_radius = float(LaunchConfiguration('hysteresis_radius').perform(context).strip())
     hysteresis_gain = float(LaunchConfiguration('hysteresis_gain').perform(context).strip())
     frontier_clearance_radius = float(LaunchConfiguration('frontier_clearance_radius').perform(context).strip())
@@ -953,6 +959,11 @@ def _build_all(context, pkg_share: str):
                     'frontier_scorer': frontier_scorer,
                     'distance_weight': distance_weight,
                     'info_gain_weight': info_gain_weight,
+                    'potential_scale': potential_scale,
+                    'gain_scale': gain_scale,
+                    'validate_on_costmap': validate_on_costmap,
+                    'costmap_max_cost': costmap_max_cost,
+                    'goal_pullback': goal_pullback,
                     'hysteresis_radius': hysteresis_radius,
                     'hysteresis_gain': hysteresis_gain,
                     'frontier_clearance_radius': frontier_clearance_radius,
@@ -961,11 +972,12 @@ def _build_all(context, pkg_share: str):
                     'publish_markers': publish_markers,
                     'nav_wait_warn_sec': nav_wait_warn_sec,
                     'tf_wait_warn_sec': tf_wait_warn_sec,
+                    'behavior_tree': explore_bt,
                 }])]))
         actions.append(LogInfo(
             msg=f'[multi_robot] frontier_coordinator will start at t={22.0 if slam_mode == "multi" else (21.0 if merge_scans else 20.0)}s '
                 f'for {robot_ns_list} (map_topic={frontier_map_topic}, '
-                f'detector={frontier_detector}, scorer={frontier_scorer})'))
+                f'detector={frontier_detector}, scorer={frontier_scorer}, bt={explore_bt})'))
 
     # ── Fleet management algorithms (optional) ────────────────────────────────
     if fleet_mgmt:
@@ -1132,9 +1144,13 @@ def generate_launch_description():
             description='Frontier detector plugin: wfd = reachable wavefront frontiers; '
                         'classic = all free/unknown boundary cells'),
         DeclareLaunchArgument(
-            'frontier_scorer', default_value='weighted',
-            description='Frontier scorer plugin: weighted = info gain minus distance; '
-                        'nearest = closest valid frontier'),
+            'frontier_scorer', default_value='utility',
+            description='Frontier scorer plugin: utility = explore_lite size/distance; '
+                        'weighted = info gain minus distance; nearest = closest valid frontier'),
+        DeclareLaunchArgument(
+            'explore_bt', default_value='explore_nav',
+            description='BT XML stem or path passed as NavigateToPose.behavior_tree '
+                        'for frontier goals (default explore_nav)'),
         DeclareLaunchArgument(
             'distance_weight', default_value='1.0',
             description='Weighted scorer distance penalty'),
@@ -1142,13 +1158,29 @@ def generate_launch_description():
             'info_gain_weight', default_value='3.0',
             description='Weighted scorer information gain reward'),
         DeclareLaunchArgument(
+            'potential_scale', default_value='3.0',
+            description='Utility scorer distance penalty (explore_lite)'),
+        DeclareLaunchArgument(
+            'gain_scale', default_value='1.0',
+            description='Utility scorer frontier-size reward (explore_lite)'),
+        DeclareLaunchArgument(
+            'validate_on_costmap', default_value='true',
+            description='Reject frontier goals in inflated/lethal Nav2 costmap cells'),
+        DeclareLaunchArgument(
+            'costmap_max_cost', default_value='1',
+            description='Reject costmap OccupancyGrid values >= this (0=free; '
+                        'inflation 1-98 — use 1 to stay out of inflation layer)'),
+        DeclareLaunchArgument(
+            'goal_pullback', default_value='0.55',
+            description='Stand back from unknown frontier into free space (m)'),
+        DeclareLaunchArgument(
             'hysteresis_radius', default_value='2.0',
             description='Radius for keeping a robot near its current exploration region'),
         DeclareLaunchArgument(
             'hysteresis_gain', default_value='1.5',
             description='Weighted scorer bonus for current-region continuity'),
         DeclareLaunchArgument(
-            'frontier_clearance_radius', default_value='0.30',
+            'frontier_clearance_radius', default_value='0.55',
             description='Minimum OccupancyGrid clearance around selected frontier goals'),
         DeclareLaunchArgument(
             'failed_goal_radius', default_value='0.75',

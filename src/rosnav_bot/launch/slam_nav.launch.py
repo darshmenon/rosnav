@@ -352,7 +352,20 @@ def _build_runtime_actions(context, pkg_share: str):
                     executable='frontier_explorer.py',
                     name='frontier_explorer',
                     output='screen',
-                    parameters=[{'map_save_path': map_prefix, 'use_sim_time': True}]
+                    parameters=[{
+                        'map_save_path': map_prefix,
+                        'use_sim_time': True,
+                        'frontier_detector': LaunchConfiguration('frontier_detector'),
+                        'frontier_scorer': LaunchConfiguration('frontier_scorer'),
+                        'info_gain_weight': LaunchConfiguration('info_gain_weight'),
+                        'potential_scale': LaunchConfiguration('potential_scale'),
+                        'gain_scale': LaunchConfiguration('gain_scale'),
+                        'behavior_tree': LaunchConfiguration('explore_bt'),
+                        'validate_on_costmap': LaunchConfiguration('validate_on_costmap'),
+                        'costmap_max_cost': LaunchConfiguration('costmap_max_cost'),
+                        'goal_pullback': LaunchConfiguration('goal_pullback'),
+                        'frontier_clearance_radius': LaunchConfiguration('frontier_clearance_radius'),
+                    }]
                 )]
             )
         ]
@@ -449,6 +462,38 @@ def generate_launch_description():
         DeclareLaunchArgument(
             name='explore', default_value='false',
             description='Auto-start frontier explorer (only valid when slam:=true)'),
+        DeclareLaunchArgument(
+            name='frontier_detector', default_value='wfd',
+            description='Frontier detector: wfd (reachable wavefront) or classic'),
+        DeclareLaunchArgument(
+            name='frontier_scorer', default_value='utility',
+            description='Frontier scorer: utility (explore_lite), weighted, or nearest'),
+        DeclareLaunchArgument(
+            name='info_gain_weight', default_value='3.0',
+            description='Weighted scorer information-gain reward'),
+        DeclareLaunchArgument(
+            name='potential_scale', default_value='3.0',
+            description='Utility scorer distance penalty (explore_lite)'),
+        DeclareLaunchArgument(
+            name='gain_scale', default_value='1.0',
+            description='Utility scorer frontier-size reward (explore_lite)'),
+        DeclareLaunchArgument(
+            name='explore_bt', default_value='explore_nav',
+            description='BT XML stem or path passed as NavigateToPose.behavior_tree'),
+        DeclareLaunchArgument(
+            name='validate_on_costmap', default_value='true',
+            description='Reject frontier goals in inflated/lethal Nav2 costmap cells'),
+        DeclareLaunchArgument(
+            name='costmap_max_cost', default_value='1',
+            description='Reject costmap OccupancyGrid values >= this (0=free only; '
+                        'inflation is 1-98, inscribed 99, lethal 100)'),
+        DeclareLaunchArgument(
+            name='goal_pullback', default_value='0.55',
+            description='Stand back from unknown frontier edge into free space (m). '
+                        'Should be >= global inflation_radius (0.5)'),
+        DeclareLaunchArgument(
+            name='frontier_clearance_radius', default_value='0.55',
+            description='Min clearance from occupied cells for frontier goals (m)'),
         DeclareLaunchArgument(
             name='safety', default_value='true',
             description='Launch collision monitor safety layer'),

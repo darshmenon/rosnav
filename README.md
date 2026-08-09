@@ -53,7 +53,7 @@ source /opt/ros/humble/setup.bash && source install/setup.bash
 
 ```bash
 # Terminal 1 — SLAM only (no frontier). Keep safety:=true so /cmd_vel reaches Gazebo.
-ros2 launch rosnav_bot slam_nav.launch.py world_name:=maze
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital
 
 # Terminal 2 — keyboard drive
 ros2 run teleop_twist_keyboard teleop_twist_keyboard
@@ -73,17 +73,17 @@ Or let the robot explore alone: add `explore:=true` to the launch above.
 ### B — Save the map
 
 ```bash
-ros2 run nav2_map_server map_saver_cli -f src/rosnav_bot/maps/map_maze
+ros2 run nav2_map_server map_saver_cli -f src/rosnav_bot/maps/map_hospital
 ```
 
-Writes `map_maze.yaml` + `map_maze.pgm`. Then `Ctrl+C` the SLAM launch.  
+Writes `map_hospital.yaml` + `map_hospital.pgm`. Then `Ctrl+C` the SLAM launch.  
 (With `explore:=true`, maps also autosave under `src/rosnav_bot/maps/map_<world>.*`.)
 
 ### C — Navigate on the saved map
 
 ```bash
-ros2 launch rosnav_bot robot.launch.py world_name:=maze \
-  map:=src/rosnav_bot/maps/map_maze.yaml
+ros2 launch rosnav_bot robot.launch.py world_name:=hospital \
+  map:=src/rosnav_bot/maps/map_hospital.yaml
 ```
 
 AMCL localizes on the static map — no more SLAM. Send a goal:
