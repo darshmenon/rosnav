@@ -81,14 +81,6 @@
 
     <!-- ===== INTERIOR WALLS — ROOM DIVIDERS ===== -->
 
-    <!-- Horizontal divider: splits arena into top/bottom halves, gap on right -->
-    <model name='h_div_left'><static>true</static><link name='link'>
-      <pose>-2.5 0 1 0 0 0</pose>
-      <collision name='c'><geometry><box><size>15 0.2 2</size></box></geometry></collision>
-      <visual name='v'><geometry><box><size>15 0.2 2</size></box></geometry>
-        <material><ambient>0.6 0.4 0.3 1</ambient><diffuse>0.6 0.4 0.3 1</diffuse></material></visual>
-    </link></model>
-
     <!-- Vertical divider: left side corridor, gap at bottom -->
     <model name='v_div_left'><static>true</static><link name='link'>
       <pose>-5 4.5 1 0 0 0</pose>

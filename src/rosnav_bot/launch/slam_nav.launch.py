@@ -288,15 +288,17 @@ def _build_runtime_actions(context, pkg_share: str):
         )
 
     # ── RViz ──────────────────────────────────────────────────────────────
+    # Independent of `headless` — that flag controls Gazebo's GPU-heavy 3D
+    # client only. RViz has its own renderer and is useful precisely when
+    # Gazebo's client is skipped (e.g. watching the map build without
+    # paying Gazebo's rendering cost).
     rviz2 = GroupAction(
         condition=IfCondition(rviz),
-        actions=[GroupAction(
-            condition=UnlessCondition(headless),
-            actions=[Node(
-                package='rviz2',
-                executable='rviz2',
-                arguments=['-d', os.path.join(pkg_share, 'rviz', 'bot.rviz')],
-                output='screen')])])
+        actions=[Node(
+            package='rviz2',
+            executable='rviz2',
+            arguments=['-d', os.path.join(pkg_share, 'rviz', 'bot.rviz')],
+            output='screen')])
 
     # ── Safety Layer: Collision Monitor ───────────────────────────────────
     safety = LaunchConfiguration('safety')
@@ -467,16 +469,16 @@ def generate_launch_description():
             description='Frontier detector: wfd (reachable wavefront) or classic'),
         DeclareLaunchArgument(
             name='frontier_scorer', default_value='utility',
-            description='Frontier scorer: utility (explore_lite), weighted, or nearest'),
+            description='Frontier scorer: utility (size/distance tradeoff), weighted, or nearest'),
         DeclareLaunchArgument(
             name='info_gain_weight', default_value='3.0',
             description='Weighted scorer information-gain reward'),
         DeclareLaunchArgument(
             name='potential_scale', default_value='3.0',
-            description='Utility scorer distance penalty (explore_lite)'),
+            description='Utility scorer distance penalty'),
         DeclareLaunchArgument(
             name='gain_scale', default_value='1.0',
-            description='Utility scorer frontier-size reward (explore_lite)'),
+            description='Utility scorer frontier-size reward'),
         DeclareLaunchArgument(
             name='explore_bt', default_value='explore_nav',
             description='BT XML stem or path passed as NavigateToPose.behavior_tree'),

@@ -196,7 +196,14 @@ class CollisionMonitor(Node):
             # Sensor dead — always hard stop
             self._cmd_pub.publish(Twist())
         elif self._state == STOP:
-            self._cmd_pub.publish(Twist())
+            # Block driving further into the obstacle, but still allow
+            # backing away and turning in place — otherwise a STOP latch
+            # traps the robot against the wall with no way out via teleop.
+            safe = Twist()
+            if self._relay_vel.linear.x < 0:
+                safe.linear.x = self._relay_vel.linear.x
+            safe.angular.z = self._relay_vel.angular.z
+            self._cmd_pub.publish(safe)
         elif self._state == SLOWDOWN:
             scaled = Twist()
             scaled.linear.x  = self._relay_vel.linear.x  * self._factor
