@@ -4,8 +4,7 @@ map_merge_known.py — Robust known-pose multi-robot OccupancyGrid merge.
 
 Each robot runs its own slam_toolbox instance and publishes /<ns>/map in its
 local map frame (<ns>/map). This node stitches those grids into one global
-/map using known initial poses (spawn offsets), the same pattern as
-m-explore's map_merge with known_init_poses:=true.
+/map using known initial poses (spawn offsets) rather than scan matching.
 
 Robustness choices
 ------------------

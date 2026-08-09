@@ -1145,7 +1145,7 @@ def generate_launch_description():
                         'classic = all free/unknown boundary cells'),
         DeclareLaunchArgument(
             'frontier_scorer', default_value='utility',
-            description='Frontier scorer plugin: utility = explore_lite size/distance; '
+            description='Frontier scorer plugin: utility = size/distance tradeoff; '
                         'weighted = info gain minus distance; nearest = closest valid frontier'),
         DeclareLaunchArgument(
             'explore_bt', default_value='explore_nav',
@@ -1159,10 +1159,10 @@ def generate_launch_description():
             description='Weighted scorer information gain reward'),
         DeclareLaunchArgument(
             'potential_scale', default_value='3.0',
-            description='Utility scorer distance penalty (explore_lite)'),
+            description='Utility scorer distance penalty'),
         DeclareLaunchArgument(
             'gain_scale', default_value='1.0',
-            description='Utility scorer frontier-size reward (explore_lite)'),
+            description='Utility scorer frontier-size reward'),
         DeclareLaunchArgument(
             'validate_on_costmap', default_value='true',
             description='Reject frontier goals in inflated/lethal Nav2 costmap cells'),

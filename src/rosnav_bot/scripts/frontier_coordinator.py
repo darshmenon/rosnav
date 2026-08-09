@@ -11,7 +11,7 @@ Parameters
 robot_namespaces  Comma-separated robot names, e.g. "robot1,robot2,robot3"
 frontier_detector Frontier detector plugin: classic or wfd (default wfd)
 frontier_scorer   Goal scorer: nearest | weighted | utility (default utility)
-                  utility = explore_lite gain*size_m - potential*distance
+                  utility = gain*size_m - potential*distance
 min_frontier_size Minimum cluster size to consider a frontier (default 5)
 revisit_radius    Radius (m) within which a frontier counts as visited (default 0.5)
 assign_radius     Radius (m) within which a frontier counts as taken (default 1.0)
@@ -27,8 +27,8 @@ failed_goal_radius Radius for matching failed frontier goals (default 0.75)
 failed_goal_cooldown Seconds to avoid a failed frontier area (default 45)
 distance_weight   Weighted scorer distance penalty (default 1.0)
 info_gain_weight  Weighted scorer information gain reward (default 3.0)
-potential_scale   Utility scorer distance penalty (explore_lite, default 3.0)
-gain_scale        Utility scorer frontier-size reward (explore_lite, default 1.0)
+potential_scale   Utility scorer distance penalty (default 3.0)
+gain_scale        Utility scorer frontier-size reward (default 1.0)
 hysteresis_radius Radius for robot-continuity scoring bonus (default 2.0)
 hysteresis_gain   Weighted/utility current assignment bonus (default 1.5)
 costmap_topic_suffix Per-robot Nav2 costmap topic suffix (default global_costmap/costmap)

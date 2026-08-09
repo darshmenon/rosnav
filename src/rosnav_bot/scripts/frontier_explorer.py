@@ -7,9 +7,9 @@ Uses the same detector/scorer plugins as frontier_coordinator:
   frontier_detector: classic | wfd              (default wfd)
   frontier_scorer:   nearest | weighted | utility (default utility)
 
-utility scorer mirrors explore_lite:
+utility scorer:
   score = gain_scale * size_m - potential_scale * distance
-  (equivalent to minimizing explore_lite cost).
+  (maximize frontier size, minimize travel distance).
 
 Goals are validated against Nav2 global_costmap when available, and sent
 with config/bt/explore_nav.xml unless behavior_tree is overridden.
@@ -101,8 +101,11 @@ class FrontierExplorer(Node):
         self.declare_parameter('goal_frame', 'map')
         self.declare_parameter('base_frame', 'base_link')
         self.declare_parameter('min_goal_distance', 0.50)
+        self.declare_parameter('min_viable_goal_distance', 0.30)
         self.declare_parameter('map_save_path', '')
         self.declare_parameter('max_frontier_retries', 2)
+        self.declare_parameter('empty_frontier_max_wait', 15)
+        self.declare_parameter('max_visited_relax_streak', 8)
         self.declare_parameter('goal_timeout', 60.0)
         self.declare_parameter('frontier_detector', 'wfd')
         self.declare_parameter('frontier_scorer', 'utility')
@@ -131,8 +134,19 @@ class FrontierExplorer(Node):
         self._goal_frame = self.get_parameter('goal_frame').value
         self._base_frame = self.get_parameter('base_frame').value
         self._min_goal_dist = self.get_parameter('min_goal_distance').value
+        # Nav2's general_goal_checker xy_goal_tolerance (nav2_params*.yaml) is
+        # 0.25m — any goal inside that radius of the robot's *current* pose
+        # is reported "reached" instantly without the robot moving at all.
+        # Cold-start relaxation must never hand out a goal closer than this,
+        # or exploration orbits the same spot forever without the map ever
+        # growing. Keep a small margin above 0.25m since the two configs
+        # aren't wired together and can drift.
+        self._min_viable_dist = float(self.get_parameter('min_viable_goal_distance').value)
         self._map_save_path = self.get_parameter('map_save_path').value.strip()
         self._max_retries = self.get_parameter('max_frontier_retries').value
+        self._max_empty_wait = int(self.get_parameter('empty_frontier_max_wait').value)
+        self._max_visited_relax_streak = int(
+            self.get_parameter('max_visited_relax_streak').value)
         self._goal_timeout = self.get_parameter('goal_timeout').value
         self._map_topic = self.get_parameter('map_topic').value
         self._detector = self.get_parameter('frontier_detector').value.strip().lower()
@@ -191,6 +205,12 @@ class FrontierExplorer(Node):
         self._iteration = 0
         self._map_saved = False
         self._logged_init_wait = False
+        self._empty_streak = 0
+        self._last_map_update = 0.0
+        self._last_goal_done = 0.0
+        self._visited_relax_streak = 0
+        self._last_free_cells = None
+        self._last_growth_log = 0.0
         self._logged_costmap = False
         self._last_status_log = 0.0
 
@@ -225,6 +245,7 @@ class FrontierExplorer(Node):
     # ------------------------------------------------------------------
     def _map_callback(self, msg: OccupancyGrid):
         self._map = msg
+        self._last_map_update = time.monotonic()
 
     def _costmap_callback(self, msg: OccupancyGrid):
         first = self._costmap is None
@@ -290,6 +311,8 @@ class FrontierExplorer(Node):
                         f'Still waiting.')
                     self._last_status_log = now
                 return
+            if not self._confirm_empty('no frontier cells detected'):
+                return
             self.get_logger().info('No frontiers — exploration complete.')
             self._save_map_once()
             return
@@ -299,14 +322,17 @@ class FrontierExplorer(Node):
             if pos is None:
                 self.get_logger().debug('TF not ready yet, retrying...')
                 return
-            self.get_logger().info(
-                f'No usable frontier '
-                f'(candidates={pick["n_total"]} visited={pick["n_visited"]} '
+            reason = (
+                f'candidates={pick["n_total"]} visited={pick["n_visited"]} '
                 f'costmap_block={pick["n_costmap"]} too_near={pick["n_near"]} '
-                f'scorer={self._scorer}) — exploration complete.')
+                f'unreachable={pick.get("n_unreachable", 0)} scorer={self._scorer}')
+            if not self._confirm_empty(reason):
+                return
+            self.get_logger().info(f'No usable frontier ({reason}) — exploration complete.')
             self._finish_exploration()
             return
 
+        self._empty_streak = 0
         self._iteration += 1
         if self._map_save_path and self._iteration % 10 == 0:
             self.get_logger().info(
@@ -326,9 +352,30 @@ class FrontierExplorer(Node):
             f'cost={self._costmap_value(*goal)} '
             f'| pool={pick["n_ok"]}/{pick["n_total"]} '
             f'(skip visited={pick["n_visited"]} costmap={pick["n_costmap"]} '
-            f'near={pick["n_near"]})')
+            f'near={pick["n_near"]} unreachable={pick.get("n_unreachable", 0)})')
         self._current_goal = goal
         self._send_goal(*goal)
+
+    def _confirm_empty(self, reason: str) -> bool:
+        """Debounce the "no usable frontier" verdict until /map is fresh.
+
+        Right after a goal completes, slam_toolbox's map_update_interval
+        (commonly 5s) means /map may not have republished the newly-explored
+        area yet — this poll can rediscover the exact same (now-visited)
+        frontier cluster and look like completion when the robot has really
+        just paused between hops. Require at least one map update newer than
+        the last goal's completion before trusting "no usable frontier".
+        A streak cap is a safety valve in case /map stops publishing.
+        """
+        self._empty_streak += 1
+        map_is_fresh = self._last_map_update > self._last_goal_done
+        if not map_is_fresh and self._empty_streak < self._max_empty_wait:
+            self.get_logger().debug(
+                f'No usable frontier ({reason}) but /map has not refreshed '
+                f'since the last goal completed — waiting '
+                f'(streak {self._empty_streak}/{self._max_empty_wait}).')
+            return False
+        return True
 
     # ------------------------------------------------------------------
     # Map saving and shutdown
@@ -365,6 +412,16 @@ class FrontierExplorer(Node):
         free = data == 0
         unknown = data == -1
         occupied = data >= 50
+
+        free_count = int(free.sum())
+        now = time.monotonic()
+        if now - self._last_growth_log >= 2.0:
+            delta = '' if self._last_free_cells is None else f' (Δ{free_count - self._last_free_cells:+d})'
+            self.get_logger().info(
+                f'/map free cells: {free_count}{delta} '
+                f'({width}x{height} @ {res:.3f}m)')
+            self._last_free_cells = free_count
+            self._last_growth_log = now
 
         mask = self._frontier_mask(free, unknown)
         raw_count = int(mask.sum())
@@ -543,12 +600,20 @@ class FrontierExplorer(Node):
                     f'this pick instead of rejecting the frontier outright.')
                 self._last_pullback_relax_warn = now
 
+        # Rank by proximity to this cluster first, clearance only as a
+        # tiebreaker. Scoring by clearance first (as this used to) makes
+        # every cluster's BFS converge on whichever cell in reach has the
+        # best clearance workspace-wide — when the known-free region is
+        # small (cold start, tight corridors) that's the *same* cell for
+        # every cluster, so one visit falsely marks all of them "visited".
+        # Picking the closest qualifying cell keeps each goal anchored to
+        # the frontier that produced it.
         best = None
-        best_score = float('-inf')
+        best_key = None
         for unk_clear, occ_clear, dist, y, x in pool:
-            score = unk_clear + occ_clear - 0.15 * dist * resolution
-            if score > best_score:
-                best_score = score
+            key = (dist, -(unk_clear + occ_clear))
+            if best_key is None or key < best_key:
+                best_key = key
                 best = (float(y), float(x), occ_clear)
 
         return (best[0], best[1]), best[2]
@@ -583,70 +648,139 @@ class FrontierExplorer(Node):
     def _best_frontier(self, frontiers, pos):
         empty = {
             'n_total': len(frontiers), 'n_ok': 0, 'n_visited': 0,
-            'n_costmap': 0, 'n_near': 0, 'score': float('-inf'),
+            'n_costmap': 0, 'n_near': 0, 'n_unreachable': 0, 'score': float('-inf'),
             'distance': 0.0, 'size_m': 0.0, 'info_gain': 0.0, 'clearance': 0.0,
         }
         if pos is None:
             return None, empty
         rx, ry = pos
-        best, best_score, best_meta = None, float('-inf'), empty
-        n_visited = n_costmap = n_near = n_ok = 0
+        n_visited = n_costmap = n_near = n_ok = n_unreachable = 0
+        far_candidates = []
+        near_candidates = []
+        visited_candidates = []  # (frontier, fx, fy) — already-visited but otherwise untried
         for frontier in frontiers:
             fx, fy = frontier['point']
+            d = math.hypot(fx - rx, fy - ry)
+            if d <= self._min_viable_dist:
+                # Inside Nav2's own goal tolerance — sending this goal is a
+                # guaranteed no-op (instant "reached" without moving), which
+                # is how cold-start hops used to get stuck orbiting one spot.
+                # Excluded outright, before the visited/costmap/near checks.
+                n_unreachable += 1
+                continue
             if self._already_visited(fx, fy):
                 n_visited += 1
+                visited_candidates.append((frontier, fx, fy))
                 continue
             if not self._costmap_allows(fx, fy):
                 n_costmap += 1
                 continue
-            d = math.hypot(fx - rx, fy - ry)
             if d < self._min_goal_dist:
                 n_near += 1
+                near_candidates.append((frontier, d))
                 continue
             n_ok += 1
+            far_candidates.append((frontier, d))
+
+        # Cold start: right after spawn the known-free region is only as big
+        # as the robot's immediate surroundings, so every frontier can fall
+        # within min_goal_distance of the robot — there's nothing farther to
+        # pick yet. Relax onto the near pool (same fallback pattern as the
+        # goal_pullback relax in _place_safe_goal) instead of letting the
+        # explorer conclude "exploration complete" before it has ever moved.
+        pool, relaxed = (far_candidates, False) if far_candidates else (near_candidates, True)
+
+        best, best_score, best_meta = None, float('-inf'), None
+        for frontier, d in pool:
             score = self._score_frontier(frontier, d)
             if score > best_score:
                 best_score = score
-                best = (fx, fy)
+                best = frontier['point']
                 best_meta = {
                     'n_total': len(frontiers),
                     'n_ok': n_ok,
                     'n_visited': n_visited,
                     'n_costmap': n_costmap,
                     'n_near': n_near,
+                    'n_unreachable': n_unreachable,
                     'score': score,
                     'distance': d,
                     'size_m': frontier['size_m'],
                     'info_gain': frontier['info_gain'],
                     'clearance': frontier.get('clearance', 0.0),
                 }
-        # Refresh skip counts on the chosen meta (counts finish after loop)
-        if best is not None:
-            best_meta = {
-                **best_meta,
-                'n_ok': n_ok,
-                'n_visited': n_visited,
-                'n_costmap': n_costmap,
-                'n_near': n_near,
+
+        if best is None and visited_candidates:
+            # Last-resort tier: every remaining frontier already looks
+            # visited. This happens when the cold-start known-free bubble is
+            # smaller than revisit_radius + min_goal_distance combined, so
+            # any short hop lands within revisit range of everything nearby
+            # — not because exploration is actually done. Break out by
+            # retargeting whichever frontier sits farthest from the nearest
+            # visited point, instead of concluding "complete" while
+            # unexplored space almost certainly still lies behind it.
+            #
+            # Circuit breaker: if this tier keeps firing many times in a row
+            # with no intervening normal pick, the map has stopped growing
+            # (e.g. spawned in a pocket too small to escape) and retargeting
+            # forever just spins the robot in place. Give up for real once
+            # the streak is too long, instead of looping indefinitely.
+            self._visited_relax_streak += 1
+            if self._visited_relax_streak > self._max_visited_relax_streak:
+                self.get_logger().warn(
+                    f'Visited-relax fired {self._visited_relax_streak} times in a row '
+                    f'with no real progress — the known-free region likely stopped '
+                    f'growing (cold-start pocket too small to escape). Giving up instead '
+                    f'of spinning in place forever.')
+                return None, {**empty, 'n_ok': n_ok, 'n_visited': n_visited,
+                              'n_costmap': n_costmap, 'n_near': n_near,
+                              'n_unreachable': n_unreachable}
+
+            def _dist_to_nearest_visited(fx, fy):
+                if not self._visited:
+                    return float('inf')
+                return min(math.hypot(fx - vx, fy - vy) for vx, vy in self._visited)
+
+            frontier, fx, fy = max(
+                visited_candidates, key=lambda t: _dist_to_nearest_visited(t[1], t[2]))
+            d = math.hypot(fx - rx, fy - ry)
+            now = time.monotonic()
+            if now - getattr(self, '_last_visited_relax_warn', 0.0) >= 10.0:
+                self.get_logger().warn(
+                    f'All {n_visited} frontier(s) already look visited (cold-start '
+                    f'known-free region smaller than revisit_radius={self._revisit_r:.2f}m '
+                    f'+ min_goal_distance={self._min_goal_dist:.2f}m) — retargeting the '
+                    f'one farthest from any visited point instead of declaring complete '
+                    f'(streak {self._visited_relax_streak}/{self._max_visited_relax_streak}).')
+                self._last_visited_relax_warn = now
+            return (fx, fy), {
+                'n_total': len(frontiers), 'n_ok': n_ok, 'n_visited': n_visited,
+                'n_costmap': n_costmap, 'n_near': n_near, 'n_unreachable': n_unreachable,
+                'score': self._score_frontier(frontier, d), 'distance': d,
+                'size_m': frontier['size_m'], 'info_gain': frontier['info_gain'],
+                'clearance': frontier.get('clearance', 0.0),
             }
-        else:
-            best_meta = {
-                'n_total': len(frontiers),
-                'n_ok': n_ok,
-                'n_visited': n_visited,
-                'n_costmap': n_costmap,
-                'n_near': n_near,
-                'score': float('-inf'),
-                'distance': 0.0,
-                'size_m': 0.0,
-                'info_gain': 0.0,
-                'clearance': 0.0,
-            }
+
+        if best is None:
+            return None, {**empty, 'n_ok': n_ok, 'n_visited': n_visited,
+                          'n_costmap': n_costmap, 'n_near': n_near,
+                          'n_unreachable': n_unreachable}
+
+        self._visited_relax_streak = 0
+        if relaxed:
+            now = time.monotonic()
+            if now - getattr(self, '_last_min_dist_relax_warn', 0.0) >= 10.0:
+                self.get_logger().warn(
+                    f'All {n_near} frontier(s) are within min_goal_distance='
+                    f'{self._min_goal_dist:.2f}m of the robot (cold start / small '
+                    f'known-free region) — relaxing to take a first short hop '
+                    f'instead of declaring exploration complete.')
+                self._last_min_dist_relax_warn = now
         return best, best_meta
 
     def _score_frontier(self, frontier, distance):
         if self._scorer == 'utility':
-            # explore_lite: minimize potential*dist - gain*size  →  maximize this
+            # minimize potential*dist - gain*size  →  maximize this
             score = (
                 self._gain_scale * frontier['size_m']
                 - self._potential_scale * distance)
@@ -790,6 +924,7 @@ class FrontierExplorer(Node):
                 f'after {elapsed:.1f}s.')
             if self._current_goal is not None:
                 self._register_failure(*self._current_goal)
+        self._last_goal_done = time.monotonic()
         self._navigating = False
 
     def _register_failure(self, fx, fy):
