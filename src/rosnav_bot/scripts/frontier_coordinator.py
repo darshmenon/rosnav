@@ -10,7 +10,8 @@ Parameters
 ----------
 robot_namespaces  Comma-separated robot names, e.g. "robot1,robot2,robot3"
 frontier_detector Frontier detector plugin: classic or wfd (default wfd)
-frontier_scorer   Goal scorer plugin: nearest or weighted (default weighted)
+frontier_scorer   Goal scorer: nearest | weighted | utility (default utility)
+                  utility = explore_lite gain*size_m - potential*distance
 min_frontier_size Minimum cluster size to consider a frontier (default 5)
 revisit_radius    Radius (m) within which a frontier counts as visited (default 0.5)
 assign_radius     Radius (m) within which a frontier counts as taken (default 1.0)
@@ -26,13 +27,20 @@ failed_goal_radius Radius for matching failed frontier goals (default 0.75)
 failed_goal_cooldown Seconds to avoid a failed frontier area (default 45)
 distance_weight   Weighted scorer distance penalty (default 1.0)
 info_gain_weight  Weighted scorer information gain reward (default 3.0)
+potential_scale   Utility scorer distance penalty (explore_lite, default 3.0)
+gain_scale        Utility scorer frontier-size reward (explore_lite, default 1.0)
 hysteresis_radius Radius for robot-continuity scoring bonus (default 2.0)
-hysteresis_gain   Weighted scorer current assignment bonus (default 1.5)
+hysteresis_gain   Weighted/utility current assignment bonus (default 1.5)
+costmap_topic_suffix Per-robot Nav2 costmap topic suffix (default global_costmap/costmap)
+validate_on_costmap Reject goals in inflated/lethal costmap cells (default true)
+costmap_max_cost  Reject OccupancyGrid values >= this (default 50)
+allow_unknown_costmap Allow goals on unknown/-1 costmap cells (default true)
 publish_markers   Publish RViz MarkerArray debug overlays (default true)
 nav_wait_warn_sec Seconds between warnings for missing Nav2 action servers (default 15)
 tf_wait_warn_sec  Seconds between warnings for missing robot map TF (default 15)
 map_save_path     File prefix for final map save, e.g. /path/to/maps/map (default '')
                   Uses map_saver_cli -t <map_topic> so /map_merged works in slam_mode:=multi
+behavior_tree     BT XML stem/path for NavigateToPose (default explore_nav)
 
 Published topics
 ----------------
@@ -80,24 +88,33 @@ class FrontierCoordinator(Node):
 
         self.declare_parameter('robot_namespaces', 'robot1,robot2')
         self.declare_parameter('frontier_detector', 'wfd')
-        self.declare_parameter('frontier_scorer', 'weighted')
+        self.declare_parameter('frontier_scorer', 'utility')
         self.declare_parameter('min_frontier_size', 5)
         self.declare_parameter('revisit_radius', 0.5)
         self.declare_parameter('assign_radius', 1.0)
         self.declare_parameter('poll_period', 2.0)
         self.declare_parameter('map_topic', '/map')
         self.declare_parameter('min_goal_distance', 0.35)
-        self.declare_parameter('frontier_clearance_radius', 0.40)
+        self.declare_parameter('frontier_clearance_radius', 0.55)
         self.declare_parameter('failed_goal_radius', 0.75)
         self.declare_parameter('failed_goal_cooldown', 45.0)
         self.declare_parameter('distance_weight', 1.0)
         self.declare_parameter('info_gain_weight', 3.0)
+        self.declare_parameter('potential_scale', 3.0)
+        self.declare_parameter('gain_scale', 1.0)
         self.declare_parameter('hysteresis_radius', 2.0)
         self.declare_parameter('hysteresis_gain', 1.5)
         self.declare_parameter('publish_markers', True)
         self.declare_parameter('nav_wait_warn_sec', 15.0)
         self.declare_parameter('tf_wait_warn_sec', 15.0)
         self.declare_parameter('map_save_path', '')
+        self.declare_parameter('behavior_tree', 'explore_nav')
+        self.declare_parameter('costmap_topic_suffix', 'global_costmap/costmap')
+        self.declare_parameter('validate_on_costmap', True)
+        self.declare_parameter('costmap_max_cost', 1)
+        self.declare_parameter('allow_unknown_costmap', True)
+        self.declare_parameter('goal_pullback', 0.55)
+        self.declare_parameter('goal_search_radius', 1.25)
 
         raw = self.get_parameter('robot_namespaces').value
         self._robots = [ns.strip() for ns in raw.split(',') if ns.strip()]
@@ -112,6 +129,8 @@ class FrontierCoordinator(Node):
         self._failed_goal_cooldown = self.get_parameter('failed_goal_cooldown').value
         self._dist_w      = self.get_parameter('distance_weight').value
         self._info_w      = self.get_parameter('info_gain_weight').value
+        self._potential_scale = self.get_parameter('potential_scale').value
+        self._gain_scale  = self.get_parameter('gain_scale').value
         self._hyst_r      = self.get_parameter('hysteresis_radius').value
         self._hyst_gain   = self.get_parameter('hysteresis_gain').value
         self._publish_markers_enabled = self.get_parameter('publish_markers').value
@@ -119,6 +138,13 @@ class FrontierCoordinator(Node):
         self._tf_wait_warn_sec = self.get_parameter('tf_wait_warn_sec').value
         self._save_path   = self.get_parameter('map_save_path').value.strip()
         self._map_topic   = self.get_parameter('map_topic').value
+        self._bt_xml      = _resolve_bt(self.get_parameter('behavior_tree').value)
+        self._costmap_suffix = self.get_parameter('costmap_topic_suffix').value.strip()
+        self._validate_costmap = self.get_parameter('validate_on_costmap').value
+        self._costmap_max_cost = int(self.get_parameter('costmap_max_cost').value)
+        self._allow_unknown_costmap = self.get_parameter('allow_unknown_costmap').value
+        self._goal_pullback = float(self.get_parameter('goal_pullback').value)
+        self._goal_search_radius = float(self.get_parameter('goal_search_radius').value)
         map_topic         = self._map_topic
         poll_period       = self.get_parameter('poll_period').value
 
@@ -126,15 +152,21 @@ class FrontierCoordinator(Node):
             self.get_logger().warn(
                 f'Unknown frontier_detector={self._detector!r}; using wfd.')
             self._detector = 'wfd'
-        if self._scorer not in ('nearest', 'weighted'):
+        if self._scorer not in ('nearest', 'weighted', 'utility'):
             self.get_logger().warn(
-                f'Unknown frontier_scorer={self._scorer!r}; using weighted.')
-            self._scorer = 'weighted'
+                f'Unknown frontier_scorer={self._scorer!r}; using utility.')
+            self._scorer = 'utility'
+        if self._bt_xml and not os.path.isfile(self._bt_xml):
+            self.get_logger().warn(
+                f'behavior_tree not found at {self._bt_xml!r}; '
+                'Nav2 default BT will be used.')
+            self._bt_xml = ''
 
         self._tf = tf2_ros.Buffer()
         self._tf_listener = tf2_ros.TransformListener(self._tf, self)
 
         self._map: OccupancyGrid | None = None
+        self._costmaps: dict[str, OccupancyGrid | None] = {r: None for r in self._robots}
         self._map_saved = False
         self._ever_assigned_goal = False
         self._start_time = self.get_clock().now()
@@ -164,14 +196,29 @@ class FrontierCoordinator(Node):
 
         self.get_logger().info(f'Watching Nav2 servers: {self._robots}')
         self.create_subscription(OccupancyGrid, map_topic, self._map_cb, _MAP_QOS)
+        if self._validate_costmap and self._costmap_suffix:
+            for r in self._robots:
+                topic = f'/{r}/{self._costmap_suffix}'
+                self.create_subscription(
+                    OccupancyGrid, topic,
+                    lambda msg, robot=r: self._costmap_cb(msg, robot),
+                    _MAP_QOS)
         self.create_timer(poll_period, self._cycle)
+        bt_note = self._bt_xml or '(nav2 default)'
         self.get_logger().info(
-            f'Frontier coordinator running '
-            f'(detector={self._detector}, scorer={self._scorer}, map_topic={map_topic}).')
+            f'Frontier coordinator ready | robots={self._robots} '
+            f'detector={self._detector} scorer={self._scorer} bt={bt_note} '
+            f'map={map_topic} potential={self._potential_scale} '
+            f'gain={self._gain_scale} costmap_validate={self._validate_costmap} '
+            f'costmap_max={self._costmap_max_cost} pullback={self._goal_pullback:.2f}m '
+            f'clearance={self._frontier_clearance:.2f}m')
 
     # ------------------------------------------------------------------
     def _map_cb(self, msg: OccupancyGrid):
         self._map = msg
+
+    def _costmap_cb(self, msg: OccupancyGrid, robot: str):
+        self._costmaps[robot] = msg
 
     # ------------------------------------------------------------------
     def _cycle(self):
@@ -204,9 +251,14 @@ class FrontierCoordinator(Node):
             if self._state[r] == _State.IDLE and r not in robot_positions
         ]
         if elapsed - self._last_assignment_cycle_log >= 10.0:
+            costmap_ready = [
+                r for r in self._robots if self._costmaps.get(r) is not None]
             self.get_logger().info(
-                f'cycle: frontiers={len(frontiers)} ready_idle={ready_idle} '
-                f'waiting_nav={waiting_nav} waiting_tf={waiting_tf}')
+                f'cycle t={elapsed:.0f}s frontiers={len(frontiers)} '
+                f'ready_idle={ready_idle} waiting_nav={waiting_nav} '
+                f'waiting_tf={waiting_tf} costmaps={costmap_ready} '
+                f'visited={len(self._visited)} '
+                f'ok={self._succeeded_goals} fail={self._failed_goals}')
             self._last_assignment_cycle_log = elapsed
 
         idle = [
@@ -218,13 +270,27 @@ class FrontierCoordinator(Node):
                 pos = robot_positions.get(r)
                 if pos is None:
                     continue
-                goal = self._pick(frontiers, pos, r)
+                goal, pick = self._pick(frontiers, pos, r)
                 if goal is None:
+                    self.get_logger().info(
+                        f'[{r}] no usable frontier '
+                        f'(pool={pick["n_total"]} ok={pick["n_ok"]} '
+                        f'visited={pick["n_visited"]} failed={pick["n_failed"]} '
+                        f'taken={pick["n_taken"]} costmap={pick["n_costmap"]} '
+                        f'near={pick["n_near"]})')
                     continue
                 self._assigned[r] = goal
                 self._state[r] = _State.NAVIGATING
                 self._ever_assigned_goal = True
-                self.get_logger().info(f'[{r}] assigned ({goal[0]:.2f}, {goal[1]:.2f})')
+                self.get_logger().info(
+                    f'[{r}] → ({goal[0]:.2f}, {goal[1]:.2f}) '
+                    f'| scorer={self._scorer} score={pick["score"]:.2f} '
+                    f'dist={pick["distance"]:.2f}m size={pick["size_m"]:.2f}m '
+                    f'info={pick["info_gain"]:.2f}m² '
+                    f'| pool={pick["n_ok"]}/{pick["n_total"]} '
+                    f'(skip visited={pick["n_visited"]} failed={pick["n_failed"]} '
+                    f'taken={pick["n_taken"]} costmap={pick["n_costmap"]} '
+                    f'near={pick["n_near"]})')
                 self._send_goal(r, goal[0], goal[1])
         elif (not frontiers and self._ever_assigned_goal
               and all(s == _State.IDLE for s in self._state.values())):
@@ -277,38 +343,96 @@ class FrontierCoordinator(Node):
 
     # ------------------------------------------------------------------
     def _pick(self, frontiers, robot_pos, ns):
-        """Pick a frontier through the selected scorer plugin."""
+        """Pick a frontier through the selected scorer plugin.
+
+        Returns (goal_xy | None, diagnostics dict).
+        """
         rx, ry = robot_pos
         taken = [g for r, g in self._assigned.items() if r != ns and g is not None]
 
         best, best_score = None, float('-inf')
+        best_meta = {}
+        n_visited = n_failed = n_taken = n_costmap = n_near = n_ok = 0
         for frontier in frontiers:
             fx, fy = frontier['point']
             if _near_any(fx, fy, self._visited, self._revisit_r):
+                n_visited += 1
                 continue
             if self._recently_failed(fx, fy):
+                n_failed += 1
                 continue
             if _near_any(fx, fy, taken, self._assign_r):
+                n_taken += 1
+                continue
+            if not self._costmap_allows(fx, fy, ns):
+                n_costmap += 1
                 continue
             d = math.hypot(fx - rx, fy - ry)
             if d < self._min_goal_d:
+                n_near += 1
                 continue
 
-            score = -d
-            if self._scorer == 'weighted':
-                score = self._score_weighted(frontier, d, ns)
+            n_ok += 1
+            score = self._score_frontier(frontier, d, ns)
             if score > best_score:
-                best_score, best = score, (fx, fy)
-        return best
+                best_score = score
+                best = (fx, fy)
+                best_meta = {
+                    'score': score,
+                    'distance': d,
+                    'size_m': frontier['size_m'],
+                    'info_gain': frontier['info_gain'],
+                }
 
-    def _score_weighted(self, frontier, distance, ns):
-        score = self._info_w * frontier['info_gain'] - self._dist_w * distance
-        current = self._assigned.get(ns)
-        if current is not None:
-            fx, fy = frontier['point']
-            if math.hypot(fx - current[0], fy - current[1]) <= self._hyst_r:
-                score += self._hyst_gain
+        diag = {
+            'n_total': len(frontiers),
+            'n_ok': n_ok,
+            'n_visited': n_visited,
+            'n_failed': n_failed,
+            'n_taken': n_taken,
+            'n_costmap': n_costmap,
+            'n_near': n_near,
+            'score': best_meta.get('score', float('-inf')),
+            'distance': best_meta.get('distance', 0.0),
+            'size_m': best_meta.get('size_m', 0.0),
+            'info_gain': best_meta.get('info_gain', 0.0),
+        }
+        return best, diag
+
+    def _score_frontier(self, frontier, distance, ns):
+        if self._scorer == 'utility':
+            score = (
+                self._gain_scale * frontier['size_m']
+                - self._potential_scale * distance)
+        elif self._scorer == 'weighted':
+            score = self._info_w * frontier['info_gain'] - self._dist_w * distance
+        else:
+            score = -distance
+        if self._scorer != 'nearest':
+            current = self._assigned.get(ns)
+            if current is not None:
+                fx, fy = frontier['point']
+                if math.hypot(fx - current[0], fy - current[1]) <= self._hyst_r:
+                    score += self._hyst_gain
         return score
+
+    def _costmap_allows(self, x, y, ns) -> bool:
+        if not self._validate_costmap:
+            return True
+        msg = self._costmaps.get(ns)
+        if msg is None:
+            return True
+        return self._costmap_point_ok(x, y, msg)
+
+    def _costmap_point_ok(self, x, y, msg: OccupancyGrid) -> bool:
+        cy, cx = _world_to_cell(x, y, msg.info)
+        h, w = msg.info.height, msg.info.width
+        if cy < 0 or cy >= h or cx < 0 or cx >= w:
+            return self._allow_unknown_costmap
+        val = int(msg.data[cy * w + cx])
+        if val < 0:
+            return self._allow_unknown_costmap
+        return val < self._costmap_max_cost
 
     # ------------------------------------------------------------------
     def _robot_pos(self, ns):
@@ -327,31 +451,43 @@ class FrontierCoordinator(Node):
         goal.pose.pose.position.x = x
         goal.pose.pose.position.y = y
         goal.pose.pose.orientation.w = 1.0
+        if self._bt_xml:
+            goal.behavior_tree = self._bt_xml
 
         f = self._nav_clients[ns].send_goal_async(goal)
         f.add_done_callback(lambda fut, r=ns: self._on_accepted(fut, r))
 
     def _on_accepted(self, future, ns):
         handle = future.result()
+        goal = self._assigned.get(ns)
+        gx, gy = goal if goal else (0.0, 0.0)
         if not handle.accepted:
-            self.get_logger().warn(f'[{ns}] goal rejected — freeing.')
+            self.get_logger().warn(
+                f'[{ns}] Nav2 rejected ({gx:.2f}, {gy:.2f}) — freeing.')
             self._failed_goals += 1
             self._assigned[ns] = None
             self._state[ns] = _State.IDLE
             self._publish_stats()
             return
+        self.get_logger().info(f'[{ns}] Nav2 accepted ({gx:.2f}, {gy:.2f})')
         handle.get_result_async().add_done_callback(lambda fut, r=ns: self._on_result(fut, r))
 
     def _on_result(self, future, ns):
         status = future.result().status
         goal = self._assigned[ns]
+        gx, gy = goal if goal else (0.0, 0.0)
         if status == GoalStatus.STATUS_SUCCEEDED:
-            self.get_logger().info(f'[{ns}] reached ({goal[0]:.2f}, {goal[1]:.2f})')
+            self.get_logger().info(
+                f'[{ns}] reached ({gx:.2f}, {gy:.2f}) '
+                f'(visited={len(self._visited) + (1 if goal else 0)} '
+                f'ok={self._succeeded_goals + 1})')
             self._succeeded_goals += 1
             if goal:
                 self._visited.append(goal)
         else:
-            self.get_logger().warn(f'[{ns}] failed status={status} — will reassign.')
+            self.get_logger().warn(
+                f'[{ns}] failed ({gx:.2f}, {gy:.2f}) status={status} — will reassign '
+                f'(fail={self._failed_goals + 1}).')
             self._failed_goals += 1
             if goal:
                 self._remember_failed_frontier(goal)
@@ -398,19 +534,72 @@ class FrontierCoordinator(Node):
                         queue.append((ny, nx))
             if len(cluster) < self._min_size:
                 continue
-            goal_cell, clearance = self._best_goal_cell(cluster, occupied, res)
+            goal_cell, clearance = self._place_safe_goal(
+                cluster, free, unknown, occupied, res)
             if goal_cell is None:
                 continue
             cy, cx = goal_cell
             result.append({
                 'point': (ox + (cx + 0.5) * res, oy + (cy + 0.5) * res),
                 'size': len(cluster),
+                'size_m': len(cluster) * res,
                 'info_gain': self._info_gain(cluster, unknown, res),
                 'clearance': clearance,
             })
         return result
 
+    def _place_safe_goal(self, cluster, free, unknown, occupied, resolution):
+        """Pull goals off the frontier into free space (outside inflation)."""
+        h, w = free.shape
+        pull_cells = max(1, math.ceil(self._goal_pullback / resolution))
+        clear_cells = max(1, math.ceil(self._frontier_clearance / resolution))
+        search_cells = max(pull_cells, math.ceil(self._goal_search_radius / resolution))
+        ref_costmap = next(
+            (c for c in self._costmaps.values() if c is not None), None)
+
+        seen = np.zeros_like(free, dtype=bool)
+        queue = deque()
+        for y, x in cluster:
+            y, x = int(y), int(x)
+            if not seen[y, x]:
+                seen[y, x] = True
+                queue.append((y, x, 0))
+
+        best = None
+        best_score = float('-inf')
+        ox = self._map.info.origin.position.x
+        oy = self._map.info.origin.position.y
+        while queue:
+            y, x, dist = queue.popleft()
+            if dist > search_cells:
+                continue
+            for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+                if 0 <= ny < h and 0 <= nx < w and free[ny, nx] and not seen[ny, nx]:
+                    seen[ny, nx] = True
+                    queue.append((ny, nx, dist + 1))
+
+            unk_clear = self._cell_clearance(y, x, unknown, pull_cells + 1, resolution)
+            if unk_clear < self._goal_pullback:
+                continue
+            occ_clear = self._cell_clearance(y, x, occupied, clear_cells, resolution)
+            if occ_clear < self._frontier_clearance:
+                continue
+            wx = ox + (x + 0.5) * resolution
+            wy = oy + (y + 0.5) * resolution
+            if ref_costmap is not None and not self._costmap_point_ok(
+                    wx, wy, ref_costmap):
+                continue
+            score = unk_clear + occ_clear - 0.15 * dist * resolution
+            if score > best_score:
+                best_score = score
+                best = (float(y), float(x), occ_clear)
+
+        if best is None:
+            return None, -1.0
+        return (best[0], best[1]), best[2]
+
     def _best_goal_cell(self, cluster, occupied, resolution):
+        # Kept for compatibility; prefer _place_safe_goal.
         radius_cells = max(1, math.ceil(self._frontier_clearance / resolution))
         best = None
         best_clearance = -1.0
@@ -422,15 +611,15 @@ class FrontierCoordinator(Node):
         return best, best_clearance
 
     @staticmethod
-    def _cell_clearance(y, x, occupied, radius_cells, resolution):
-        h, w = occupied.shape
+    def _cell_clearance(y, x, mask, radius_cells, resolution):
+        h, w = mask.shape
         y0, y1 = max(0, y - radius_cells), min(h, y + radius_cells + 1)
         x0, x1 = max(0, x - radius_cells), min(w, x + radius_cells + 1)
-        occ = np.argwhere(occupied[y0:y1, x0:x1])
-        if occ.size == 0:
+        hits = np.argwhere(mask[y0:y1, x0:x1])
+        if hits.size == 0:
             return (radius_cells + 1) * resolution
-        dy = occ[:, 0] + y0 - y
-        dx = occ[:, 1] + x0 - x
+        dy = hits[:, 0] + y0 - y
+        dx = hits[:, 1] + x0 - x
         return math.sqrt(float(np.min(dx * dx + dy * dy))) * resolution
 
     @staticmethod
@@ -657,6 +846,35 @@ class FrontierCoordinator(Node):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+def _pkg_share() -> str:
+    try:
+        from ament_index_python.packages import get_package_share_directory
+        return get_package_share_directory('rosnav_bot')
+    except Exception:
+        return os.path.join(os.path.expanduser('~'), 'rosnav', 'src', 'rosnav_bot')
+
+
+def _resolve_bt(name_or_path: str) -> str:
+    """Resolve a BT stem (e.g. 'explore_nav') or absolute path to a file."""
+    raw = (name_or_path or '').strip()
+    if not raw:
+        return ''
+    if os.path.isfile(raw):
+        return raw
+    stem = raw[:-4] if raw.endswith('.xml') else raw
+    share = _pkg_share()
+    candidates = [
+        os.path.join(share, 'config', 'bt', f'{stem}.xml'),
+        os.path.join(
+            os.path.expanduser('~'), 'rosnav', 'src',
+            'rosnav_bot', 'config', 'bt', f'{stem}.xml'),
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return candidates[0]
+
+
 def _near_any(fx, fy, points, radius):
     return any(math.hypot(fx - px, fy - py) < radius for px, py in points)
 
