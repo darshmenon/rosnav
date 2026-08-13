@@ -119,28 +119,38 @@ class MapMergeKnown(Node):
             return
 
         res = self._res
-        # Collect occupied/free samples in global coordinates.
-        # Key by quantized cell center so growing source grids stay aligned.
-        cells: dict[tuple[int, int], int] = {}
-
+        # Quantized global cell coords in world coordinates, split by value
+        # so the whole merge is a couple of vectorized numpy ops instead of
+        # a per-cell Python dict rebuilt from scratch every tick — that loop
+        # became the dominant cost as grids grow (hospital/warehouse worlds).
+        # slam_toolbox only ever emits -1/0/100 (never partial probabilities),
+        # so filtering to exactly FREE/OCCUPIED loses nothing.
+        free_gc, free_gr, occ_gc, occ_gr = [], [], [], []
         for ns, pose in zip(self._robots, self._poses):
             msg = self._maps.get(ns)
             if msg is None:
                 continue
-            self._stamp_grid(msg, pose, res, cells)
+            fgc, fgr, ogc, ogr = self._project_grid(msg, pose, res)
+            if fgc.size:
+                free_gc.append(fgc)
+                free_gr.append(fgr)
+            if ogc.size:
+                occ_gc.append(ogc)
+                occ_gr.append(ogr)
 
-        if not cells:
+        if not free_gc and not occ_gc:
             return
 
-        xs = [c for c, _ in cells]
-        ys = [r for _, r in cells]
+        all_gc = np.concatenate(free_gc + occ_gc)
+        all_gr = np.concatenate(free_gr + occ_gr)
+
         # Pad with a margin of UNKNOWN cells: this grid's bounding box is
         # recomputed from scratch every publish, so it can grow between
         # ticks. Without slack, a goal picked from a slightly newer snapshot
         # than the one a costmap's static_layer has buffered can land just
         # past that layer's (still shrunk) edge -> worldToMap failures.
-        min_c, max_c = min(xs) - self._margin, max(xs) + self._margin
-        min_r, max_r = min(ys) - self._margin, max(ys) + self._margin
+        min_c, max_c = int(all_gc.min()) - self._margin, int(all_gc.max()) + self._margin
+        min_r, max_r = int(all_gr.min()) - self._margin, int(all_gr.max()) + self._margin
         width = max_c - min_c + 1
         height = max_r - min_r + 1
         if width <= 0 or height <= 0 or width * height > 80_000_000:
@@ -149,8 +159,13 @@ class MapMergeKnown(Node):
             return
 
         grid = np.full((height, width), UNKNOWN, dtype=np.int8)
-        for (c, r), val in cells.items():
-            grid[r - min_r, c - min_c] = val
+        # Free first, occupied second: occupied unconditionally wins wherever
+        # the two disagree on the same cell, matching the OCCUPIED > FREE >
+        # UNKNOWN merge policy.
+        if free_gc:
+            grid[np.concatenate(free_gr) - min_r, np.concatenate(free_gc) - min_c] = FREE
+        if occ_gc:
+            grid[np.concatenate(occ_gr) - min_r, np.concatenate(occ_gc) - min_c] = OCCUPIED
 
         out = OccupancyGrid()
         out.header.stamp = self.get_clock().now().to_msg()
@@ -166,9 +181,9 @@ class MapMergeKnown(Node):
         out.data = grid.flatten().tolist()
         self._pub.publish(out)
 
-    def _stamp_grid(self, msg: OccupancyGrid, pose: dict, res: float,
-                    cells: dict[tuple[int, int], int]):
-        """Project a local OccupancyGrid into global quantized cells."""
+    def _project_grid(self, msg: OccupancyGrid, pose: dict, res: float):
+        """Project a local OccupancyGrid's FREE/OCCUPIED cells into global
+        quantized coords. Returns (free_gc, free_gr, occ_gc, occ_gr)."""
         data = np.asarray(msg.data, dtype=np.int8).reshape(
             (msg.info.height, msg.info.width))
         ox = msg.info.origin.position.x
@@ -178,31 +193,18 @@ class MapMergeKnown(Node):
         c, s = math.cos(yaw), math.sin(yaw)
         tx, ty = pose['x'], pose['y']
 
-        rows, cols = np.nonzero(data != UNKNOWN)
-        if rows.size == 0:
-            return
+        def to_global(rows, cols):
+            lx = ox + (cols.astype(np.float64) + 0.5) * res
+            ly = oy + (rows.astype(np.float64) + 0.5) * res
+            gx = tx + c * lx - s * ly
+            gy = ty + s * lx + c * ly
+            return np.floor(gx / res).astype(np.int64), np.floor(gy / res).astype(np.int64)
 
-        # Vectorized local centers → global, then quantize.
-        lx = ox + (cols.astype(np.float64) + 0.5) * res
-        ly = oy + (rows.astype(np.float64) + 0.5) * res
-        gx = tx + c * lx - s * ly
-        gy = ty + s * lx + c * ly
-        gcs = np.floor(gx / res).astype(np.int64)
-        grs = np.floor(gy / res).astype(np.int64)
-        vals = data[rows, cols]
-
-        for gc, gr, val in zip(gcs.tolist(), grs.tolist(), vals.tolist()):
-            prev = cells.get((gc, gr), UNKNOWN)
-            cells[(gc, gr)] = _merge_cell(prev, int(val))
-
-
-def _merge_cell(a: int, b: int) -> int:
-    """Navigation-safe merge: occupied wins, then free, then unknown."""
-    if a == OCCUPIED or b == OCCUPIED:
-        return OCCUPIED
-    if a == FREE or b == FREE:
-        return FREE
-    return UNKNOWN
+        free_rows, free_cols = np.nonzero(data == FREE)
+        occ_rows, occ_cols = np.nonzero(data == OCCUPIED)
+        free_gc, free_gr = to_global(free_rows, free_cols)
+        occ_gc, occ_gr = to_global(occ_rows, occ_cols)
+        return free_gc, free_gr, occ_gc, occ_gr
 
 
 def main(args=None):
