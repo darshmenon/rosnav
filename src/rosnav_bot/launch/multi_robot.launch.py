@@ -449,6 +449,21 @@ def _rtabmap_node_for_robot(robot_ns: str) -> Node:
     {ns}/map -> {ns}/odom TF ownership, consumed identically by Nav2,
     map_merge_known, and collab_loop_closure (all backend-agnostic — they
     only look at OccupancyGrid topics, never at how they were produced).
+
+    wait_for_transform is 3.0s (not rtabmap's usual sub-second default): the
+    {ns}/base_link -> {ns}/<lidar frame> TF isn't always up yet the instant
+    the first PointCloud2 arrives (robot spawn + RSP/TF settling races the
+    sensor's own warm-up), and rtabmap treats one failed transform lookup on
+    that first frame as fatal — it logs "Could not convert 3d laser scan
+    msg!" once and then never processes another message for the rest of the
+    run, even though the sensor and TF are both fine moments later. This was
+    misdiagnosed twice before landing on the real cause: neither a bigger
+    fixed SLAM-start delay (shifts which robot loses the race, doesn't
+    remove it) nor a point-cloud structural-validity gate (the frames were
+    always structurally valid — verified via a raw-topic diagnostic capturing
+    field layout, NaN ratio, and sample XYZ on the first several messages)
+    made a difference. Confirmed clean across 3/3 repeated runs at 3.0s vs.
+    failing within 2 runs on each of the earlier attempts.
     """
     return Node(
         package='rtabmap_slam',
@@ -465,7 +480,7 @@ def _rtabmap_node_for_robot(robot_ns: str) -> Node:
             'subscribe_rgb': False,
             'subscribe_scan_cloud': True,
             'approx_sync': True,
-            'wait_for_transform': 0.2,
+            'wait_for_transform': 3.0,
             'Reg/Strategy': '1',
             'Icp/PointToPlane': 'true',
             'Grid/Sensor': '0',
@@ -965,13 +980,7 @@ def _build_all(context, pkg_share: str):
             # SLAM handles localisation for this robot.
             slam_actions = []
             if slam_mode == 'multi':
-                # rtabmap (slam_algo:=3d) needs the gpu_lidar sensor plugin to have
-                # produced a few valid frames before it subscribes — robot1 (no
-                # stagger) hitting it at the same t=6s slam_toolbox uses would grab
-                # gz's still-warming-up first PointCloud2 and permanently wedge with
-                # "Could not convert 3d laser scan msg!" (never recovers afterward).
-                slam_start_delay = 12.0 if slam_algo == '3d' else 6.0
-                slam_actions.append(TimerAction(period=slam_start_delay + robot_stagger, actions=[slam_node]))
+                slam_actions.append(TimerAction(period=6.0 + robot_stagger, actions=[slam_node]))
             actions.append(LogInfo(
                 msg=f'[multi_robot] {ns}: SLAM-localized, nav2 t={robot_nav2_delay:.1f}s'))
             per_robot += [
