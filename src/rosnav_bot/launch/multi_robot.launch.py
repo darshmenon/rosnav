@@ -1016,6 +1016,27 @@ def _build_all(context, pkg_share: str):
         actions.append(LogInfo(
             msg=f'[multi_robot] fleet_mgmt stack will start at t=15s for {robot_ns_list}'))
 
+    # ── Dynamic obstacles (optional) ──────────────────────────────────────────
+    dynamic_obstacles = int(LaunchConfiguration('dynamic_obstacles').perform(context).strip())
+    if dynamic_obstacles > 0:
+        do_x = float(LaunchConfiguration('dynamic_obstacle_x').perform(context).strip())
+        do_y = float(LaunchConfiguration('dynamic_obstacle_y').perform(context).strip())
+        do_axis = LaunchConfiguration('dynamic_obstacle_axis').perform(context).strip()
+        do_amplitude = LaunchConfiguration('dynamic_obstacle_amplitude').perform(context).strip()
+        do_speed = LaunchConfiguration('dynamic_obstacle_speed').perform(context).strip()
+        actions.append(LogInfo(msg=f'[multi_robot] spawning {dynamic_obstacles} dynamic_obstacle(s) '
+                                    f'patrolling +-{do_amplitude}m along {do_axis} at {do_speed}m/s'))
+        for i in range(dynamic_obstacles):
+            do_name = f'dynamic_obstacle_{i + 1}'
+            actions += [
+                _common.spawn_dynamic_obstacle_node(
+                    pkg_share, gazebo_world_name, do_name, do_x + i * 2.0, do_y, 0.3, 0.0),
+                _common.dynamic_obstacle_bridge_node(do_name),
+                TimerAction(
+                    period=5.0,
+                    actions=[_common.dynamic_obstacle_driver_node(do_name, do_axis, do_amplitude, do_speed)]),
+            ]
+
     # ── RViz ─────────────────────────────────────────────────────────────────
     if not headless:
         rviz_config = LaunchConfiguration('rviz_config').perform(context).strip()
@@ -1198,5 +1219,26 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'tf_wait_warn_sec', default_value='15.0',
             description='Seconds between frontier coordinator warnings for missing map->base_link TF'),
+        DeclareLaunchArgument(
+            'dynamic_obstacles', default_value='0',
+            description='Number of patrolling dynamic_obstacle models to spawn '
+                        '(see models/dynamic_obstacle) for testing Nav2 dynamic-obstacle '
+                        'avoidance and obstacle_tracker.py'),
+        DeclareLaunchArgument(
+            'dynamic_obstacle_x', default_value='2.0',
+            description='Base x position for spawned dynamic obstacles (spaced 2m apart along x)'),
+        DeclareLaunchArgument(
+            'dynamic_obstacle_y', default_value='0.0',
+            description='Base y position for spawned dynamic obstacles'),
+        DeclareLaunchArgument(
+            'dynamic_obstacle_axis', default_value='y_axis',
+            description='Patrol axis for dynamic obstacles: x_axis or y_axis '
+                        '(not the bare letters x/y — those YAML-parse as booleans)'),
+        DeclareLaunchArgument(
+            'dynamic_obstacle_amplitude', default_value='3.0',
+            description='Dynamic obstacle patrol half-length in metres'),
+        DeclareLaunchArgument(
+            'dynamic_obstacle_speed', default_value='0.4',
+            description='Dynamic obstacle patrol speed in m/s'),
         OpaqueFunction(function=_build_all, args=[pkg_share]),
     ])

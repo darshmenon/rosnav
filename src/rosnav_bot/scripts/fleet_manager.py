@@ -67,6 +67,12 @@ from nav2_msgs.action import NavigateToPose, BackUp, Spin
 from std_msgs.msg import String
 
 try:
+    from rosnav_bot.action import DockToStation, UndockFromStation
+    HAS_STATION_ACTIONS = True
+except ImportError:
+    HAS_STATION_ACTIONS = False
+
+try:
     import yaml
     HAS_YAML = True
 except ImportError:
@@ -219,6 +225,68 @@ class FleetNode(Node):
         msg.angular.z = ang
         self._pub(ns).publish(msg)
 
+    def _station_name(self, ns: str, name: str) -> str:
+        return f'/{ns}/{name}' if ns else f'/{name}'
+
+    def _try_station_dock(self, ns: str, location: str) -> bool:
+        """Use station_server if it is up; False means caller should dock inline."""
+        if not HAS_STATION_ACTIONS:
+            return False
+        client = ActionClient(
+            self, DockToStation, self._station_name(ns, 'dock_to_station'))
+        try:
+            if not client.wait_for_server(timeout_sec=1.0):
+                return False
+            print(f'Docking {ns or "robot"} via station_server → {location} … ',
+                  end='', flush=True)
+            goal = DockToStation.Goal()
+            goal.station = location
+            future = client.send_goal_async(goal)
+            handle = _await(future, timeout=10.0)
+            if handle is None or not handle.accepted:
+                print('goal rejected.')
+                return True
+            result = _await(handle.get_result_async(), timeout=180.0)
+            if result is None or result.status != GoalStatus.STATUS_SUCCEEDED:
+                msg = ''
+                if result is not None and result.result is not None:
+                    msg = result.result.message
+                print(f'failed{": " + msg if msg else "."}')
+                return True
+            print(result.result.message or 'docked.')
+            return True
+        finally:
+            client.destroy()
+
+    def _try_station_undock(self, ns: str, dist: float, speed: float) -> bool:
+        if not HAS_STATION_ACTIONS:
+            return False
+        client = ActionClient(
+            self, UndockFromStation, self._station_name(ns, 'undock_from_station'))
+        try:
+            if not client.wait_for_server(timeout_sec=1.0):
+                return False
+            print(f'Undocking {ns or "robot"} via station_server … ', end='', flush=True)
+            goal = UndockFromStation.Goal()
+            goal.dist = float(dist)
+            goal.speed = float(speed)
+            future = client.send_goal_async(goal)
+            handle = _await(future, timeout=10.0)
+            if handle is None or not handle.accepted:
+                print('goal rejected.')
+                return True
+            result = _await(handle.get_result_async(), timeout=40.0)
+            if result is None or result.status != GoalStatus.STATUS_SUCCEEDED:
+                msg = ''
+                if result is not None and result.result is not None:
+                    msg = result.result.message
+                print(f'failed{": " + msg if msg else "."}')
+                return True
+            print(result.result.message or 'undocked.')
+            return True
+        finally:
+            client.destroy()
+
     # ── Commands ──────────────────────────────────────────────────────────────
     def cmd_list(self):
         robots = _discover_robots(self)
@@ -334,6 +402,8 @@ class FleetNode(Node):
 
     def cmd_dock(self, ns: str, location: str = DOCK_LOCATION):
         """Navigate to the named dock pose and wait for arrival."""
+        if self._try_station_dock(ns, location):
+            return
         locations = _load_locations()
         try:
             x, y, yaw = _resolve_location(location, locations)
@@ -422,6 +492,8 @@ class FleetNode(Node):
 
     def cmd_undock(self, ns: str, dist: float = UNDOCK_DIST, speed: float = UNDOCK_SPEED):
         """Back away from the dock, then spin to the configured exit yaw."""
+        if self._try_station_undock(ns, dist, speed):
+            return
         dock_cfg = _load_dock_cfg(DOCK_LOCATION)
         client = ActionClient(self, BackUp, f'/{ns}/backup' if ns else '/backup')
         print(f'Undocking {ns or "robot"} — backing up {dist:.2f} m … ', end='', flush=True)

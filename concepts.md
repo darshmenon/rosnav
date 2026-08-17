@@ -812,6 +812,7 @@ Gazebo after the fix.
 | `rmf_fleet_adapter.py` | Registers the fleet with Open-RMF, bridges RMF path commands to Nav2 (see §11b) | `--fleet-name`, `--map-name`, `--robots` |
 | `rmf_submit_task.py` | Submits a patrol task to `rmf_task_dispatcher` to exercise traffic scheduling | `category`, `places`, `--rounds`, `--wait` |
 | `obstacle_tracker.py` | Detects + tracks moving obstacles from `/scan`, with ellipse extent estimation (see §25) | `min_speed`, `cluster_radius`, `track_gate_dist`, `min_extent`, `extent_gain` |
+| `dynamic_obstacle_driver.py` | Patrols a spawned `dynamic_obstacle` model back and forth (see §26) | `obstacle_name`, `axis`, `amplitude`, `speed` |
 
 ---
 
@@ -1205,5 +1206,32 @@ This is **extended object tracking**: unlike a plain centroid tracker, a track c
 ```bash
 ros2 run rosnav_bot obstacle_tracker.py
 ros2 run rosnav_bot obstacle_tracker.py --ros-args -p robot_ns:=robot1 -p min_speed:=0.05
+ros2 topic echo /obstacle_tracker/state
+```
+
+## 26. Dynamic Obstacles (`dynamic_obstacle_driver.py`)
+
+Prior to this, every world was static — nothing to actually feed [[obstacle_tracker.py]] (§25) or Nav2's dynamic-obstacle avoidance during a real run. `slam_nav.launch.py` and `multi_robot.launch.py` can now spawn one or more patrolling `dynamic_obstacle` models via the `dynamic_obstacles` launch arg (default `0`, opt-in).
+
+**How it works:**
+1. `models/dynamic_obstacle/model.sdf` — a 0.25m-radius, 0.6m-tall cylinder with the Gazebo `VelocityControl` plugin (`ignition::gazebo::systems::VelocityControl`), which sets the link's velocity directly each physics step (also cancelling gravity, so the obstacle doesn't fall).
+2. `_common.spawn_dynamic_obstacle_node()` spawns it via `ros_gz_sim create -file` (unlike robots, it isn't spawned from a `robot_description` topic).
+3. `_common.dynamic_obstacle_bridge_node()` bridges ROS `geometry_msgs/Twist` → Gazebo `gz.msgs.Twist` on `/model/<name>/cmd_vel`.
+4. `scripts/dynamic_obstacle_driver.py` publishes to that bridge, oscillating the obstacle back and forth between `+-dynamic_obstacle_amplitude` metres along `dynamic_obstacle_axis`, reversing direction at each end (logged each time).
+
+Each obstacle is named `dynamic_obstacle_<n>`, spaced 2m apart starting at `(dynamic_obstacle_x, dynamic_obstacle_y)`.
+
+**Gotcha:** the `dynamic_obstacle_axis` arg takes `x_axis`/`y_axis`, not bare `x`/`y` — a ROS 2 `--params-file` is YAML 1.1, which parses unquoted `y`/`n` as booleans, so a bare `y` silently becomes the boolean `True` instead of the string `"y"`.
+
+```bash
+# Single robot, one obstacle patrolling +-3m along y in the maze
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=maze dynamic_obstacles:=1
+
+# Multi-robot SLAM, two obstacles patrolling along x at 0.6 m/s
+ros2 launch rosnav_bot multi_robot.launch.py dynamic_obstacles:=2 \
+    dynamic_obstacle_axis:=x_axis dynamic_obstacle_speed:=0.6
+
+# Watch obstacle_tracker.py pick it up
+ros2 run rosnav_bot obstacle_tracker.py
 ros2 topic echo /obstacle_tracker/state
 ```

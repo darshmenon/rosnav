@@ -1,0 +1,40 @@
+<?xml version="1.0" ?>
+<sdf version='1.8'>
+  <model name='dynamic_obstacle'>
+    <pose>0 0 0.3 0 0 0</pose>
+    <link name='link'>
+      <inertial>
+        <mass>5.0</mass>
+        <inertia>
+          <ixx>0.15</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>0.15</iyy><iyz>0</iyz>
+          <izz>0.15</izz>
+        </inertia>
+      </inertial>
+      <collision name='collision'>
+        <geometry>
+          <cylinder><radius>0.25</radius><length>0.6</length></cylinder>
+        </geometry>
+      </collision>
+      <visual name='visual'>
+        <geometry>
+          <cylinder><radius>0.25</radius><length>0.6</length></cylinder>
+        </geometry>
+        <material>
+          <ambient>0.85 0.15 0.1 1</ambient>
+          <diffuse>0.85 0.15 0.1 1</diffuse>
+          <specular>0.2 0.2 0.2 1</specular>
+        </material>
+      </visual>
+    </link>
+
+    <!-- Driven by scripts/dynamic_obstacle_driver.py over /model/<name>/cmd_vel
+         (bridged geometry_msgs/Twist -> gz.msgs.Twist). Setting a velocity each
+         step also cancels gravity on this link, so it patrols at a fixed height
+         instead of falling. -->
+    <plugin filename="libignition-gazebo-velocity-control-system"
+            name="ignition::gazebo::systems::VelocityControl">
+      <link_name>link</link_name>
+    </plugin>
+  </model>
+</sdf>

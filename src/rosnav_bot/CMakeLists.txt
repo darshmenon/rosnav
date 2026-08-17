@@ -8,11 +8,26 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
-# uncomment the following section in order to fill in
-# further dependencies manually.
-# find_package(<dependency> REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
 
-ament_python_install_package(${PROJECT_NAME})
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "action/DockToStation.action"
+  "action/UndockFromStation.action"
+  "srv/GetRobotStatus.srv"
+)
+ament_export_dependencies(rosidl_default_runtime)
+
+# rosidl_generator_py already ament_python_install_package()'s ${PROJECT_NAME}
+# from the generated tree. Overlay the existing library modules into that package.
+ament_get_python_install_dir(PYTHON_INSTALL_DIR)
+install(
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/rosnav_bot/rmf
+  DESTINATION ${PYTHON_INSTALL_DIR}/rosnav_bot
+)
+install(
+  FILES ${CMAKE_CURRENT_SOURCE_DIR}/rosnav_bot/__init__.py
+  DESTINATION ${PYTHON_INSTALL_DIR}/rosnav_bot
+)
 
 install(
   PROGRAMS
@@ -47,9 +62,11 @@ install(
     scripts/bt_executor.py
     scripts/multi_coverage.py
     scripts/aruco_dock.py
+    scripts/station_server.py
     scripts/yolo_detector.py
     scripts/rmf_fleet_adapter.py
     scripts/rmf_submit_task.py
+    scripts/dynamic_obstacle_driver.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(

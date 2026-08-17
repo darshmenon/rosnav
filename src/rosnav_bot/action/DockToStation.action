@@ -1,0 +1,10 @@
+# Goal: dock name from config/docks.yaml (default charging_dock)
+string station
+---
+# Result
+bool success
+string message
+---
+# Feedback
+string stage
+string message

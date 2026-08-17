@@ -1,0 +1,11 @@
+# Goal: 0 means use server defaults (0.5 m, 0.05 m/s)
+float32 dist
+float32 speed
+---
+# Result
+bool success
+string message
+---
+# Feedback
+string stage
+string message

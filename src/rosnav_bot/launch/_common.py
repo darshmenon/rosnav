@@ -181,6 +181,51 @@ def spawn_robot_node(gazebo_world_name: str, topic, name, x, y, z, yaw):
     )
 
 
+def spawn_dynamic_obstacle_node(pkg_share: str, gazebo_world_name: str, name, x, y, z, yaw):
+    """Spawn a models/dynamic_obstacle instance from its SDF file directly
+    (no robot_description topic to spawn from, unlike spawn_robot_node)."""
+    model_path = os.path.join(pkg_share, 'models', 'dynamic_obstacle', 'model.sdf')
+    return Node(
+        package='ros_gz_sim',
+        executable='create',
+        name=f'spawn_{name}',
+        arguments=[
+            '-world', gazebo_world_name,
+            '-file', model_path,
+            '-name', name,
+            '-x', str(x), '-y', str(y), '-z', str(z), '-Y', str(yaw),
+        ],
+        output='screen',
+    )
+
+
+def dynamic_obstacle_bridge_node(name: str):
+    """ROS -> Gazebo Twist bridge feeding the model's VelocityControl plugin."""
+    return Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name=f'{name}_cmd_vel_bridge',
+        arguments=[f'/model/{name}/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist'],
+        output='screen',
+    )
+
+
+def dynamic_obstacle_driver_node(name: str, axis: str, amplitude, speed):
+    return Node(
+        package='rosnav_bot',
+        executable='dynamic_obstacle_driver.py',
+        name=f'{name}_driver',
+        output='screen',
+        parameters=[{
+            'obstacle_name': name,
+            'axis': axis,
+            'amplitude': float(amplitude),
+            'speed': float(speed),
+        }],
+        remappings=[('cmd_vel', f'/model/{name}/cmd_vel')],
+    )
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Multi-robot nav2 param namespacing
 # ──────────────────────────────────────────────────────────────────────────

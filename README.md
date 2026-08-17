@@ -124,6 +124,21 @@ ros2 run rosnav_bot coverage_planner.py
 
 ---
 
+## 3b. Dynamic obstacles
+
+Spawn a patrolling obstacle to test avoidance and [`obstacle_tracker.py`](concepts.md#25-moving-obstacle-tracking-obstacle_trackerpy) against a moving object, not just static walls.
+
+```bash
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=maze dynamic_obstacles:=1
+ros2 launch rosnav_bot multi_robot.launch.py dynamic_obstacles:=2 dynamic_obstacle_axis:=x_axis
+
+ros2 run rosnav_bot obstacle_tracker.py    # watch it get tracked
+```
+
+Details → [concepts.md §26](concepts.md#26-dynamic-obstacles-dynamic_obstacle_driverpy).
+
+---
+
 ## 4. YOLO object detection
 
 Needs: `pip install ultralytics`. Camera is enabled automatically with `enable_yolo:=true`.
@@ -165,19 +180,30 @@ Dock poses / marker IDs → `config/docks.yaml`. Live view: `/tmp/aruco_dock_vie
 
 ## 6. LLM voice navigation
 
-Needs: `ollama serve` and a pulled model (`ollama pull llama2`). Start the nav stack first.
+Needs: `ollama serve` and a pulled model (`ollama pull llama3.1`). Start the nav stack first. `station_server.py` exposes dock/undock/status as ROS 2 actions so the planner can chain them.
 
 ```bash
-ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital enable_camera:=true
 
+ros2 run rosnav_bot station_server.py
 ros2 run rosnav_bot llm_nav.py
-# type or speak: go to room_b · go to 2.5 1.0 · stop
+# type or speak: go to room_b · stop
+# multi-step: undock, go to room_b, then come back and dock
 
 # Text only (no mic)
-ros2 topic pub /llm_nav/command std_msgs/msg/String "data: 'go to room_a'" --once
+ros2 topic pub /llm_nav/command std_msgs/msg/String \
+  "data: 'undock, go to room_b, then come back and dock'" --once
 ```
 
-Named places → `config/locations.yaml`.
+Named places → `config/locations.yaml`. Docks → `config/docks.yaml`. Replies also publish on `/llm_nav/reply`.
+
+Manual station actions (no LLM):
+
+```bash
+ros2 service call /get_robot_status rosnav_bot/srv/GetRobotStatus
+ros2 action send_goal /dock_to_station rosnav_bot/action/DockToStation "{station: charging_dock}"
+ros2 action send_goal /undock_from_station rosnav_bot/action/UndockFromStation "{}"
+```
 
 ---
 
@@ -307,7 +333,7 @@ More → [`concepts.md`](concepts.md).
 | YAML change ignored | Symlink install + relaunch; edit the correct Humble/Jazzy / drive-type file |
 | Dock sees nothing | Set `enable_camera:=true` |
 | YOLO missing | `pip install ultralytics` |
-| LLM fails | `ollama serve` + `ollama pull llama2` |
+| LLM fails | `ollama serve` + `ollama pull llama3.1` · start `station_server.py` for dock/undock |
 
 ---
 
