@@ -20,6 +20,12 @@ Parameters
 robot_namespaces  Comma-separated names, e.g. "robot1,robot2"
 init_poses_json   JSON list matching robots: [{"x":0,"y":0,"yaw":0}, ...]
                   Poses are robot local-map origin in the global map frame.
+                  Used until pose_topic (if set) delivers a live correction.
+pose_topic        Optional std_msgs/String topic of JSON poses (same shape as
+                   init_poses_json), published by collab_loop_closure.py.
+                   Once a message arrives, it replaces init_poses_json for
+                   that robot — corrects for independent-SLAM drift instead
+                   of trusting the static spawn offset for the whole run.
 robot_map_topic   Per-robot map topic suffix (default "map" → /robotN/map)
 output_topic      Merged OccupancyGrid (default /map)
 world_frame       frame_id of the merged map (default map)
@@ -36,6 +42,7 @@ import rclpy
 from nav_msgs.msg import OccupancyGrid
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from std_msgs.msg import String
 
 FREE = 0
 OCCUPIED = 100
@@ -55,6 +62,7 @@ class MapMergeKnown(Node):
 
         self.declare_parameter('robot_namespaces', 'robot1,robot2')
         self.declare_parameter('init_poses_json', '[]')
+        self.declare_parameter('pose_topic', '')
         self.declare_parameter('robot_map_topic', 'map')
         self.declare_parameter('output_topic', '/map')
         self.declare_parameter('world_frame', 'map')
@@ -93,12 +101,37 @@ class MapMergeKnown(Node):
                 lambda msg, n=ns: self._map_cb(n, msg),
                 _MAP_QOS)
 
+        self._pose_topic = self.get_parameter('pose_topic').value.strip()
+        self._live_poses = False
+        if self._pose_topic:
+            self.create_subscription(
+                String, self._pose_topic, self._pose_cb, 10)
+
         self._pub = self.create_publisher(OccupancyGrid, output_topic, _MAP_QOS)
         self.create_timer(1.0 / max(publish_rate, 0.1), self._publish)
 
+        pose_note = f', pose corrections from {self._pose_topic}' if self._pose_topic else ', static poses'
         self.get_logger().info(
             f'map_merge_known: {self._robots} → {output_topic} '
-            f'(frame={self._world_frame}, known poses)')
+            f'(frame={self._world_frame}{pose_note})')
+
+    def _pose_cb(self, msg: String):
+        try:
+            poses = json.loads(msg.data)
+        except (json.JSONDecodeError, TypeError):
+            self.get_logger().warn(f'Malformed pose correction on {self._pose_topic!r}: {msg.data!r}')
+            return
+        if len(poses) != len(self._robots):
+            return
+        for i, p in enumerate(poses):
+            self._poses[i] = {
+                'x': float(p.get('x', 0.0)),
+                'y': float(p.get('y', 0.0)),
+                'yaw': float(p.get('yaw', 0.0)),
+            }
+        if not self._live_poses:
+            self._live_poses = True
+            self.get_logger().info(f'Switched to live pose corrections from {self._pose_topic}')
 
     def _map_cb(self, ns: str, msg: OccupancyGrid):
         res = float(msg.info.resolution)

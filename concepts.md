@@ -203,16 +203,42 @@ Experimental. Every robot runs its own namespaced `slam_toolbox` (`/{ns}/map`).
 offsets** (not unknown-pose map matching). Nav2 + `frontier_coordinator` consume
 `/map_merged`. There is no shared `/map` topic in this mode.
 
+Independent `slam_toolbox` instances drift apart over a long run, so trusting the
+static spawn offset for the whole run eventually ghosts/doubles-up overlapping
+regions of `/map_merged`. `collab_loop_closure.py` (default on, `collab_loop_closure:=false`
+to disable) corrects this: for every robot pair with overlapping map bounding
+boxes, it brute-force searches a small (dx, dy, dtheta) window and scores each
+candidate by occupied-cell agreement between the two grids — the same family of
+algorithm Cartographer uses for loop closure, applied natively to the
+`OccupancyGrid`s `slam_toolbox` already publishes. Accepted corrections (enough
+overlap + high enough match ratio) are EMA-smoothed and published as JSON on
+`/collab/poses`; `map_merge_known` prefers those over its static `init_poses_json`
+once available. robot1 is always the fixed global reference, never corrected.
+
+This is a lightweight, 2D-native equivalent of the idea behind two open-source
+collaborative-SLAM frameworks — [Swarm-SLAM](https://github.com/MISTLab/Swarm-SLAM)'s
+sparse inter-robot loop closure and [Multi-Robot-Graph-SLAM](https://github.com/aserbremen/Multi-Robot-Graph-SLAM)'s
+graph sharing between per-robot SLAM instances — not a vendored port of either:
+both are 3D point-cloud/PCL/GICP pipelines built for Velodyne-class lidars, a poor
+fit here since `slam_toolbox` in this repo always consumes 2D `LaserScan`, even
+when `lidar_type:=3d` is set (that's a separate point-cloud sensor, not wired into
+SLAM).
+
 ```
-robot1 slam_toolbox ──► /robot1/map ─┐
-robot2 slam_toolbox ──► /robot2/map ─┼─► map_merge_known ──► /map_merged
-robotN slam_toolbox ──► /robotN/map ─┘         │
-                                               ▼
-                              Nav2 + frontier_coordinator
+robot1 slam_toolbox ──► /robot1/map ─┬────────────────────────────┐
+robot2 slam_toolbox ──► /robot2/map ─┼─► collab_loop_closure ─►/collab/poses
+robotN slam_toolbox ──► /robotN/map ─┘         │                   │
+                                                ▼                   ▼
+                                          map_merge_known ──► /map_merged
+                                                │
+                                                ▼
+                               Nav2 + frontier_coordinator
 ```
 
 ```bash
 ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi
+# Disable inter-robot loop closure, static known-pose merge only:
+ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi collab_loop_closure:=false
 # Save the merged map (frontier auto-save already uses -t /map_merged):
 ros2 run nav2_map_server map_saver_cli -t /map_merged -f src/rosnav_bot/maps/map_hospital
 ros2 run rosnav_bot fleet_manager.py savemap src/rosnav_bot/maps/map_hospital
@@ -794,7 +820,7 @@ Gazebo after the fix.
 | `robot.launch.py` | Gazebo + robot + Nav2 full bringup with saved map | `map`, `world`, `robot_name`, `spawn_x/y/z/yaw`, `rviz`, `use_sim_time`, `drive_type` (`diff`\|`mecanum`\|`ackermann`) |
 | `slam_nav.launch.py` | Gazebo + robot + SLAM Toolbox + Nav2 (+ optional auto frontier) | `world_name`, `world`, `explore`, `map_prefix`, `rviz`, `robot_name`, `spawn_x/y/z/yaw`, `drive_type` (`diff`\|`mecanum`\|`ackermann`), `controller` (`dwb`\|`mppi`) |
 | `slam.launch.py` | Gazebo + robot + SLAM Toolbox mapping mode | `use_sim_time` |
-| `multi_robot.launch.py` | Scalable N-robot fleet: SLAM+frontier or shared map + Nav2 per robot | `world`, `map`, `explore`, `slam_mode`, `robot_count`, `robot_layout`, `robots_json`, `drive_type` (`diff`\|`mecanum`\|`ackermann`), `controller` (`dwb`\|`mppi`), `fleet_mgmt`, `rviz`, `headless` |
+| `multi_robot.launch.py` | Scalable N-robot fleet: SLAM+frontier or shared map + Nav2 per robot | `world`, `map`, `explore`, `slam_mode`, `collab_loop_closure`, `robot_count`, `robot_layout`, `robots_json`, `drive_type` (`diff`\|`mecanum`\|`ackermann`), `controller` (`dwb`\|`mppi`), `fleet_mgmt`, `rviz`, `headless` |
 | `nav2.launch.py` | Nav2 only (attach to running Gazebo) | `map`, `world`, `use_sim_time` |
 | `rmf_fleet.launch.py` | Open-RMF traffic scheduling on top of an already-running static-map fleet (see §11b) | `robot_count`, `robots`, `fleet_name`, `map_name`, `adapter_delay` |
 | `_common.py` | Not a launch file — shared helper module (world resolution, Gazebo/RSP/laser-filter builders, nav2 params selection + multi-robot namespacing) imported by `slam_nav.launch.py` and `multi_robot.launch.py` | — |

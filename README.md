@@ -114,7 +114,9 @@ Multi-SLAM (`slam_mode:=multi`): save `/map_merged` with `-t /map_merged` or `fl
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
 ros2 launch rosnav_bot multi_robot.launch.py robot_count:=2
 ros2 launch rosnav_bot multi_robot.launch.py fleet_mgmt:=true
-ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi      # → /map_merged
+ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi      # → /map_merged, drift-corrected via collab_loop_closure
+ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi collab_loop_closure:=false  # static known-pose merge only
+ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi lidar_type:=3d slam_algo:=3d rviz:=true  # RTAB-Map 3D SLAM, view cloud_map in RViz
 ros2 launch rosnav_bot multi_robot.launch.py merge_scans:=true     # → /map_fused
 
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital safety:=true
@@ -237,7 +239,7 @@ ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
 
 ---
 
-## 8. Open-RMF (experimental)
+## 8. Open-RMF
 
 ```bash
 ros2 launch rosnav_bot multi_robot.launch.py explore:=false robot_count:=2

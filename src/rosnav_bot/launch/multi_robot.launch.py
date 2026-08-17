@@ -47,6 +47,10 @@ Usage
   # Experimental: every robot runs SLAM and maps are merged
   ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi
 
+  # Every robot runs RTAB-Map 3D lidar SLAM instead of slam_toolbox
+  # (needs lidar_type:=3d) — merges the same way, via /{ns}/map OccupancyGrids
+  ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi lidar_type:=3d slam_algo:=3d
+
   # Swap frontier plugins without editing code
   ros2 launch rosnav_bot multi_robot.launch.py frontier_detector:=wfd frontier_scorer:=utility
 
@@ -435,6 +439,55 @@ def _make_slam_params(template_path: str, robot_ns: str) -> dict:
     return slam_params
 
 
+def _rtabmap_node_for_robot(robot_ns: str) -> Node:
+    """Per-robot RTAB-Map lidar SLAM (slam_mode:=multi, lidar_type:=3d, slam_algo:=3d).
+
+    Same params as slam_nav.launch.py's single-robot slam_algo:=3d path (see
+    that file for the Grid/* rationale) — Grid/3D:=false projects RTAB-Map's
+    3D map to a plain nav_msgs/OccupancyGrid, so this is a drop-in swap for
+    the per-robot slam_toolbox node below: same /{ns}/map output topic and
+    {ns}/map -> {ns}/odom TF ownership, consumed identically by Nav2,
+    map_merge_known, and collab_loop_closure (all backend-agnostic — they
+    only look at OccupancyGrid topics, never at how they were produced).
+    """
+    return Node(
+        package='rtabmap_slam',
+        executable='rtabmap',
+        name='rtabmap',
+        namespace=robot_ns,
+        output='screen',
+        parameters=[{
+            'use_sim_time': True,
+            'frame_id': f'{robot_ns}/base_link',
+            'odom_frame_id': f'{robot_ns}/odom',
+            'map_frame_id': f'{robot_ns}/map',
+            'subscribe_depth': False,
+            'subscribe_rgb': False,
+            'subscribe_scan_cloud': True,
+            'approx_sync': True,
+            'wait_for_transform': 0.2,
+            'Reg/Strategy': '1',
+            'Icp/PointToPlane': 'true',
+            'Grid/Sensor': '0',
+            'Grid/3D': 'false',
+            'Grid/CellSize': '0.05',
+            'Grid/RangeMax': '20.0',
+            'Grid/NoiseFilteringRadius': '0.1',
+            'Grid/NoiseFilteringMinNeighbors': '5',
+            'Mem/IncrementalMemory': 'true',
+        }],
+        remappings=[
+            ('tf', '/tf'),
+            ('tf_static', '/tf_static'),
+            ('odom', f'/{robot_ns}/odom'),
+            ('scan_cloud', f'/{robot_ns}/points'),
+            ('map', f'/{robot_ns}/map'),
+            ('/map', f'/{robot_ns}/map'),
+        ],
+        arguments=['-d'],
+    )
+
+
 def _init_poses_for_merge(robots: list[dict]) -> list[dict]:
     """Local-map origins in the global map frame (origin = robot1 spawn)."""
     ox = float(robots[0]['x'])
@@ -522,6 +575,7 @@ def _build_all(context, pkg_share: str):
     fleet_mgmt   = _truthy(LaunchConfiguration('fleet_mgmt').perform(context))
     merge_scans  = _truthy(LaunchConfiguration('merge_scans').perform(context))
     slam_mode = LaunchConfiguration('slam_mode').perform(context).strip().lower()
+    collab_loop_closure = _truthy(LaunchConfiguration('collab_loop_closure').perform(context))
     frontier_detector = LaunchConfiguration('frontier_detector').perform(context).strip()
     frontier_scorer = LaunchConfiguration('frontier_scorer').perform(context).strip()
     explore_bt = LaunchConfiguration('explore_bt').perform(context).strip()
@@ -568,6 +622,21 @@ def _build_all(context, pkg_share: str):
     if slam_mode not in ('single', 'multi'):
         raise ValueError('slam_mode must be one of: single, multi')
 
+    slam_algo = LaunchConfiguration('slam_algo').perform(context).strip().lower()
+    if slam_algo == '3d' and lidar_type != '3d':
+        print('[multi_robot] slam_algo=3d requires lidar_type:=3d — falling back to slam_algo=2d')
+        slam_algo = '2d'
+    if slam_algo == '3d' and slam_mode != 'multi':
+        print('[multi_robot] slam_algo=3d only applies to slam_mode:=multi — falling back to slam_algo=2d')
+        slam_algo = '2d'
+    if slam_algo == '3d':
+        try:
+            get_package_share_directory('rtabmap_slam')
+        except Exception:
+            print('[multi_robot] slam_algo=3d requested but ros-humble-rtabmap-ros is not '
+                  'installed (sudo apt install ros-humble-rtabmap-ros) — falling back to slam_algo=2d')
+            slam_algo = '2d'
+
     slam_pkg     = get_package_share_directory('slam_toolbox')
     urdf_filename = _common.urdf_filename_for(drive_type, robot_model)
 
@@ -600,7 +669,8 @@ def _build_all(context, pkg_share: str):
         LogInfo(msg=f'[multi_robot] fleet = {[r["name"] for r in robots]}'),
         LogInfo(msg=f'[multi_robot] spawn poses = {[(r["name"], r["x"], r["y"]) for r in robots]}'),
         LogInfo(msg=f'[multi_robot] explore = {explore}'),
-        LogInfo(msg=f'[multi_robot] slam_mode = {slam_mode}'),
+        LogInfo(msg=f'[multi_robot] slam_mode = {slam_mode}'
+                    + (f' (slam_algo={slam_algo})' if slam_mode == 'multi' else '')),
         LogInfo(msg=f'[multi_robot] drive_type = {drive_type}, controller = {controller}, urdf = {urdf_filename}'),
         LogInfo(msg=f'[multi_robot] nav2 template = {os.path.basename(template_yaml)} '
                     f'({"hand-tuned fleet template" if "ROBOT_NS" in open(template_yaml).read() else "single-robot params, namespaced at launch"})'),
@@ -664,6 +734,7 @@ def _build_all(context, pkg_share: str):
                     'map', f'{ns}/map',
                 ],
                 output='screen'))
+        pose_topic = '/collab/poses' if collab_loop_closure else ''
         actions += [
             LogInfo(msg='[multi_robot] multi-SLAM mode — per-robot /robotN/map + known-pose merge → /map_merged'),
             TimerAction(
@@ -676,12 +747,31 @@ def _build_all(context, pkg_share: str):
                     parameters=[{
                         'robot_namespaces': ','.join(r['name'] for r in robots),
                         'init_poses_json': json.dumps(init_poses),
+                        'pose_topic': pose_topic,
                         'output_topic': '/map_merged',
                         'world_frame': 'map',
                         'publish_rate': 2.0,
                         'use_sim_time': True,
                     }])]),
         ]
+        if collab_loop_closure and len(robots) > 1:
+            actions += [
+                LogInfo(msg='[multi_robot] collab_loop_closure — correcting inter-robot SLAM drift → /collab/poses'),
+                TimerAction(
+                    period=14.0,
+                    actions=[Node(
+                        package='rosnav_bot',
+                        executable='collab_loop_closure.py',
+                        name='collab_loop_closure',
+                        output='screen',
+                        parameters=[{
+                            'robot_namespaces': ','.join(r['name'] for r in robots),
+                            'init_poses_json': json.dumps(init_poses),
+                            'output_topic': '/collab/poses',
+                            'publish_markers': publish_markers,
+                            'use_sim_time': True,
+                        }])]),
+            ]
     else:
         # Static map_server
         resolved_map = _resolve_map_file(map_arg, world_path, pkg_share)
@@ -842,19 +932,21 @@ def _build_all(context, pkg_share: str):
                 'namespace': ns,
             }.items())
 
-        slam_node = Node(
-            package='slam_toolbox',
-            executable='async_slam_toolbox_node',
-            name='slam_toolbox',
-            namespace=ns,
-            output='screen',
-            parameters=[_make_slam_params(slam_template_yaml, ns), {'use_sim_time': True}],
-            remappings=[
-                ('tf', '/tf'),
-                ('tf_static', '/tf_static'),
-                ('map', f'/{ns}/map'),
-                ('/map', f'/{ns}/map'),
-            ])
+        slam_node = (
+            _rtabmap_node_for_robot(ns) if slam_algo == '3d' else
+            Node(
+                package='slam_toolbox',
+                executable='async_slam_toolbox_node',
+                name='slam_toolbox',
+                namespace=ns,
+                output='screen',
+                parameters=[_make_slam_params(slam_template_yaml, ns), {'use_sim_time': True}],
+                remappings=[
+                    ('tf', '/tf'),
+                    ('tf_static', '/tf_static'),
+                    ('map', f'/{ns}/map'),
+                    ('/map', f'/{ns}/map'),
+                ]))
 
         # Assemble per-robot actions
         nav2_group = nav2
@@ -873,7 +965,13 @@ def _build_all(context, pkg_share: str):
             # SLAM handles localisation for this robot.
             slam_actions = []
             if slam_mode == 'multi':
-                slam_actions.append(TimerAction(period=6.0 + robot_stagger, actions=[slam_node]))
+                # rtabmap (slam_algo:=3d) needs the gpu_lidar sensor plugin to have
+                # produced a few valid frames before it subscribes — robot1 (no
+                # stagger) hitting it at the same t=6s slam_toolbox uses would grab
+                # gz's still-warming-up first PointCloud2 and permanently wedge with
+                # "Could not convert 3d laser scan msg!" (never recovers afterward).
+                slam_start_delay = 12.0 if slam_algo == '3d' else 6.0
+                slam_actions.append(TimerAction(period=slam_start_delay + robot_stagger, actions=[slam_node]))
             actions.append(LogInfo(
                 msg=f'[multi_robot] {ns}: SLAM-localized, nav2 t={robot_nav2_delay:.1f}s'))
             per_robot += [
@@ -1161,6 +1259,20 @@ def generate_launch_description():
             'slam_mode', default_value='single',
             description='single = robot1 SLAM + AMCL for other robots; '
                         'multi = each robot runs namespaced SLAM and maps merge to /map_merged'),
+        DeclareLaunchArgument(
+            'collab_loop_closure', default_value='true',
+            description='slam_mode:=multi only. true (default) = run collab_loop_closure, '
+                        'correcting inter-robot SLAM drift via correlative grid matching '
+                        'before map_merge_known stitches /map_merged. false = static '
+                        'known-pose merge only.'),
+        DeclareLaunchArgument(
+            'slam_algo', default_value='2d',
+            description='slam_mode:=multi only. "2d" (default) = per-robot slam_toolbox '
+                        '(needs lidar_type:=2d). "3d" = per-robot RTAB-Map lidar SLAM '
+                        '(needs lidar_type:=3d) — publishes the same /{ns}/map '
+                        'OccupancyGrid via Grid/3D:=false, so map_merge_known and '
+                        'collab_loop_closure work unchanged regardless of which SLAM '
+                        'backend produced it.'),
         DeclareLaunchArgument(
             'frontier_detector', default_value='wfd',
             description='Frontier detector plugin: wfd = reachable wavefront frontiers; '

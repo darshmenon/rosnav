@@ -55,6 +55,7 @@ install(
     scripts/frontier_coordinator.py
     scripts/map_fusion.py
     scripts/map_merge_known.py
+    scripts/collab_loop_closure.py
     scripts/multi_map_merge.py
     scripts/priority_collision_avoidance.py
     scripts/deadlock_recovery.py
