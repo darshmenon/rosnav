@@ -32,12 +32,23 @@ def models_resource_path(pkg_share: str = None) -> str:
 
 
 def with_gz_model_path(action, pkg_share: str = None):
-    """Ensure GZ_SIM_RESOURCE_PATH includes vendored models/ (offline Depot)."""
+    """Ensure GZ_SIM_RESOURCE_PATH includes vendored models/ (offline Depot)
+    and share/ (URDF meshes). sdformat rewrites a URDF's package://rosnav_bot/...
+    mesh URIs to model://rosnav_bot/... during URDF->SDF conversion, which gz
+    sim can only resolve against a resource path one level above pkg_share
+    (i.e. .../share, so model://rosnav_bot/meshes/... -> .../share/rosnav_bot/
+    meshes/...). Without it gz sim silently drops the mesh (logs an error,
+    robot still spawns) — confirmed this was already happening for the
+    mir100 chassis skin before this fix; RViz was unaffected since it
+    resolves package:// directly via resource_retriever, not this path."""
+    pkg_share = pkg_share or get_package_share_directory('rosnav_bot')
     models_dir = models_resource_path(pkg_share)
+    share_dir = os.path.dirname(pkg_share)
     existing = os.environ.get('GZ_SIM_RESOURCE_PATH', '')
     parts = [p for p in existing.split(':') if p]
-    if models_dir not in parts:
-        parts.insert(0, models_dir)
+    for p in (share_dir, models_dir):
+        if p not in parts:
+            parts.insert(0, p)
     return GroupAction([
         SetEnvironmentVariable('GZ_SIM_RESOURCE_PATH', ':'.join(parts)),
         action,
@@ -67,12 +78,14 @@ def resolve_gazebo_world_name(world_path: str) -> str:
 
 
 def urdf_filename_for(drive_type: str, robot_model: str = 'custom') -> str:
-    if robot_model == 'mir100':
+    if robot_model in ('mir100', 'husky'):
         if drive_type != 'diff':
-            print(f'[rosnav_bot] robot_model=mir100 only supported for drive_type:=diff '
+            print(f'[rosnav_bot] robot_model={robot_model} only supported for drive_type:=diff '
                   f'(got drive_type:={drive_type}) — ignoring robot_model')
-        else:
+        elif robot_model == 'mir100':
             return 'robot_mir100.urdf.xacro'
+        else:
+            return 'robot_husky.urdf.xacro'
     if drive_type == 'mecanum':
         return 'robot_mecanum.urdf.xacro'
     if drive_type == 'ackermann':

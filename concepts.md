@@ -731,6 +731,62 @@ y=±0.205 to ±0.245, outside the mesh's y-span).
 
 ---
 
+## 20. Husky Chassis Skin (`robot_model:=husky`)
+
+Same idea as the MiR100 skin above — chassis **visual only**, same wheels/
+physics/nav2 footprint. Only valid with `drive_type:=diff`.
+
+```bash
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital robot_model:=husky
+ros2 launch rosnav_bot multi_robot.launch.py robot_model:=husky   # fleet-wide
+```
+
+### How it's built
+- `urdf/robot_core_husky.xacro` — same wheel joints/inertials/friction as
+  `robot_core.xacro`; the `chassis` link's `<visual>` is the Husky hull mesh
+  instead of a box (`<collision>` stays the original box). Four extra
+  visual-only sibling links (`husky_top_chassis`, `husky_top_plate`,
+  `husky_front_bumper`, `husky_rear_bumper`) are fixed-jointed to `chassis`
+  to reassemble the rest of the Husky body panels, with joint origins scaled
+  by the same factor as the mesh so the pieces still line up correctly.
+- `urdf/robot_husky.urdf.xacro` — top-level file, mirrors `robot_mir100.urdf.xacro`.
+- `_common.urdf_filename_for()` picks it for `robot_model=husky`, same
+  diff-drive-only restriction and fallback warning as mir100.
+
+### Mesh vendoring
+`meshes/husky/visual/*.glb` are a flattened, sensor-free export of
+Clearpath's `husky_description` chassis meshes. BSD-3-Clause, see
+`meshes/husky/README.md`. **They were re-exported through `gltf-transform copy`
+before vendoring** — the originals used `EXT_meshopt_compression` (from
+`gltfpack`, a web-viewer-oriented compression scheme), which neither
+RViz's Assimp nor Gazebo Sim's mesh loader can decode; both failed silently
+(spawned the robot with the visual just missing) until decompressed to plain
+glTF.
+
+### Scale/placement math
+Husky's own hull mesh has its local origin at floor level (matching its
+`base_link` collision box's z=0 bottom edge), so it's placed at
+chassis-local origin `(0.275, 0, 0)` — same x-offset convention as MiR100 —
+scaled by `0.55` to fit the existing 0.55 × 0.4 × 0.15 footprint. The
+accessory panel joints reuse husky_description's own relative offsets,
+scaled by the same 0.55 factor and shifted by the same (0.275, 0, 0).
+
+### Bug found and fixed along the way: `GZ_SIM_RESOURCE_PATH` missing `share/`
+`with_gz_model_path()` in `_common.py` only added `share/rosnav_bot/models`
+to `GZ_SIM_RESOURCE_PATH`. sdformat rewrites a URDF's
+`package://rosnav_bot/meshes/...` mesh URIs to `model://rosnav_bot/meshes/...`
+during URDF→SDF conversion, and gz sim could only resolve that against a
+resource path *one level above* `share/rosnav_bot` (i.e. `share/` itself).
+That directory was never added, so gz sim silently dropped **every**
+`package://`-referenced mesh — confirmed this was already happening for the
+MiR100 chassis (it spawned in Gazebo with no visual at all; RViz was fine
+since it resolves `package://` directly via `resource_retriever`, a
+different code path). Fixed by adding `share/` to the resource path
+alongside `models/`; verified both mir100 and husky render correctly in
+Gazebo after the fix.
+
+---
+
 ## Quick Reference — Launch Files
 
 | Launch file | What it does | Key args |

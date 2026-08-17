@@ -43,6 +43,7 @@ install(
     scripts/multi_map_merge.py
     scripts/priority_collision_avoidance.py
     scripts/deadlock_recovery.py
+    scripts/cbs_planner.py
     scripts/bt_executor.py
     scripts/multi_coverage.py
     scripts/aruco_dock.py

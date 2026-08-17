@@ -527,9 +527,11 @@ def generate_launch_description():
             name='robot_model',
             default_value='custom',
             description='Chassis visual skin: "custom" (default, this repo\'s own simple box '
-                        'chassis) or "mir100" (MiR100-shaped mesh, vendored from DFKI-NI/mir_robot, '
-                        'scaled to the same footprint/wheelbase — visual only, same physics/nav2 '
-                        'tuning). mir100 only supported with drive_type:=diff.'),
+                        'chassis), "mir100" (MiR100-shaped mesh, vendored from DFKI-NI/mir_robot), '
+                        'or "husky" (Clearpath Husky A200-shaped mesh, vendored from '
+                        'husky_description) — all scaled to the same footprint/wheelbase, visual '
+                        'only, same physics/nav2 tuning. mir100/husky only supported with '
+                        'drive_type:=diff.'),
         DeclareLaunchArgument(
             name='lidar_type',
             default_value='2d',

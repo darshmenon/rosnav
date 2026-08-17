@@ -196,10 +196,11 @@ ros2 launch rosnav_bot multi_robot.launch.py drive_type:=ackermann
 # MPPI instead of DWB (Humble; Jazzy already defaults to MPPI)
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital controller:=mppi explore:=true
 
-# 3D lidar / RTAB-Map · MiR100 visual chassis
+# 3D lidar / RTAB-Map · MiR100 / Husky visual chassis
 ros2 launch rosnav_bot slam_nav.launch.py lidar_type:=3d
 ros2 launch rosnav_bot slam_nav.launch.py lidar_type:=3d slam_algo:=3d explore:=true
 ros2 launch rosnav_bot slam_nav.launch.py robot_model:=mir100
+ros2 launch rosnav_bot slam_nav.launch.py robot_model:=husky
 ```
 
 Strafe example (mecanum):

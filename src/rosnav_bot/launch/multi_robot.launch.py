@@ -1066,8 +1066,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'robot_model', default_value='custom',
             description='Fleet-wide chassis visual skin: "custom" (default, this repo\'s own '
-                        'simple box chassis) or "mir100" (MiR100-shaped mesh, scaled to the same '
-                        'footprint — visual only). Only supported with drive_type:=diff.'),
+                        'simple box chassis), "mir100" (MiR100-shaped mesh), or "husky" '
+                        '(Clearpath Husky A200-shaped mesh) — all scaled to the same footprint, '
+                        'visual only. Only supported with drive_type:=diff.'),
         DeclareLaunchArgument(
             'lidar_type', default_value='2d',
             description='Fleet-wide lidar: "2d" (default, LaserScan on /{ns}/scan) or "3d" '
