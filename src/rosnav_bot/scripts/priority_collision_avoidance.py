@@ -130,10 +130,15 @@ class PriorityCollisionAvoidance(Node):
                                 f'[yield] {low_prio} yields to {ns_a}  '
                                 f'sep={current_d:.2f}m → predicted {predicted_d:.2f}m')
 
-                    # Clear yield once safely separated (hysteresis)
-                    elif already_yielding and current_d > self._safe_r:
-                        self.get_logger().info(
-                            f'[clear] {low_prio} resumes  sep={current_d:.2f}m')
+                    # Clear yield once safely separated (hysteresis); otherwise
+                    # keep yielding even though the predicted separation ticked
+                    # back above danger_r — current_d is still inside safe_r.
+                    elif already_yielding:
+                        if current_d > self._safe_r:
+                            self.get_logger().info(
+                                f'[clear] {low_prio} resumes  sep={current_d:.2f}m')
+                        else:
+                            new_yields.add(low_prio)
 
             self._yields = new_yields
 

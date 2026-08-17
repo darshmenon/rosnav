@@ -466,7 +466,7 @@ def generate_launch_description():
             description='Auto-start frontier explorer (only valid when slam:=true)'),
         DeclareLaunchArgument(
             name='frontier_detector', default_value='wfd',
-            description='Frontier detector: wfd (reachable wavefront) or classic'),
+            description='Frontier detector: wfd (reachable wavefront), classic, or rrt (sampling-based)'),
         DeclareLaunchArgument(
             name='frontier_scorer', default_value='utility',
             description='Frontier scorer: utility (size/distance tradeoff), weighted, or nearest'),

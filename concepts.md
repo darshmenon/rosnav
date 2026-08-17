@@ -145,16 +145,21 @@ Edit `WAYPOINTS` at the top of the script to change the route.
 `scripts/frontier_explorer.py` implements autonomous map exploration:
 
 1. Subscribe to `/map` (OccupancyGrid from SLAM).
-2. Find **frontier cells** — free cells (value 0) adjacent to unknown cells (value -1).
+2. Find **frontier cells** — free cells (value 0) adjacent to unknown cells (value -1) — via a pluggable `frontier_detector`: `wfd` (default, reachable-space flood fill), `classic` (full-grid scan), or `rrt` (sampling-based, see below).
 3. Cluster frontiers using in-node connected-component labelling (no SciPy required).
-4. Pick the nearest cluster centroid as the next navigation goal (uses TF robot pose).
+4. Score clusters via a pluggable `frontier_scorer` (`utility` default: size/distance tradeoff, `weighted`, or `nearest`) and pick the best as the next navigation goal (uses TF robot pose).
 5. Send the goal to Nav2 via `NavigateToPose`.
 6. Repeat until no frontiers remain.
 
 ```bash
 # Single command — SLAM + Nav2 + frontier explorer + auto-save
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
+
+# Sampling-based (RRT) frontier detector instead of the default wfd flood fill
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=maze explore:=true frontier_detector:=rrt
 ```
+
+**`rrt` detector** — genuinely different discovery mechanism from `wfd`/`classic` (both of which flood-fill the full occupancy grid). Grows a random tree (RRT) through known-free space from the robot's pose; any sampled step that lands on a frontier cell becomes a cluster seed instead of being extended further. Seeds are flood-filled into full clusters using the exact same code as `wfd`/`classic`, so scoring, goal-safety pullback, and BT/Nav2 handoff are unchanged — only *how frontiers are found* differs. Cheaper than `wfd` on large maps (no full-grid connected-component scan), at the cost of being probabilistic — it can miss a frontier on a given poll cycle and pick it up on the next. Tunable via `rrt_iterations` (default 300) and `rrt_step_size` (default 0.5m). Verified in sim on `maze` (`slam_nav.launch.py`): drove multiple successful goal hops and grew the map from ~1.1k to ~38k free cells with no stalls.
 
 Recent reliability fixes in `frontier_explorer.py`:
 - Removed SciPy runtime dependency (frontier adjacency + clustering implemented with NumPy + BFS).
@@ -745,11 +750,12 @@ y=±0.205 to ±0.245, outside the mesh's y-span).
 | `navigation.py` | Custom obstacle-avoidance FSM (no Nav2 needed) | `goal_x`, `goal_y`, `base_speed`, `obstacle_threshold` |
 | `path_planning.py` | Standalone A* path planner (from `/map`, hardcoded fallback) | `map_topic`, `grid_size_x/y`, `resolution`, `safety_margin`, `start_x/y`, `goal_x/y` |
 | `waypoint_nav.py` | Navigate through a sequence of waypoints via Nav2 | `waypoints_file`, `frame_id` |
-| `frontier_explorer.py` | Autonomous map exploration via frontier detection + optional auto-save | `min_frontier_size`, `revisit_radius`, `poll_period`, `map_save_path` |
+| `frontier_explorer.py` | Autonomous map exploration via frontier detection + optional auto-save | `frontier_detector` (`wfd`\|`classic`\|`rrt`), `frontier_scorer`, `min_frontier_size`, `revisit_radius`, `poll_period`, `map_save_path` |
 | `check_odometry.py` | Debug odometry data | — |
 | `reset_pose.py` | Reset robot pose in simulation | `world_name`, `robot_name`, `reset_x/y/z/yaw` |
 | `rmf_fleet_adapter.py` | Registers the fleet with Open-RMF, bridges RMF path commands to Nav2 (see §11b) | `--fleet-name`, `--map-name`, `--robots` |
 | `rmf_submit_task.py` | Submits a patrol task to `rmf_task_dispatcher` to exercise traffic scheduling | `category`, `places`, `--rounds`, `--wait` |
+| `obstacle_tracker.py` | Detects + tracks moving obstacles from `/scan`, with ellipse extent estimation (see §25) | `min_speed`, `cluster_radius`, `track_gate_dist`, `min_extent`, `extent_gain` |
 
 ---
 
@@ -1115,4 +1121,33 @@ ros2 run rosnav_bot task_allocator.py status
 ros2 run rosnav_bot fleet_manager.py tasks add 2.0 1.5 0 pickup_A
 ros2 run rosnav_bot fleet_manager.py tasks status
 ros2 run rosnav_bot fleet_manager.py tasks clear
+```
+
+---
+
+## 25. Moving Obstacle Tracking (`obstacle_tracker.py`)
+
+`scripts/obstacle_tracker.py` detects and tracks moving obstacles from `/scan` alone (no separate perception sensor) — useful for spotting other robots/people crossing a robot's path that the local costmap only sees as static occupied cells.
+
+**Algorithm:**
+1. Keep a rolling buffer of recent `LaserScan` messages.
+2. Compare each ray's range now vs. `lookback` frames ago — a ray "closing" faster than `min_speed` marks an approaching surface.
+3. Transform closing-ray endpoints to the map frame via TF, then single-linkage cluster them within `cluster_radius`.
+4. Fit an **ellipse** to each cluster's point covariance (major/minor axis lengths + orientation) — this is the object's *extent*, distinct from its position.
+5. Feed cluster centroids into a constant-velocity Kalman filter per track (position + velocity), while extent is smoothed separately via an exponential moving average (`extent_gain`), since the Kalman filter only models position/velocity.
+6. Greedy nearest-centroid association gates clusters to existing tracks (`track_gate_dist`); unmatched clusters spawn new tracks; tracks with too many consecutive misses (`track_max_misses`) are dropped.
+
+This is **extended object tracking**: unlike a plain centroid tracker, a track carries a size and heading estimate, not just a point. Ellipse orientation is only defined mod π (an ellipse looks the same rotated 180°), so smoothing resolves that ambiguity before blending — otherwise the angle would flip back and forth between adjacent frames.
+
+**Published:**
+
+| Topic | Content |
+|---|---|
+| `/obstacle_tracker/markers` | MarkerArray — CYLINDER per track sized to its ellipse extent (`scale.x/y` = major/minor axis, orientation = fitted angle), velocity arrow, id/speed label |
+| `/obstacle_tracker/state` | `std_msgs/String` JSON: `id, x, y, vx, vy, speed, points, length, width, orientation` per track |
+
+```bash
+ros2 run rosnav_bot obstacle_tracker.py
+ros2 run rosnav_bot obstacle_tracker.py --ros-args -p robot_ns:=robot1 -p min_speed:=0.05
+ros2 topic echo /obstacle_tracker/state
 ```

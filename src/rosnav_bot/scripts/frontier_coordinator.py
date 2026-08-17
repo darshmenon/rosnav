@@ -9,7 +9,7 @@ reassigned. Replaces the per-robot frontier_explorer in multi-robot mode.
 Parameters
 ----------
 robot_namespaces  Comma-separated robot names, e.g. "robot1,robot2,robot3"
-frontier_detector Frontier detector plugin: classic or wfd (default wfd)
+frontier_detector Frontier detector plugin: classic, wfd, or rrt (default wfd)
 frontier_scorer   Goal scorer: nearest | weighted | utility (default utility)
                   utility = gain*size_m - potential*distance
 min_frontier_size Minimum cluster size to consider a frontier (default 5)
@@ -89,6 +89,8 @@ class FrontierCoordinator(Node):
         self.declare_parameter('robot_namespaces', 'robot1,robot2')
         self.declare_parameter('frontier_detector', 'wfd')
         self.declare_parameter('frontier_scorer', 'utility')
+        self.declare_parameter('rrt_iterations', 300)
+        self.declare_parameter('rrt_step_size', 0.5)
         self.declare_parameter('min_frontier_size', 5)
         self.declare_parameter('revisit_radius', 0.5)
         self.declare_parameter('assign_radius', 1.0)
@@ -120,6 +122,8 @@ class FrontierCoordinator(Node):
         self._robots = [ns.strip() for ns in raw.split(',') if ns.strip()]
         self._detector    = self.get_parameter('frontier_detector').value.strip().lower()
         self._scorer      = self.get_parameter('frontier_scorer').value.strip().lower()
+        self._rrt_iterations = int(self.get_parameter('rrt_iterations').value)
+        self._rrt_step    = float(self.get_parameter('rrt_step_size').value)
         self._min_size    = self.get_parameter('min_frontier_size').value
         self._revisit_r   = self.get_parameter('revisit_radius').value
         self._assign_r    = self.get_parameter('assign_radius').value
@@ -148,7 +152,7 @@ class FrontierCoordinator(Node):
         map_topic         = self._map_topic
         poll_period       = self.get_parameter('poll_period').value
 
-        if self._detector not in ('classic', 'wfd'):
+        if self._detector not in ('classic', 'wfd', 'rrt'):
             self.get_logger().warn(
                 f'Unknown frontier_detector={self._detector!r}; using wfd.')
             self._detector = 'wfd'
@@ -229,8 +233,8 @@ class FrontierCoordinator(Node):
         elapsed = self._elapsed_sec()
         robot_positions = self._robot_positions(elapsed)
         self._refresh_nav_servers()
-        if self._detector == 'wfd' and not robot_positions:
-            self.get_logger().debug('Waiting for robot TF before WFD frontier search.')
+        if self._detector in ('wfd', 'rrt') and not robot_positions:
+            self.get_logger().debug('Waiting for robot TF before frontier search.')
             self._publish_stats()
             self._publish_markers([], robot_positions)
             return
@@ -509,18 +513,27 @@ class FrontierCoordinator(Node):
         occupied = data >= 50
 
         mask = self._frontier_mask(free, unknown)
+        seed_cells = None
         if self._detector == 'wfd':
             reachable = self._reachable_mask(free, robot_positions, msg.info)
             mask &= reachable
+        elif self._detector == 'rrt':
+            seed_cells = self._rrt_seed_cells(free, mask, msg.info, robot_positions)
 
         if not mask.any():
             return []
+        if seed_cells is not None and not seed_cells:
+            return []
+
+        candidate_cells = (
+            seed_cells if seed_cells is not None
+            else ((int(y), int(x)) for y, x in np.argwhere(mask)))
 
         seen  = np.zeros_like(mask, dtype=bool)
         result = []
-        for sy, sx in np.argwhere(mask):
+        for sy, sx in candidate_cells:
             sy, sx = int(sy), int(sx)
-            if seen[sy, sx]:
+            if seen[sy, sx] or not mask[sy, sx]:
                 continue
             queue = deque([(sy, sx)])
             seen[sy, sx] = True
@@ -659,6 +672,74 @@ class FrontierCoordinator(Node):
                     if 0 <= ny < h and 0 <= nx < w and unknown[ny, nx]:
                         cells.add((ny, nx))
         return len(cells) * resolution * resolution
+
+    def _rrt_seed_cells(self, free, mask, info, robot_positions):
+        """Multi-root RRT: grow a random tree through free space from every
+        robot's cell; any step landing on a frontier cell is a cluster seed
+        (not extended further). Same seed→flood-fill contract as wfd/classic,
+        just a sampling-based (not full-grid scan) way to find the seeds."""
+        h, w = free.shape
+        res = info.resolution
+        step_cells = max(1, round(self._rrt_step / res))
+
+        tree_y, tree_x = [], []
+        for wx, wy in robot_positions:
+            ry, rx = _world_to_cell(wx, wy, info)
+            if 0 <= ry < h and 0 <= rx < w and free[ry, rx]:
+                tree_y.append(float(ry))
+                tree_x.append(float(rx))
+        if not tree_y:
+            return set()
+
+        seeds = set()
+        rng = np.random.default_rng()
+        for _ in range(self._rrt_iterations):
+            sy = rng.integers(0, h)
+            sx = rng.integers(0, w)
+            ty = np.asarray(tree_y)
+            tx = np.asarray(tree_x)
+            i = int(np.argmin((ty - sy) ** 2 + (tx - sx) ** 2))
+            ny0, nx0 = ty[i], tx[i]
+            dy, dx = sy - ny0, sx - nx0
+            dist = math.hypot(dy, dx)
+            if dist < 1e-6:
+                continue
+            scale = min(step_cells, dist) / dist
+            cy = int(round(ny0 + dy * scale))
+            cx = int(round(nx0 + dx * scale))
+            if not (0 <= cy < h and 0 <= cx < w):
+                continue
+            iy0, ix0 = int(round(ny0)), int(round(nx0))
+            if mask[cy, cx]:
+                if self._line_free(iy0, ix0, cy, cx, free):
+                    seeds.add((cy, cx))
+                continue
+            if free[cy, cx] and self._line_free(iy0, ix0, cy, cx, free):
+                tree_y.append(float(cy))
+                tree_x.append(float(cx))
+        return seeds
+
+    @staticmethod
+    def _line_free(y0, x0, y1, x1, free):
+        """Bresenham rasterization; True iff every cell on the segment is free."""
+        h, w = free.shape
+        dy, dx = abs(y1 - y0), abs(x1 - x0)
+        sy = 1 if y1 >= y0 else -1
+        sx = 1 if x1 >= x0 else -1
+        err = dx - dy
+        y, x = y0, x0
+        while True:
+            if not (0 <= y < h and 0 <= x < w) or not free[y, x]:
+                return False
+            if y == y1 and x == x1:
+                return True
+            e2 = 2 * err
+            if e2 > -dy:
+                err -= dy
+                x += sx
+            if e2 < dx:
+                err += dx
+                y += sy
 
     # ------------------------------------------------------------------
     def _save_map(self):

@@ -4,8 +4,19 @@
 Frontier-based autonomous exploration.
 
 Uses the same detector/scorer plugins as frontier_coordinator:
-  frontier_detector: classic | wfd              (default wfd)
+  frontier_detector: classic | wfd | rrt        (default wfd)
   frontier_scorer:   nearest | weighted | utility (default utility)
+
+rrt detector:
+  Sampling-based alternative to wfd's full-grid flood fill. Grows a
+  random tree (RRT) through known-free space from the robot's position;
+  any sampled step landing on a frontier cell is recorded as a cluster
+  seed instead of extended further. Seeds are then flood-filled into
+  full clusters exactly like wfd/classic, so scoring/goal-safety/BT
+  logic downstream is unchanged — only *how frontiers are found* differs.
+  Cheaper than wfd on large maps (no full-grid connected-component scan)
+  at the cost of being probabilistic (may miss small/thin frontiers on
+  a given cycle; self-corrects next poll).
 
 utility scorer:
   score = gain_scale * size_m - potential_scale * distance
@@ -109,6 +120,8 @@ class FrontierExplorer(Node):
         self.declare_parameter('goal_timeout', 60.0)
         self.declare_parameter('frontier_detector', 'wfd')
         self.declare_parameter('frontier_scorer', 'utility')
+        self.declare_parameter('rrt_iterations', 300)
+        self.declare_parameter('rrt_step_size', 0.5)
         self.declare_parameter('frontier_clearance_radius', 0.55)
         self.declare_parameter('distance_weight', 1.0)
         self.declare_parameter('info_gain_weight', 3.0)
@@ -151,6 +164,8 @@ class FrontierExplorer(Node):
         self._map_topic = self.get_parameter('map_topic').value
         self._detector = self.get_parameter('frontier_detector').value.strip().lower()
         self._scorer = self.get_parameter('frontier_scorer').value.strip().lower()
+        self._rrt_iterations = int(self.get_parameter('rrt_iterations').value)
+        self._rrt_step = float(self.get_parameter('rrt_step_size').value)
         self._frontier_clearance = self.get_parameter('frontier_clearance_radius').value
         self._dist_w = self.get_parameter('distance_weight').value
         self._info_w = self.get_parameter('info_gain_weight').value
@@ -170,7 +185,7 @@ class FrontierExplorer(Node):
         action_name = self.get_parameter('action_name').value
         poll_period = self.get_parameter('poll_period').value
 
-        if self._detector not in ('classic', 'wfd'):
+        if self._detector not in ('classic', 'wfd', 'rrt'):
             self.get_logger().warn(
                 f'Unknown frontier_detector={self._detector!r}; using wfd.')
             self._detector = 'wfd'
@@ -229,13 +244,15 @@ class FrontierExplorer(Node):
         self._nav_client.wait_for_server()
         bt_note = self._bt_xml or '(nav2 default)'
         cm_note = self._costmap_topic if self._validate_costmap else 'off'
+        rrt_note = (f' rrt_iters={self._rrt_iterations} rrt_step={self._rrt_step:.2f}m'
+                    if self._detector == 'rrt' else '')
         self.get_logger().info(
             f'Ready | detector={self._detector} scorer={self._scorer} '
             f'bt={bt_note} costmap={cm_note} '
             f'potential={self._potential_scale} gain={self._gain_scale} '
             f'costmap_max={self._costmap_max_cost} pullback={self._goal_pullback:.2f}m '
             f'clearance={self._frontier_clearance:.2f}m '
-            f'min_size={self._min_size} revisit_r={self._revisit_r:.2f}m')
+            f'min_size={self._min_size} revisit_r={self._revisit_r:.2f}m{rrt_note}')
         self.get_logger().info('Waiting for map...')
 
         self.create_timer(poll_period, self._explore)
@@ -425,6 +442,7 @@ class FrontierExplorer(Node):
 
         mask = self._frontier_mask(free, unknown)
         raw_count = int(mask.sum())
+        seed_cells = None
         if self._detector == 'wfd':
             if robot_pos is None:
                 return []
@@ -439,15 +457,33 @@ class FrontierExplorer(Node):
                         f'not marked free (free_cells={int(reachable.sum())}), so the '
                         f'flood-fill has nothing to expand from.')
                     self._last_reach_warn = now
+        elif self._detector == 'rrt':
+            if robot_pos is None:
+                return []
+            seed_cells = self._rrt_seed_cells(free, mask, msg.info, robot_pos)
+            if raw_count > 0 and not seed_cells:
+                now = time.monotonic()
+                if now - getattr(self, '_last_reach_warn', 0.0) >= 10.0:
+                    self.get_logger().warn(
+                        f'{raw_count} raw frontier cell(s) exist but {self._rrt_iterations} '
+                        f'RRT samples from robot pos {robot_pos} found 0 — probabilistic '
+                        f'miss, will resample next cycle.')
+                    self._last_reach_warn = now
 
         if not mask.any():
             return []
+        if seed_cells is not None and not seed_cells:
+            return []
+
+        candidate_cells = (
+            seed_cells if seed_cells is not None
+            else ((int(y), int(x)) for y, x in np.argwhere(mask)))
 
         centroids = []
         visited = np.zeros_like(mask, dtype=bool)
-        for sy, sx in np.argwhere(mask):
+        for sy, sx in candidate_cells:
             sy, sx = int(sy), int(sx)
-            if visited[sy, sx]:
+            if visited[sy, sx] or not mask[sy, sx]:
                 continue
 
             queue = deque([(sy, sx)])
@@ -510,6 +546,74 @@ class FrontierExplorer(Node):
                     seen[ny, nx] = True
                     queue.append((ny, nx))
         return seen
+
+    def _rrt_seed_cells(self, free, mask, info, robot_pos):
+        """RRT sampling: grow a random tree through free space from the
+        robot's cell; any step that lands on a frontier cell is recorded
+        as a cluster seed (not extended further). Returns a set of (y, x)
+        seed cells that downstream flood-fill clusters exactly like the
+        wfd/classic seeds — this only changes *how* seeds are found."""
+        h, w = free.shape
+        res = info.resolution
+        step_cells = max(1, round(self._rrt_step / res))
+        ry, rx = _world_to_cell(robot_pos[0], robot_pos[1], info)
+        if not (0 <= ry < h and 0 <= rx < w and free[ry, rx]):
+            seed = self._nearest_free_cell(ry, rx, free, res)
+            if seed is None:
+                return set()
+            ry, rx = seed
+
+        tree_y = [float(ry)]
+        tree_x = [float(rx)]
+        seeds = set()
+        rng = np.random.default_rng()
+        for _ in range(self._rrt_iterations):
+            sy = rng.integers(0, h)
+            sx = rng.integers(0, w)
+            ty = np.asarray(tree_y)
+            tx = np.asarray(tree_x)
+            i = int(np.argmin((ty - sy) ** 2 + (tx - sx) ** 2))
+            ny0, nx0 = ty[i], tx[i]
+            dy, dx = sy - ny0, sx - nx0
+            dist = math.hypot(dy, dx)
+            if dist < 1e-6:
+                continue
+            scale = min(step_cells, dist) / dist
+            cy = int(round(ny0 + dy * scale))
+            cx = int(round(nx0 + dx * scale))
+            if not (0 <= cy < h and 0 <= cx < w):
+                continue
+            iy0, ix0 = int(round(ny0)), int(round(nx0))
+            if mask[cy, cx]:
+                if self._line_free(iy0, ix0, cy, cx, free):
+                    seeds.add((cy, cx))
+                continue
+            if free[cy, cx] and self._line_free(iy0, ix0, cy, cx, free):
+                tree_y.append(float(cy))
+                tree_x.append(float(cx))
+        return seeds
+
+    @staticmethod
+    def _line_free(y0, x0, y1, x1, free):
+        """Bresenham rasterization; True iff every cell on the segment is free."""
+        h, w = free.shape
+        dy, dx = abs(y1 - y0), abs(x1 - x0)
+        sy = 1 if y1 >= y0 else -1
+        sx = 1 if x1 >= x0 else -1
+        err = dx - dy
+        y, x = y0, x0
+        while True:
+            if not (0 <= y < h and 0 <= x < w) or not free[y, x]:
+                return False
+            if y == y1 and x == x1:
+                return True
+            e2 = 2 * err
+            if e2 > -dy:
+                err -= dy
+                x += sx
+            if e2 < dx:
+                err += dx
+                y += sy
 
     @staticmethod
     def _nearest_free_cell(cy, cx, free, resolution, max_radius_m=1.0):
