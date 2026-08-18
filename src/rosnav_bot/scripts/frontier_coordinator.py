@@ -52,6 +52,7 @@ import json
 import math
 import os
 import subprocess
+import time
 from collections import deque
 from enum import Enum, auto
 
@@ -562,7 +563,16 @@ class FrontierCoordinator(Node):
         return result
 
     def _place_safe_goal(self, cluster, free, unknown, occupied, resolution):
-        """Pull goals off the frontier into free space (outside inflation)."""
+        """Place a goal inside free space, pulled back off the frontier.
+
+        Cold-start note: right after spawn the known-free region can be too
+        small for any cell to clear the full goal_pullback from unknown
+        space (chicken-and-egg — the region only grows once a robot moves,
+        which needs a goal first). Rather than hard-rejecting below
+        goal_pullback, track every candidate that clears *occupied*
+        clearance and relax the pullback requirement afterward if nothing
+        meets it, instead of silently reporting zero frontiers forever.
+        """
         h, w = free.shape
         pull_cells = max(1, math.ceil(self._goal_pullback / resolution))
         clear_cells = max(1, math.ceil(self._frontier_clearance / resolution))
@@ -578,10 +588,9 @@ class FrontierCoordinator(Node):
                 seen[y, x] = True
                 queue.append((y, x, 0))
 
-        best = None
-        best_score = float('-inf')
         ox = self._map.info.origin.position.x
         oy = self._map.info.origin.position.y
+        candidates = []  # (unk_clear, occ_clear, dist, y, x)
         while queue:
             y, x, dist = queue.popleft()
             if dist > search_cells:
@@ -591,9 +600,6 @@ class FrontierCoordinator(Node):
                     seen[ny, nx] = True
                     queue.append((ny, nx, dist + 1))
 
-            unk_clear = self._cell_clearance(y, x, unknown, pull_cells + 1, resolution)
-            if unk_clear < self._goal_pullback:
-                continue
             occ_clear = self._cell_clearance(y, x, occupied, clear_cells, resolution)
             if occ_clear < self._frontier_clearance:
                 continue
@@ -602,13 +608,38 @@ class FrontierCoordinator(Node):
             if ref_costmap is not None and not self._costmap_point_ok(
                     wx, wy, ref_costmap):
                 continue
-            score = unk_clear + occ_clear - 0.15 * dist * resolution
-            if score > best_score:
-                best_score = score
+            unk_clear = self._cell_clearance(y, x, unknown, pull_cells + 1, resolution)
+            candidates.append((unk_clear, occ_clear, dist, y, x))
+
+        if not candidates:
+            return None, -1.0
+
+        qualifying = [c for c in candidates if c[0] >= self._goal_pullback]
+        pool = qualifying if qualifying else candidates
+        if not qualifying:
+            best_available = max(c[0] for c in candidates)
+            now = time.monotonic()
+            if now - getattr(self, '_last_pullback_relax_warn', 0.0) >= 10.0:
+                self.get_logger().warn(
+                    f'No cell clears the full goal_pullback={self._goal_pullback:.2f}m '
+                    f'from unknown space (best available={best_available:.2f}m) — known-free '
+                    f'region is likely still too small (cold start). Relaxing pullback for '
+                    f'this pick instead of rejecting the frontier outright.')
+                self._last_pullback_relax_warn = now
+
+        # Rank by proximity to the cluster first, clearance only as a
+        # tiebreaker — scoring by clearance first makes every cluster's BFS
+        # converge on whichever cell in reach has the best clearance
+        # workspace-wide, which falsely marks all of them "visited" together
+        # when the known-free region is small.
+        best = None
+        best_key = None
+        for unk_clear, occ_clear, dist, y, x in pool:
+            key = (dist, -(unk_clear + occ_clear))
+            if best_key is None or key < best_key:
+                best_key = key
                 best = (float(y), float(x), occ_clear)
 
-        if best is None:
-            return None, -1.0
         return (best[0], best[1]), best[2]
 
     def _best_goal_cell(self, cluster, occupied, resolution):
@@ -650,9 +681,11 @@ class FrontierCoordinator(Node):
         queue = deque()
         for wx, wy in robot_positions:
             y, x = _world_to_cell(wx, wy, info)
-            if 0 <= y < h and 0 <= x < w and free[y, x] and not seen[y, x]:
-                seen[y, x] = True
-                queue.append((y, x))
+            seed = (y, x) if (0 <= y < h and 0 <= x < w and free[y, x]) else \
+                self._nearest_free_cell(y, x, free, info.resolution)
+            if seed is not None and not seen[seed]:
+                seen[seed] = True
+                queue.append(seed)
 
         while queue:
             y, x = queue.popleft()
@@ -661,6 +694,29 @@ class FrontierCoordinator(Node):
                     seen[ny, nx] = True
                     queue.append((ny, nx))
         return seen
+
+    @staticmethod
+    def _nearest_free_cell(cy, cx, free, resolution, max_radius_m=1.0):
+        """Cold-start fallback: the robot's own cell can still read as
+        unknown (not yet observed with confidence, e.g. the lidar's
+        min-range blind spot) even though the robot is physically standing
+        on free ground. Search outward in expanding rings for the nearest
+        cell the map *does* consider free, so WFD has somewhere to seed
+        from instead of deadlocking forever on a fresh map."""
+        h, w = free.shape
+        max_radius_cells = max(1, math.ceil(max_radius_m / resolution))
+        for r in range(0, max_radius_cells + 1):
+            y0, y1 = max(0, cy - r), min(h, cy + r + 1)
+            x0, x1 = max(0, cx - r), min(w, cx + r + 1)
+            window = free[y0:y1, x0:x1]
+            if not window.any():
+                continue
+            ys, xs = np.nonzero(window)
+            ys, xs = ys + y0, xs + x0
+            dists = (ys - cy) ** 2 + (xs - cx) ** 2
+            i = np.argmin(dists)
+            return (int(ys[i]), int(xs[i]))
+        return None
 
     @staticmethod
     def _info_gain(cluster, unknown, resolution):
@@ -685,9 +741,11 @@ class FrontierCoordinator(Node):
         tree_y, tree_x = [], []
         for wx, wy in robot_positions:
             ry, rx = _world_to_cell(wx, wy, info)
-            if 0 <= ry < h and 0 <= rx < w and free[ry, rx]:
-                tree_y.append(float(ry))
-                tree_x.append(float(rx))
+            seed = (ry, rx) if (0 <= ry < h and 0 <= rx < w and free[ry, rx]) else \
+                self._nearest_free_cell(ry, rx, free, res)
+            if seed is not None:
+                tree_y.append(float(seed[0]))
+                tree_x.append(float(seed[1]))
         if not tree_y:
             return set()
 

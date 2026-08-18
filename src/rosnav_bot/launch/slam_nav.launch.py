@@ -217,6 +217,15 @@ def _build_runtime_actions(context, pkg_share: str):
                         # before classification.
                         'Grid/NoiseFilteringRadius': '0.1',
                         'Grid/NoiseFilteringMinNeighbors': '5',
+                        # Carve FREE cells along sensor->ground-hit rays instead of only
+                        # marking cells with a direct point hit — otherwise the area right
+                        # around the robot (rarely hit directly at this lidar's sparse
+                        # vertical resolution) stays UNKNOWN/OCCUPIED.
+                        'Grid/RayTracing': 'true',
+                        # Filter small isolated "obstacle" clusters (ground-plane noise at
+                        # this vertical resolution) instead of letting them poison the map.
+                        'Grid/ClusterRadius': '0.2',
+                        'Grid/MinClusterSize': '20',
                         'Mem/IncrementalMemory': 'true',  # mapping mode (vs. localization)
                     }],
                     remappings=[('odom', '/odom'), ('scan_cloud', '/points')],

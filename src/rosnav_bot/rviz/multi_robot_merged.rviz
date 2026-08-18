@@ -314,20 +314,41 @@ Visualization Manager:
       Color Scheme: costmap
       Draw Behind: true
       Enabled: true
-      Name: Global Costmap
+      Name: Global Costmap Robot1
       Topic:
         Depth: 5
         Durability Policy: Transient Local
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /global_costmap/costmap
+        Value: /robot1/global_costmap/costmap
       Update Topic:
         Depth: 5
         Durability Policy: Transient Local
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /global_costmap/costmap_updates
+        Value: /robot1/global_costmap/costmap_updates
+      Use Timestamp: true
+      Value: true
+    - Alpha: 0.699999988079071
+      Class: rviz_default_plugins/Map
+      Color Scheme: costmap
+      Draw Behind: true
+      Enabled: true
+      Name: Global Costmap Robot2
+      Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /robot2/global_costmap/costmap
+      Update Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /robot2/global_costmap/costmap_updates
       Use Timestamp: true
       Value: true
     - Class: rviz_default_plugins/MarkerArray

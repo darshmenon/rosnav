@@ -124,6 +124,10 @@ ros2 run rosnav_bot mission_server.py patrol robot1 1,2,0 3,4,90
 ros2 run rosnav_bot coverage_planner.py
 ```
 
+![Multi-robot 3D SLAM, point clouds, and collab loop closure](images/multi_robot_collab_loop_closure.png)
+
+<p><sub>slam_mode:=multi lidar_type:=3d slam_algo:=3d — per-robot rtabmap cloud_map + accepted collab_loop_closure correction</sub></p>
+
 ---
 
 ## 3b. Dynamic obstacles
@@ -330,7 +334,7 @@ More → [`concepts.md`](concepts.md).
 | Plugin FATAL | Source the right `$ROS_DISTRO` |
 | No motion | `ros2 topic hz /cmd_vel` · keep `safety:=true` |
 | Map not saved | `explore:=true` · multi-SLAM: `-t /map_merged` |
-| TF / no frontiers | Kill stale `gz` / `ros2` processes |
+| TF / no frontiers | Kill stale `gz` / `ros2` processes · fixed cold-start deadlock in `frontier_coordinator.py` (goal_pullback now relaxes when the known-free region is still tiny) |
 | Invisible robots | `colcon build --symlink-install && source install/setup.bash` |
 | YAML change ignored | Symlink install + relaunch; edit the correct Humble/Jazzy / drive-type file |
 | Dock sees nothing | Set `enable_camera:=true` |

@@ -489,6 +489,20 @@ def _rtabmap_node_for_robot(robot_ns: str) -> Node:
             'Grid/RangeMax': '20.0',
             'Grid/NoiseFilteringRadius': '0.1',
             'Grid/NoiseFilteringMinNeighbors': '5',
+            # RayTracing carves FREE cells along the line from sensor to each
+            # ground hit — without it, cells only get marked from direct
+            # point hits, so the area immediately around/under the robot
+            # (which the sparse 16-channel vertical resolution rarely hits
+            # directly at close range) stays UNKNOWN/OCCUPIED instead of
+            # FREE, walling the robot into a tiny unreachable pocket that
+            # frontier exploration and Nav2's planner can never escape.
+            'Grid/RayTracing': 'true',
+            # Sparse-vertical-resolution ground noise sprinkles small,
+            # isolated "obstacle" clusters onto otherwise-flat floor;
+            # raising the minimum cluster size filters those out as noise
+            # instead of letting them poison the reachable free area.
+            'Grid/ClusterRadius': '0.2',
+            'Grid/MinClusterSize': '20',
             'Mem/IncrementalMemory': 'true',
         }],
         remappings=[
@@ -858,6 +872,7 @@ def _build_all(context, pkg_share: str):
             f'/{ns}/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist',
             f'/{ns}/odom@nav_msgs/msg/Odometry[gz.msgs.Odometry',
             f'/{ns}/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
+            f'/{ns}/joint_states@sensor_msgs/msg/JointState[gz.msgs.Model',
         ]
         bridge_remaps = [(f'/{ns}/scan', f'/{ns}/scan_raw')]
         if lidar_type == '3d':
