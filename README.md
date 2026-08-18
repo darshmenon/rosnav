@@ -334,7 +334,7 @@ More → [`concepts.md`](concepts.md).
 | Plugin FATAL | Source the right `$ROS_DISTRO` |
 | No motion | `ros2 topic hz /cmd_vel` · keep `safety:=true` |
 | Map not saved | `explore:=true` · multi-SLAM: `-t /map_merged` |
-| TF / no frontiers | Kill stale `gz` / `ros2` processes · fixed cold-start deadlock in `frontier_coordinator.py` (goal_pullback now relaxes when the known-free region is still tiny) |
+| TF / no frontiers | Kill stale `gz` / `ros2` processes · cold-start deadlock and 3D-lidar leaked/unreachable frontiers are fixed (goal_pullback relaxes on a tiny known-free region; suspicious oversized clusters behind thin walls are penalized) — see `frontier_coordinator.py` / `frontier_explorer.py` |
 | Invisible robots | `colcon build --symlink-install && source install/setup.bash` |
 | YAML change ignored | Symlink install + relaunch; edit the correct Humble/Jazzy / drive-type file |
 | Dock sees nothing | Set `enable_camera:=true` |

@@ -129,6 +129,14 @@ class FrontierExplorer(Node):
         self.declare_parameter('gain_scale', 1.0)
         self.declare_parameter('hysteresis_radius', 2.0)
         self.declare_parameter('hysteresis_gain', 1.5)
+        self.declare_parameter('suspicious_frontier_ratio', 3.0)
+        self.declare_parameter('suspicious_frontier_penalty', 8.0)
+        self.declare_parameter('suspicious_frontier_buffer', 1.0)
+        self.declare_parameter('suspicious_frontier_hard_ratio', 6.0)
+        self.declare_parameter('failed_frontier_min_radius', 0.75)
+        self.declare_parameter('failed_frontier_max_radius', 3.0)
+        self.declare_parameter('failed_frontier_radius_scale', 0.35)
+        self.declare_parameter('failed_frontier_cooldown', 120.0)
         self.declare_parameter('behavior_tree', 'explore_nav')
         self.declare_parameter('costmap_topic', 'global_costmap/costmap')
         self.declare_parameter('validate_on_costmap', True)
@@ -173,6 +181,20 @@ class FrontierExplorer(Node):
         self._gain_scale = self.get_parameter('gain_scale').value
         self._hyst_r = self.get_parameter('hysteresis_radius').value
         self._hyst_gain = self.get_parameter('hysteresis_gain').value
+        self._suspect_ratio = float(self.get_parameter('suspicious_frontier_ratio').value)
+        self._suspect_penalty = float(
+            self.get_parameter('suspicious_frontier_penalty').value)
+        self._suspect_buffer = float(self.get_parameter('suspicious_frontier_buffer').value)
+        self._suspect_hard_ratio = float(
+            self.get_parameter('suspicious_frontier_hard_ratio').value)
+        self._failed_frontier_min_radius = float(
+            self.get_parameter('failed_frontier_min_radius').value)
+        self._failed_frontier_max_radius = float(
+            self.get_parameter('failed_frontier_max_radius').value)
+        self._failed_frontier_radius_scale = float(
+            self.get_parameter('failed_frontier_radius_scale').value)
+        self._failed_frontier_cooldown = float(
+            self.get_parameter('failed_frontier_cooldown').value)
         self._bt_xml = _resolve_bt(self.get_parameter('behavior_tree').value)
         self._costmap_topic = self.get_parameter('costmap_topic').value.strip()
         self._validate_costmap = self.get_parameter('validate_on_costmap').value
@@ -214,6 +236,7 @@ class FrontierExplorer(Node):
         self._visited: list[tuple[float, float]] = []
         self._fail_counts: list[list] = []  # [x, y, count]
         self._current_goal: tuple[float, float] | None = None
+        self._current_frontier_meta: dict | None = None
         self._current_goal_handle = None
         self._ignore_next_result = False
         self._goal_sent_time: float = 0.0
@@ -224,6 +247,7 @@ class FrontierExplorer(Node):
         self._last_map_update = 0.0
         self._last_goal_done = 0.0
         self._visited_relax_streak = 0
+        self._failed_frontiers: list[dict] = []
         self._last_free_cells = None
         self._last_growth_log = 0.0
         self._logged_costmap = False
@@ -250,6 +274,9 @@ class FrontierExplorer(Node):
             f'Ready | detector={self._detector} scorer={self._scorer} '
             f'bt={bt_note} costmap={cm_note} '
             f'potential={self._potential_scale} gain={self._gain_scale} '
+            f'suspect_ratio={self._suspect_ratio:.2f} '
+            f'suspect_penalty={self._suspect_penalty:.2f} '
+            f'suspect_hard={self._suspect_hard_ratio:.2f} '
             f'costmap_max={self._costmap_max_cost} pullback={self._goal_pullback:.2f}m '
             f'clearance={self._frontier_clearance:.2f}m '
             f'min_size={self._min_size} revisit_r={self._revisit_r:.2f}m{rrt_note}')
@@ -296,9 +323,10 @@ class FrontierExplorer(Node):
                     self._current_goal_handle.cancel_goal_async()
                     self._ignore_next_result = True
                 if self._current_goal is not None:
-                    self._register_failure(*self._current_goal)
+                    self._register_failure(*self._current_goal, self._current_frontier_meta)
                 self._navigating = False
                 self._current_goal_handle = None
+                self._current_frontier_meta = None
             return
 
         if self._map is None:
@@ -342,6 +370,8 @@ class FrontierExplorer(Node):
             reason = (
                 f'candidates={pick["n_total"]} visited={pick["n_visited"]} '
                 f'costmap_block={pick["n_costmap"]} too_near={pick["n_near"]} '
+                f'failed={pick.get("n_failed", 0)} '
+                f'suspicious={pick.get("n_suspicious", 0)} '
                 f'unreachable={pick.get("n_unreachable", 0)} scorer={self._scorer}')
             if not self._confirm_empty(reason):
                 return
@@ -366,11 +396,15 @@ class FrontierExplorer(Node):
             f'| scorer={self._scorer} score={pick["score"]:.2f} '
             f'dist={pick["distance"]:.2f}m size={pick["size_m"]:.2f}m '
             f'info={pick["info_gain"]:.2f}m² clear={pick["clearance"]:.2f}m '
+            f'suspect={pick.get("suspicious_ratio", 0.0):.2f} '
             f'cost={self._costmap_value(*goal)} '
             f'| pool={pick["n_ok"]}/{pick["n_total"]} '
             f'(skip visited={pick["n_visited"]} costmap={pick["n_costmap"]} '
-            f'near={pick["n_near"]} unreachable={pick.get("n_unreachable", 0)})')
+            f'near={pick["n_near"]} failed={pick.get("n_failed", 0)} '
+            f'suspicious={pick.get("n_suspicious", 0)} '
+            f'unreachable={pick.get("n_unreachable", 0)})')
         self._current_goal = goal
+        self._current_frontier_meta = pick
         self._send_goal(*goal)
 
     def _confirm_empty(self, reason: str) -> bool:
@@ -511,10 +545,12 @@ class FrontierExplorer(Node):
             cy, cx = goal_cell
             centroids.append({
                 'point': (ox + (cx + 0.5) * res, oy + (cy + 0.5) * res),
+                'goal_cell': (int(cy), int(cx)),
                 'size': len(cluster),
                 'size_m': len(cluster) * res,
                 'info_gain': self._info_gain(cluster, unknown, res),
                 'clearance': clearance,
+                'suspicious_ratio': self._suspicious_frontier_ratio(len(cluster) * res, clearance),
             })
         return centroids
 
@@ -752,19 +788,29 @@ class FrontierExplorer(Node):
     def _best_frontier(self, frontiers, pos):
         empty = {
             'n_total': len(frontiers), 'n_ok': 0, 'n_visited': 0,
-            'n_costmap': 0, 'n_near': 0, 'n_unreachable': 0, 'score': float('-inf'),
+            'n_costmap': 0, 'n_near': 0, 'n_unreachable': 0,
+            'n_failed': 0, 'n_suspicious': 0, 'score': float('-inf'),
             'distance': 0.0, 'size_m': 0.0, 'info_gain': 0.0, 'clearance': 0.0,
         }
         if pos is None:
             return None, empty
-        rx, ry = pos
-        n_visited = n_costmap = n_near = n_ok = n_unreachable = 0
+        n_visited = n_costmap = n_near = n_ok = n_unreachable = n_failed = n_suspicious = 0
         far_candidates = []
         near_candidates = []
         visited_candidates = []  # (frontier, fx, fy) — already-visited but otherwise untried
+        path_distances = self._path_distance_map(pos)
         for frontier in frontiers:
             fx, fy = frontier['point']
-            d = math.hypot(fx - rx, fy - ry)
+            if self._recently_failed(fx, fy):
+                n_failed += 1
+                continue
+            if frontier.get('suspicious_ratio', 0.0) >= self._suspect_hard_ratio:
+                n_suspicious += 1
+                continue
+            d = self._frontier_path_distance(frontier, path_distances)
+            if not math.isfinite(d):
+                n_unreachable += 1
+                continue
             if d <= self._min_viable_dist:
                 # Inside Nav2's own goal tolerance — sending this goal is a
                 # guaranteed no-op (instant "reached" without moving), which
@@ -807,11 +853,14 @@ class FrontierExplorer(Node):
                     'n_costmap': n_costmap,
                     'n_near': n_near,
                     'n_unreachable': n_unreachable,
+                    'n_failed': n_failed,
+                    'n_suspicious': n_suspicious,
                     'score': score,
                     'distance': d,
                     'size_m': frontier['size_m'],
                     'info_gain': frontier['info_gain'],
                     'clearance': frontier.get('clearance', 0.0),
+                    'suspicious_ratio': frontier.get('suspicious_ratio', 0.0),
                 }
 
         if best is None and visited_candidates:
@@ -838,7 +887,8 @@ class FrontierExplorer(Node):
                     f'of spinning in place forever.')
                 return None, {**empty, 'n_ok': n_ok, 'n_visited': n_visited,
                               'n_costmap': n_costmap, 'n_near': n_near,
-                              'n_unreachable': n_unreachable}
+                              'n_unreachable': n_unreachable,
+                              'n_failed': n_failed, 'n_suspicious': n_suspicious}
 
             def _dist_to_nearest_visited(fx, fy):
                 if not self._visited:
@@ -847,6 +897,7 @@ class FrontierExplorer(Node):
 
             frontier, fx, fy = max(
                 visited_candidates, key=lambda t: _dist_to_nearest_visited(t[1], t[2]))
+            rx, ry = pos
             d = math.hypot(fx - rx, fy - ry)
             now = time.monotonic()
             if now - getattr(self, '_last_visited_relax_warn', 0.0) >= 10.0:
@@ -860,15 +911,18 @@ class FrontierExplorer(Node):
             return (fx, fy), {
                 'n_total': len(frontiers), 'n_ok': n_ok, 'n_visited': n_visited,
                 'n_costmap': n_costmap, 'n_near': n_near, 'n_unreachable': n_unreachable,
+                'n_failed': n_failed, 'n_suspicious': n_suspicious,
                 'score': self._score_frontier(frontier, d), 'distance': d,
                 'size_m': frontier['size_m'], 'info_gain': frontier['info_gain'],
                 'clearance': frontier.get('clearance', 0.0),
+                'suspicious_ratio': frontier.get('suspicious_ratio', 0.0),
             }
 
         if best is None:
             return None, {**empty, 'n_ok': n_ok, 'n_visited': n_visited,
                           'n_costmap': n_costmap, 'n_near': n_near,
-                          'n_unreachable': n_unreachable}
+                          'n_unreachable': n_unreachable,
+                          'n_failed': n_failed, 'n_suspicious': n_suspicious}
 
         self._visited_relax_streak = 0
         if relaxed:
@@ -883,6 +937,12 @@ class FrontierExplorer(Node):
         return best, best_meta
 
     def _score_frontier(self, frontier, distance):
+        suspicious_ratio = self._suspicious_frontier_ratio(
+            frontier['size_m'], frontier.get('clearance', 0.0))
+        suspicious_penalty = 0.0
+        if self._scorer != 'nearest' and suspicious_ratio > self._suspect_ratio:
+            suspicious_penalty = (
+                suspicious_ratio - self._suspect_ratio) * self._suspect_penalty
         if self._scorer == 'utility':
             # minimize potential*dist - gain*size  →  maximize this
             score = (
@@ -897,7 +957,52 @@ class FrontierExplorer(Node):
             cx, cy = self._current_goal
             if math.hypot(fx - cx, fy - cy) <= self._hyst_r:
                 score += self._hyst_gain
-        return score
+        return score - suspicious_penalty
+
+    def _suspicious_frontier_ratio(self, size_m: float, clearance: float) -> float:
+        """Large clusters with very small safe pullback are often wall-leak artifacts.
+
+        Use the reachable free-space depth from the chosen goal cell as a proxy for
+        how much of the cluster is likely real. Genuine frontiers can be large, but
+        they usually also admit goals with meaningful clearance into the explored
+        region; seam leaks tend to produce huge clusters while every reachable goal
+        stays pinned close to the same thin wall opening.
+        """
+        depth = max(clearance + self._suspect_buffer, 1e-3)
+        return size_m / depth
+
+    def _path_distance_map(self, robot_pos):
+        msg = self._map
+        data = np.array(msg.data, dtype=np.int16).reshape((msg.info.height, msg.info.width))
+        free = data == 0
+        h, w = free.shape
+        dist = np.full((h, w), np.inf, dtype=np.float32)
+        seed = _world_to_cell(robot_pos[0], robot_pos[1], msg.info)
+        resolved = (seed if (0 <= seed[0] < h and 0 <= seed[1] < w and free[seed])
+                    else self._nearest_free_cell(seed[0], seed[1], free, msg.info.resolution))
+        if resolved is None:
+            return dist
+        sy, sx = resolved
+        queue = deque([(sy, sx)])
+        dist[sy, sx] = 0.0
+        while queue:
+            y, x = queue.popleft()
+            base = dist[y, x] + msg.info.resolution
+            for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+                if 0 <= ny < h and 0 <= nx < w and free[ny, nx] and not math.isfinite(dist[ny, nx]):
+                    dist[ny, nx] = base
+                    queue.append((ny, nx))
+        return dist
+
+    @staticmethod
+    def _frontier_path_distance(frontier, path_distances):
+        cell = frontier.get('goal_cell')
+        if cell is None:
+            return float('inf')
+        y, x = cell
+        if y < 0 or x < 0 or y >= path_distances.shape[0] or x >= path_distances.shape[1]:
+            return float('inf')
+        return float(path_distances[y, x])
 
     def _costmap_allows(self, x, y, costmap: OccupancyGrid | None = None,
                         max_cost: int | None = None) -> bool:
@@ -992,6 +1097,9 @@ class FrontierExplorer(Node):
             gx, gy = self._current_goal or (0.0, 0.0)
             self.get_logger().warn(
                 f'Nav2 rejected goal ({gx:.2f}, {gy:.2f}) — trying next frontier.')
+            if self._current_goal is not None:
+                self._register_failure(*self._current_goal, self._current_frontier_meta)
+            self._current_frontier_meta = None
             self._navigating = False
             return
         gx, gy = self._current_goal or (0.0, 0.0)
@@ -1015,7 +1123,7 @@ class FrontierExplorer(Node):
                     f'Spurious success at ({gx:.2f}, {gy:.2f}) in {elapsed:.2f}s '
                     f'— not counting as visited.')
                 if self._current_goal is not None:
-                    self._register_failure(*self._current_goal)
+                    self._register_failure(*self._current_goal, self._current_frontier_meta)
             else:
                 self.get_logger().info(
                     f'Reached ({gx:.2f}, {gy:.2f}) in {elapsed:.1f}s '
@@ -1027,11 +1135,12 @@ class FrontierExplorer(Node):
                 f'Nav failed ({gx:.2f}, {gy:.2f}) status={status} '
                 f'after {elapsed:.1f}s.')
             if self._current_goal is not None:
-                self._register_failure(*self._current_goal)
+                self._register_failure(*self._current_goal, self._current_frontier_meta)
+        self._current_frontier_meta = None
         self._last_goal_done = time.monotonic()
         self._navigating = False
 
-    def _register_failure(self, fx, fy):
+    def _register_failure(self, fx, fy, frontier_meta=None):
         """Track repeated failures at (roughly) the same frontier and
         blacklist it once it exceeds max_frontier_retries, so exploration
         doesn't retry an unreachable point forever."""
@@ -1039,6 +1148,7 @@ class FrontierExplorer(Node):
             if math.hypot(fx - entry[0], fy - entry[1]) < self._revisit_r:
                 entry[2] += 1
                 if entry[2] >= self._max_retries:
+                    self._remember_failed_frontier((fx, fy), frontier_meta)
                     self.get_logger().warn(
                         f'Blacklist ({fx:.2f}, {fy:.2f}) after {entry[2]} fails '
                         f'(max_retries={self._max_retries}).')
@@ -1051,6 +1161,38 @@ class FrontierExplorer(Node):
         self._fail_counts.append([fx, fy, 1])
         self.get_logger().warn(
             f'Fail count ({fx:.2f}, {fy:.2f}) = 1/{self._max_retries}')
+
+    def _remember_failed_frontier(self, goal, frontier_meta=None):
+        now = time.monotonic()
+        gx, gy = goal
+        self._failed_frontiers = [
+            f for f in self._failed_frontiers
+            if now - f['time'] <= self._failed_frontier_cooldown
+        ]
+        size_m = 0.0 if frontier_meta is None else float(frontier_meta.get('size_m', 0.0))
+        suspicious = 1.0 if frontier_meta is None else max(
+            1.0, float(frontier_meta.get('suspicious_ratio', 1.0)) / max(self._suspect_ratio, 1e-3))
+        radius = size_m * self._failed_frontier_radius_scale * min(suspicious, 2.0)
+        radius = max(self._failed_frontier_min_radius,
+                     min(self._failed_frontier_max_radius, radius))
+        self._failed_frontiers.append({'point': goal, 'time': now, 'radius': radius})
+        self.get_logger().warn(
+            f'Suppressing failed frontier near ({gx:.2f}, {gy:.2f}) '
+            f'for {self._failed_frontier_cooldown:.0f}s radius={radius:.2f}m')
+
+    def _recently_failed(self, fx, fy):
+        now = time.monotonic()
+        kept = []
+        blocked = False
+        for item in self._failed_frontiers:
+            if now - item['time'] > self._failed_frontier_cooldown:
+                continue
+            kept.append(item)
+            gx, gy = item['point']
+            if math.hypot(fx - gx, fy - gy) <= item['radius']:
+                blocked = True
+        self._failed_frontiers = kept
+        return blocked
 
 
 def main(args=None):
