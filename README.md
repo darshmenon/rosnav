@@ -299,6 +299,13 @@ ros2 launch rosnav_bot multi_robot.launch.py world:=house
 
 Feasibility spike: capture a photo set + exact Gazebo-ground-truth poses for [3D Gaussian Splatting](https://docs.nerf.studio/nerfology/methods/splat.html) — no robot, no COLMAP.
 
+![Gaussian Splat reconstruction fly-through](images/gaussian-splat-world-recon.gif)
+
+<p align="center">
+  <img src="images/gs_splat_cafe_final.jpg" alt="Fully trained Gaussian Splat, rendered from a training view" width="720"/>
+  <br/><sub>cafe.world, fully trained splat — 384 captured frames, 30k splatfacto iterations</sub>
+</p>
+
 ### A — Capture
 
 ```bash

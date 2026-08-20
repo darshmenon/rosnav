@@ -52,6 +52,10 @@ Right now 3D lidar mode is mentioned for RTAB-Map SLAM, but confirm the local co
 Store YOLO detections with world-frame coordinates in a lightweight DB (sqlite) so `llm_nav.py` can answer "where did you last see the pallet jack?" — extends the existing LLM voice nav from navigation-only to query-answering.
 → small `semantic_memory.py` node, SQLite table `(class, x, y, timestamp, confidence)`.
 
+### Gaussian Splat as a Nav2 obstacle source
+`gs_capture.py`/`gs_splat_to_pointcloud.py` (see concepts.md §27) already turn a trained splat into an `(xyz, rgb, opacity)` point cloud — not yet fed into planning. Real research (Splat-Nav, Splatblox) fuses splat-derived ESDFs with Nav2; the practical shortcut here is simpler: publish the opacity-filtered Gaussian centers as a `PointCloud2` observation source straight into `obstacle_layer`/`voxel_layer`, no ESDF fusion needed.
+→ new launch arg/node wiring `gs_view_pointcloud.py`'s topic into `nav2_params.yaml`'s costmap `observation_sources`.
+
 ---
 
 ## 4. Multi-Robot / Fleet
