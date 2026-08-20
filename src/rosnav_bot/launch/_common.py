@@ -424,3 +424,128 @@ def explorer_nodes(backend, pkg_share, *, map_topic='/map', namespaces=None,
     return nodes
 
 
+def cslam_lidar_nodes(pkg_share, *, robot_id=0, max_nb_robots=1, namespace=''):
+    """Swarm-SLAM (C-SLAM) lidar frontend + pose-graph backend."""
+    cfg = os.path.join(pkg_share, 'config', 'cslam_lidar.yaml')
+    extra = {
+        'robot_id': int(robot_id),
+        'max_nb_robots': int(max_nb_robots),
+        'use_sim_time': True,
+    }
+    return [
+        Node(
+            package='cslam',
+            executable='loop_closure_detection_node.py',
+            name='cslam_loop_closure_detection',
+            namespace=namespace,
+            output='screen',
+            parameters=[cfg, extra]),
+        Node(
+            package='cslam',
+            executable='lidar_handler_node.py',
+            name='cslam_map_manager',
+            namespace=namespace,
+            output='screen',
+            parameters=[cfg, extra]),
+        Node(
+            package='cslam',
+            executable='pose_graph_manager',
+            name='cslam_pose_graph_manager',
+            namespace=namespace,
+            output='screen',
+            parameters=[cfg, extra]),
+    ]
+
+
+def multi_robot_rgbd_bridge_args(namespace: str):
+    """Return (bridge_arguments, remappings) for one namespaced RGB-D camera."""
+    ns = namespace.strip('/')
+    arguments = [
+        f'/{ns}/camera/image@sensor_msgs/msg/Image[gz.msgs.Image',
+        f'/{ns}/camera/depth_image@sensor_msgs/msg/Image[gz.msgs.Image',
+        f'/{ns}/camera/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo',
+    ]
+    remappings = [
+        (f'/{ns}/camera/image', f'/{ns}/camera/image_raw'),
+        (f'/{ns}/camera/depth_image', f'/{ns}/camera/depth/image_raw'),
+    ]
+    return arguments, remappings
+
+
+def rtabmap_vslam_node(*, namespace='', localization=False, database_path='',
+                       wait_for_transform=0.2, octomap=False):
+    """RTAB-Map RGB-D visual SLAM / localization (slam_algo:=vslam).
+
+    Uses wheel odom TF (no visual odometry node) so Gazebo DiffDrive remains
+    the sole odom→base_link publisher — same pattern as slam_algo:=3d.
+    Occupancy grid comes from the depth camera (Grid/Sensor=1).
+    """
+    ns = namespace.strip('/') if namespace else ''
+    prefix = f'/{ns}' if ns else ''
+    frame_prefix = f'{ns}/' if ns else ''
+    database_path = os.path.expanduser(database_path) if database_path else ''
+
+    if localization and not database_path:
+        raise ValueError('rtabmap_vslam localization requires database_path')
+
+    params = {
+        'use_sim_time': True,
+        'frame_id': f'{frame_prefix}base_link',
+        'odom_frame_id': f'{frame_prefix}odom',
+        'map_frame_id': f'{frame_prefix}map',
+        'subscribe_depth': True,
+        'subscribe_rgb': True,
+        'subscribe_scan_cloud': False,
+        'approx_sync': True,
+        'wait_for_transform': float(wait_for_transform),
+        # Without a time budget, RTAB-Map's per-cycle cost grows unbounded as
+        # working memory grows (observed: 0.04s -> 2.2s over ~45 nodes),
+        # falling behind real time and smearing the map->odom correction.
+        'Rtabmap/TimeThr': '700',
+        'Reg/Strategy': '0',       # visual (RGB-D) registration
+        'Grid/Sensor': '1',        # occupancy from depth camera
+        'Grid/3D': 'true' if octomap else 'false',
+        'Grid/CellSize': '0.05',
+        'Grid/RangeMax': '8.0',
+        'Grid/RayTracing': 'true',
+        'Mem/IncrementalMemory': 'false' if localization else 'true',
+        'Mem/InitWMWithAllNodes': 'true' if localization else 'false',
+    }
+    if database_path:
+        params['database_path'] = database_path
+
+    remappings = [
+        ('odom', f'{prefix}/odom' if ns else '/odom'),
+        ('rgb/image', f'{prefix}/camera/image_raw' if ns else '/camera/image_raw'),
+        ('rgb/camera_info',
+         f'{prefix}/camera/camera_info' if ns else '/camera/camera_info'),
+        ('depth/image',
+         f'{prefix}/camera/depth/image_raw' if ns else '/camera/depth/image_raw'),
+    ]
+    if ns:
+        remappings.extend([
+            ('tf', '/tf'),
+            ('tf_static', '/tf_static'),
+            ('map', f'/{ns}/map'),
+            ('/map', f'/{ns}/map'),
+        ])
+
+    # Fresh DB each mapping run when no persist path; otherwise open/create
+    # database_path. Localization never uses -d (would wipe the map).
+    if localization or database_path:
+        arguments = []
+    else:
+        arguments = ['-d']
+
+    kwargs = {
+        'package': 'rtabmap_slam',
+        'executable': 'rtabmap',
+        'name': 'rtabmap',
+        'output': 'screen',
+        'parameters': [params],
+        'remappings': remappings,
+        'arguments': arguments,
+    }
+    if ns:
+        kwargs['namespace'] = ns
+    return Node(**kwargs)
