@@ -32,21 +32,23 @@ def models_resource_path(pkg_share: str = None) -> str:
 
 
 def with_gz_model_path(action, pkg_share: str = None):
-    """Ensure GZ_SIM_RESOURCE_PATH includes vendored models/ (offline Depot)
-    and share/ (URDF meshes). sdformat rewrites a URDF's package://rosnav_bot/...
-    mesh URIs to model://rosnav_bot/... during URDF->SDF conversion, which gz
-    sim can only resolve against a resource path one level above pkg_share
-    (i.e. .../share, so model://rosnav_bot/meshes/... -> .../share/rosnav_bot/
-    meshes/...). Without it gz sim silently drops the mesh (logs an error,
-    robot still spawns) — confirmed this was already happening for the
-    mir100 chassis skin before this fix; RViz was unaffected since it
-    resolves package:// directly via resource_retriever, not this path."""
+    """Ensure GZ_SIM_RESOURCE_PATH includes vendored models/ (offline Depot),
+    models/fuel/ (textured SLAM worlds), and share/ (URDF meshes). sdformat
+    rewrites a URDF's package://rosnav_bot/... mesh URIs to model://rosnav_bot/...
+    during URDF->SDF conversion, which gz sim can only resolve against a
+    resource path one level above pkg_share (i.e. .../share, so
+    model://rosnav_bot/meshes/... -> .../share/rosnav_bot/meshes/...). Without
+    it gz sim silently drops the mesh (logs an error, robot still spawns) —
+    confirmed this was already happening for the mir100 chassis skin before
+    this fix; RViz was unaffected since it resolves package:// directly via
+    resource_retriever, not this path."""
     pkg_share = pkg_share or get_package_share_directory('rosnav_bot')
     models_dir = models_resource_path(pkg_share)
+    fuel_dir = os.path.join(models_dir, 'fuel')
     share_dir = os.path.dirname(pkg_share)
     existing = os.environ.get('GZ_SIM_RESOURCE_PATH', '')
     parts = [p for p in existing.split(':') if p]
-    for p in (share_dir, models_dir):
+    for p in (share_dir, models_dir, fuel_dir):
         if p not in parts:
             parts.insert(0, p)
     return GroupAction([
@@ -140,7 +142,8 @@ def gazebo_client_action(pkg_share: str = None):
 
 
 def rsp_include(pkg_share: str, urdf_path, frame_prefix='', namespace='', lidar_type='2d',
-                 lidar3d_height='0.25', lidar3d_vfov_deg='10', enable_camera='false'):
+                 lidar3d_height='0.25', lidar3d_vfov_deg='10', enable_camera='false',
+                 enable_rgbd='false'):
     return IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(pkg_share, 'launch', 'rsp.launch.py')),
         launch_arguments={
@@ -152,148 +155,8 @@ def rsp_include(pkg_share: str, urdf_path, frame_prefix='', namespace='', lidar_
             'lidar3d_height': lidar3d_height,
             'lidar3d_vfov_deg': lidar3d_vfov_deg,
             'enable_camera': enable_camera,
+            'enable_rgbd': enable_rgbd,
         }.items(),
     )
 
 
-def laser_filter_node(pkg_share: str, namespace: str = ''):
-    return Node(
-        package='laser_filters',
-        executable='scan_to_scan_filter_chain',
-        namespace=namespace or None,
-        parameters=[os.path.join(pkg_share, 'config', 'laser_filters.yaml')],
-        remappings=[('scan', 'scan_raw'), ('scan_filtered', 'scan')],
-        output='screen',
-    )
-
-
-def spawn_robot_node(gazebo_world_name: str, topic, name, x, y, z, yaw):
-    return Node(
-        package='ros_gz_sim',
-        executable='create',
-        arguments=[
-            '-world', gazebo_world_name,
-            '-topic', topic,
-            '-name', name,
-            '-x', x, '-y', y, '-z', z, '-Y', yaw,
-        ],
-        output='screen',
-    )
-
-
-def spawn_dynamic_obstacle_node(pkg_share: str, gazebo_world_name: str, name, x, y, z, yaw):
-    """Spawn a models/dynamic_obstacle instance from its SDF file directly
-    (no robot_description topic to spawn from, unlike spawn_robot_node)."""
-    model_path = os.path.join(pkg_share, 'models', 'dynamic_obstacle', 'model.sdf')
-    return Node(
-        package='ros_gz_sim',
-        executable='create',
-        name=f'spawn_{name}',
-        arguments=[
-            '-world', gazebo_world_name,
-            '-file', model_path,
-            '-name', name,
-            '-x', str(x), '-y', str(y), '-z', str(z), '-Y', str(yaw),
-        ],
-        output='screen',
-    )
-
-
-def dynamic_obstacle_bridge_node(name: str):
-    """ROS -> Gazebo Twist bridge feeding the model's VelocityControl plugin."""
-    return Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
-        name=f'{name}_cmd_vel_bridge',
-        arguments=[f'/model/{name}/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist'],
-        output='screen',
-    )
-
-
-def dynamic_obstacle_driver_node(name: str, axis: str, amplitude, speed):
-    return Node(
-        package='rosnav_bot',
-        executable='dynamic_obstacle_driver.py',
-        name=f'{name}_driver',
-        output='screen',
-        parameters=[{
-            'obstacle_name': name,
-            'axis': axis,
-            'amplitude': float(amplitude),
-            'speed': float(speed),
-        }],
-        remappings=[('cmd_vel', f'/model/{name}/cmd_vel')],
-    )
-
-
-# ──────────────────────────────────────────────────────────────────────────
-# Multi-robot nav2 param namespacing
-# ──────────────────────────────────────────────────────────────────────────
-# nav2_multirobot_params.yaml (diff-drive) is a hand-tuned file that already
-# has ROBOT_NS placeholders baked into its text. For drive types that don't
-# have such a hand-tuned fleet template (mecanum, ackermann), the same
-# namespacing is instead applied programmatically to the single-robot
-# nav2_params_*.yaml file selected by nav2_params_filename() above — one
-# source of truth per drive type, for both single- and multi-robot launches.
-#
-# Rule: TF frame-name values get an "<ns>/" prefix (the shared "map" frame is
-# left alone, since ROS namespacing can't rewrite parameter string values —
-# only topics/services/actions). Absolute topics (leading "/") referring to
-# per-robot data get "/<ns>" inserted; relative topics already auto-namespace
-# via the node's own ROS namespace and are left untouched.
-_FRAME_KEYS = (
-    ('amcl', 'base_frame_id'),
-    ('amcl', 'odom_frame_id'),
-    ('bt_navigator', 'robot_base_frame'),
-    ('behavior_server', 'local_frame'),
-    ('behavior_server', 'robot_base_frame'),
-    ('collision_monitor', 'base_frame_id'),
-    ('collision_monitor', 'odom_frame_id'),
-)
-_ABS_TOPIC_KEYS = (
-    ('bt_navigator', 'odom_topic'),
-)
-# map_server/docking_server/loopback_simulator aren't part of the per-robot
-# fleet bringup (map_server runs once, globally; loopback_simulator isn't
-# used at all). docking_server IS wired for drive_type:=diff (see
-# multi_robot.launch.py's docking_actions, and nav2_multirobot_params.yaml's
-# docking_server: section) — but only the diff-drive template carries tuned
-# dock config, so it's still stripped here for the mecanum/ackermann
-# programmatic-namespacing path, which has no docking_server section at all.
-_UNUSED_MULTIROBOT_NODES = ('map_server', 'docking_server', 'loopback_simulator')
-# Per-robot initial pose is set dynamically (see multi_robot.launch.py); the
-# single-robot file's static default would only be correct for one robot.
-_STRIP_AMCL_KEYS = ('set_initial_pose', 'initial_pose_x', 'initial_pose_y', 'initial_pose_z', 'initial_pose_yaw')
-
-
-def namespace_nav2_params(params: dict, ns: str) -> dict:
-    """Rewrite a single-robot nav2 params dict in place for use inside a
-    namespaced multi-robot fleet. Mutates and returns `params`."""
-    for node, key in _FRAME_KEYS:
-        section = params.get(node, {}).get('ros__parameters', {})
-        if key in section and section[key] != 'map':
-            section[key] = f"{ns}/{section[key]}"
-
-    for node, key in _ABS_TOPIC_KEYS:
-        section = params.get(node, {}).get('ros__parameters', {})
-        if key in section and str(section[key]).startswith('/'):
-            section[key] = f"/{ns}{section[key]}"
-
-    for costmap in ('global_costmap', 'local_costmap'):
-        section = params.get(costmap, {}).get(costmap, {}).get('ros__parameters', {})
-        if 'robot_base_frame' in section:
-            section['robot_base_frame'] = f"{ns}/{section['robot_base_frame']}"
-        if costmap == 'local_costmap' and section.get('global_frame') not in (None, 'map'):
-            section['global_frame'] = f"{ns}/{section['global_frame']}"
-        scan = section.get('obstacle_layer', {}).get('scan', {})
-        if str(scan.get('topic', '')).startswith('/'):
-            scan['topic'] = f"/{ns}{scan['topic']}"
-
-    amcl = params.get('amcl', {}).get('ros__parameters', {})
-    for key in _STRIP_AMCL_KEYS:
-        amcl.pop(key, None)
-
-    for node in _UNUSED_MULTIROBOT_NODES:
-        params.pop(node, None)
-
-    return params
