@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<!--
+  gs_capture_rig — free-floating camera-only model for Gaussian Splatting
+  capture (see scripts/gs_capture.py). No visual/collision geometry (must
+  never occlude itself or the scene) and static so it can be teleported via
+  the /world/<world>/set_pose service between shots without physics fighting
+  the placement. The rig's link origin IS the camera optical frame (Z
+  forward, X right, Y down) — gs_capture.py computes poses directly in that
+  convention and skips the extra camera_link/camera_optical_frame joint
+  chain the robot URDF uses, since there's no chassis here to offset from.
+-->
+<sdf version="1.8">
+  <model name="gs_capture_rig">
+    <static>true</static>
+    <link name="link">
+      <sensor name="camera" type="camera">
+        <always_on>true</always_on>
+        <update_rate>10</update_rate>
+        <topic>gs_capture/image_raw</topic>
+        <camera>
+          <horizontal_fov>1.5708</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.05</near>
+            <far>20.0</far>
+          </clip>
+        </camera>
+      </sensor>
+    </link>
+  </model>
+</sdf>

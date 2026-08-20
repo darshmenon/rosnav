@@ -823,6 +823,7 @@ Gazebo after the fix.
 | `multi_robot.launch.py` | Scalable N-robot fleet: SLAM+frontier or shared map + Nav2 per robot | `world`, `map`, `explore`, `slam_mode`, `collab_loop_closure`, `robot_count`, `robot_layout`, `robots_json`, `drive_type` (`diff`\|`mecanum`\|`ackermann`), `controller` (`dwb`\|`mppi`), `fleet_mgmt`, `rviz`, `headless` |
 | `nav2.launch.py` | Nav2 only (attach to running Gazebo) | `map`, `world`, `use_sim_time` |
 | `rmf_fleet.launch.py` | Open-RMF traffic scheduling on top of an already-running static-map fleet (see §11b) | `robot_count`, `robots`, `fleet_name`, `map_name`, `adapter_delay` |
+| `gs_capture.launch.py` | Gazebo (headless) + the teleportable `gs_capture_rig` camera, no robot/nav stack (see §27) | `world_name` |
 | `_common.py` | Not a launch file — shared helper module (world resolution, Gazebo/RSP/laser-filter builders, nav2 params selection + multi-robot namespacing) imported by `slam_nav.launch.py` and `multi_robot.launch.py` | — |
 
 ## Quick Reference — Scripts
@@ -839,6 +840,9 @@ Gazebo after the fix.
 | `rmf_submit_task.py` | Submits a patrol task to `rmf_task_dispatcher` to exercise traffic scheduling | `category`, `places`, `--rounds`, `--wait` |
 | `obstacle_tracker.py` | Detects + tracks moving obstacles from `/scan`, with ellipse extent estimation (see §25) | `min_speed`, `cluster_radius`, `track_gate_dist`, `min_extent`, `extent_gain` |
 | `dynamic_obstacle_driver.py` | Patrols a spawned `dynamic_obstacle` model back and forth (see §26) | `obstacle_name`, `axis`, `amplitude`, `speed` |
+| `gs_capture.py` | Sweeps the `gs_capture_rig` camera through a waypoint grid, saves nerfstudio-format capture data (see §27) | `world_name`, `out_dir`, `centers_x/y`, `heights`, `yaw_steps`, `pitch_deg` |
+| `gs_splat_to_pointcloud.py` | Not a ROS node — converts a `ns-export gaussian-splat` `.ply` to `(xyz, rgb, opacity)` `.npz` (see §27) | `argv`: ply path, out path, opacity thresh |
+| `gs_view_pointcloud.py` | Publishes a converted splat `.npz` as a latched `PointCloud2` for viewing in RViz (see §27) | `npz_path`, `topic`, `frame_id` |
 
 ---
 
@@ -1261,3 +1265,40 @@ ros2 launch rosnav_bot multi_robot.launch.py dynamic_obstacles:=2 \
 ros2 run rosnav_bot obstacle_tracker.py
 ros2 topic echo /obstacle_tracker/state
 ```
+
+## 27. Gaussian Splatting Capture Rig (`gs_capture.py`)
+
+Feasibility-spike tool for turning any world into a [3D Gaussian Splatting](https://docs.nerf.studio/nerfology/methods/splat.html) training set — no robot, no COLMAP structure-from-motion needed, since poses come straight from Gazebo ground truth.
+
+**How it works:**
+1. `models/gs_capture_rig/model.sdf` — a static, geometry-free camera-only model (no visual/collision mesh, so it can't occlude the scene or itself), spawned standalone via `gs_capture.launch.py` (Gazebo server headless + rig spawn + a dedicated `gs_capture_bridge.yaml` bridge — separate from the main nav/robot bridge since a capture run has no robot, lidar, or `cmd_vel`).
+2. `scripts/gs_capture.py` sweeps a grid of `(x, y, z, yaw, pitch)` waypoints (positions × heights × pitches × a full yaw sweep at each), teleporting the rig via the `/world/<world>/set_pose` Gazebo service — physics doesn't fight the placement since the model is `static`.
+3. After each teleport it waits `SETTLE_TIME_S` (0.35s) for the renderer to catch up, then waits for a *fresh* frame (timestamped after the teleport, not a stale one already in flight) before saving. Near-uniform (low-stddev) frames get dropped — usually means the rig teleported inside geometry.
+4. Saves `<out_dir>/images/frame_%05d.png` + `<out_dir>/transforms.json` in nerfstudio-data format (`OPENCV` camera model, per-frame 4×4 pose matrices), ready for `ns-train splatfacto --data <out_dir>` in a nerfstudio venv.
+
+**Gotcha:** Gazebo's camera-sensor local frame is X-forward/Y-left/Z-up (confirmed empirically — identity orientation renders looking down +X, not +Z, i.e. NOT the usual Z-forward optical convention). `gs_capture.py` computes rig orientation directly in that body frame, then remaps to nerfstudio's OpenGL/NeRF convention (X-right, Y-up, Z-back) only when writing `transforms.json`.
+
+```bash
+# Bring up Gazebo + the rig (headless, no robot/nav stack)
+ros2 launch rosnav_bot gs_capture.launch.py world_name:=cafe
+
+# Run the capture sweep (default grid tuned to cafe.world's furniture layout)
+ros2 run rosnav_bot gs_capture.py --ros-args \
+    -p world_name:=cafe -p out_dir:=/home/asimov/gs_data/cafe
+
+# Train (separate nerfstudio venv, e.g. ~/venvs/nerfstudio)
+source ~/venvs/nerfstudio/bin/activate
+ns-train splatfacto --data /home/asimov/gs_data/cafe --pipeline.model.random-init True nerfstudio-data
+
+# View the trained splat
+ns-viewer --load-config outputs/.../splatfacto/<timestamp>/config.yml   # → http://localhost:7007
+```
+
+`--pipeline.model.random-init True` is needed because this pipeline has no COLMAP sparse point cloud to seed the Gaussians from — splatfacto falls back to random initialization instead.
+
+**Viewing in RViz instead of the nerfstudio browser viewer:** `ns-viewer`'s live web viewer competes with an in-progress `ns-train` for the same GPU, so it can get stuck on a broken preview while training is still running (fine once training is finished, though). As an alternative — RViz has no Gaussian-Splat renderer, but a splat's Gaussian centers can be shown as a colored `PointCloud2`, which RViz displays natively:
+1. `scripts/gs_splat_to_pointcloud.py` (run inside the nerfstudio venv, needs `plyfile`) — reads a `ns-export gaussian-splat` `.ply`, converts each Gaussian's spherical-harmonics DC color term to RGB (`0.5 + 0.28209479177387814 * f_dc`), filters by opacity, writes `(xyz, rgb, opacity)` to a `.npz`.
+2. `scripts/gs_view_pointcloud.py` — a ROS 2 node (run in the normal ROS environment, not the nerfstudio venv) that loads that `.npz` and publishes it as a latched (`TRANSIENT_LOCAL`) `sensor_msgs/PointCloud2` on `/gs_capture/splat_points`, RGB packed PCL-style (uint8 r/g/b packed into the float32 `rgb` field).
+3. `rviz/gs_capture.rviz` — Fixed Frame `world`, an `Image` display on `/gs_capture/image_raw` (live capture feed) plus a `PointCloud2` display on `/gs_capture/splat_points` (Color Transformer `RGB8`, Durability Policy `Transient Local`).
+
+This shows the reconstruction as discrete colored dots (no soft Gaussian blending/alpha), not photoreal like the nerfstudio viewer — good enough to sanity-check shape and color at a glance without leaving RViz.

@@ -295,7 +295,67 @@ ros2 launch rosnav_bot multi_robot.launch.py world:=house
   <br/><sub>Dock approach in map / TF view</sub>
 </p>
 
-## 11. Update YAML (tuning)
+## 11. Gaussian Splatting capture
+
+Feasibility spike: capture a photo set + exact Gazebo-ground-truth poses for [3D Gaussian Splatting](https://docs.nerf.studio/nerfology/methods/splat.html) — no robot, no COLMAP.
+
+### A — Capture
+
+```bash
+# Gazebo (headless) + the teleportable capture rig, no robot/nav stack
+ros2 launch rosnav_bot gs_capture.launch.py world_name:=cafe
+
+# Sweep the waypoint grid, write nerfstudio-format data
+ros2 run rosnav_bot gs_capture.py --ros-args \
+  -p world_name:=cafe -p out_dir:=/home/asimov/gs_data/cafe
+```
+
+### B — Train + view (separate nerfstudio venv)
+
+```bash
+source ~/venvs/nerfstudio/bin/activate
+ns-train splatfacto --data /home/asimov/gs_data/cafe --pipeline.model.random-init True nerfstudio-data
+ns-viewer --load-config outputs/.../splatfacto/<timestamp>/config.yml   # → http://localhost:7007
+```
+
+<table align="center">
+  <tr>
+    <td align="center"><b>Ground truth (Gazebo)</b></td>
+    <td align="center"><b>Trained splat — RGB</b></td>
+    <td align="center"><b>Trained splat — depth</b></td>
+  </tr>
+  <tr>
+    <td><img src="images/gs_cafe_ground_truth.png" alt="cafe.world ground truth in Gazebo" width="280"/></td>
+    <td><img src="images/gs_splat_cafe_1.png" alt="Gaussian Splat reconstruction, RGB" width="280"/></td>
+    <td><img src="images/gs_splat_cafe_depth.png" alt="Gaussian Splat reconstruction, depth" width="280"/></td>
+  </tr>
+  <tr>
+    <td colspan="3"><img src="images/gs_splat_cafe_2.png" alt="Gaussian Splat reconstruction close-up" width="860"/></td>
+  </tr>
+</table>
+
+<p align="center"><sub>cafe.world capture, viewed live in the nerfstudio browser viewer — depth confirms geometry, not just color, is coherent</sub></p>
+
+### C — Or view in RViz instead (Gaussian centers as a colored point cloud)
+
+```bash
+# Still in the nerfstudio venv
+ns-export gaussian-splat --load-config outputs/.../splatfacto/<timestamp>/config.yml --output-dir splat_export/
+python3 src/rosnav_bot/scripts/gs_splat_to_pointcloud.py splat_export/splat.ply splat_points.npz
+deactivate
+
+# Back in the ROS 2 environment
+ros2 run rosnav_bot gs_view_pointcloud.py --ros-args -p npz_path:=$(pwd)/splat_points.npz
+rviz2 -d src/rosnav_bot/rviz/gs_capture.rviz
+```
+
+**Navigation plan:** not wired into Nav2 yet — the plan is to export Gaussian centers as a point cloud (`gs_splat_to_pointcloud.py` already does this) and feed it into `obstacle_layer`/`voxel_layer` as a static observation source, the same practical shortcut real research (Splat-Nav, Splatblox) uses via full ESDF fusion.
+
+Details → [concepts.md §27](concepts.md#27-gaussian-splatting-capture-rig-gs_capturepy).
+
+---
+
+## 12. Update YAML (tuning)
 
 All configs live under `src/rosnav_bot/config/`. With `--symlink-install`, edit then **relaunch** (no rebuild).
 
@@ -327,7 +387,7 @@ More → [`concepts.md`](concepts.md).
 
 ---
 
-## 12. Fixes
+## 13. Fixes
 
 | Problem | Try |
 |---|---|

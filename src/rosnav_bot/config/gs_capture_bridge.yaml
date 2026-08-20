@@ -1,0 +1,14 @@
+# gs_capture_bridge.yaml — bridge for gs_capture_rig's camera only.
+# Separate from gz_bridge.yaml (the main nav/robot bridge) since capture runs
+# are a standalone tool: no robot, no lidar, no cmd_vel — just this one camera.
+- ros_topic_name: "/gs_capture/image_raw"
+  gz_topic_name: "/gs_capture/image_raw"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/gs_capture/camera_info"
+  gz_topic_name: "/gs_capture/camera_info"
+  ros_type_name: "sensor_msgs/msg/CameraInfo"
+  gz_type_name: "gz.msgs.CameraInfo"
+  direction: GZ_TO_ROS

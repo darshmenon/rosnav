@@ -65,6 +65,8 @@ install(
     scripts/aruco_dock.py
     scripts/station_server.py
     scripts/yolo_detector.py
+    scripts/gs_capture.py
+    scripts/gs_view_pointcloud.py
     scripts/rmf_fleet_adapter.py
     scripts/rmf_submit_task.py
     scripts/dynamic_obstacle_driver.py
