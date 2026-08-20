@@ -160,3 +160,267 @@ def rsp_include(pkg_share: str, urdf_path, frame_prefix='', namespace='', lidar_
     )
 
 
+def laser_filter_node(pkg_share: str, namespace: str = ''):
+    return Node(
+        package='laser_filters',
+        executable='scan_to_scan_filter_chain',
+        namespace=namespace or None,
+        parameters=[os.path.join(pkg_share, 'config', 'laser_filters.yaml')],
+        remappings=[('scan', 'scan_raw'), ('scan_filtered', 'scan')],
+        output='screen',
+    )
+
+
+def spawn_robot_node(gazebo_world_name: str, topic, name, x, y, z, yaw):
+    return Node(
+        package='ros_gz_sim',
+        executable='create',
+        arguments=[
+            '-world', gazebo_world_name,
+            '-topic', topic,
+            '-name', name,
+            '-x', x, '-y', y, '-z', z, '-Y', yaw,
+        ],
+        output='screen',
+    )
+
+
+def spawn_dynamic_obstacle_node(pkg_share: str, gazebo_world_name: str, name, x, y, z, yaw):
+    """Spawn a models/dynamic_obstacle instance from its SDF file directly
+    (no robot_description topic to spawn from, unlike spawn_robot_node)."""
+    model_path = os.path.join(pkg_share, 'models', 'dynamic_obstacle', 'model.sdf')
+    return Node(
+        package='ros_gz_sim',
+        executable='create',
+        name=f'spawn_{name}',
+        arguments=[
+            '-world', gazebo_world_name,
+            '-file', model_path,
+            '-name', name,
+            '-x', str(x), '-y', str(y), '-z', str(z), '-Y', str(yaw),
+        ],
+        output='screen',
+    )
+
+
+def dynamic_obstacle_bridge_node(name: str):
+    """ROS -> Gazebo Twist bridge feeding the model's VelocityControl plugin."""
+    return Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name=f'{name}_cmd_vel_bridge',
+        arguments=[f'/model/{name}/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist'],
+        output='screen',
+    )
+
+
+def dynamic_obstacle_driver_node(name: str, axis: str, amplitude, speed):
+    return Node(
+        package='rosnav_bot',
+        executable='dynamic_obstacle_driver.py',
+        name=f'{name}_driver',
+        output='screen',
+        parameters=[{
+            'obstacle_name': name,
+            'axis': axis,
+            'amplitude': float(amplitude),
+            'speed': float(speed),
+        }],
+        remappings=[('cmd_vel', f'/model/{name}/cmd_vel')],
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Multi-robot nav2 param namespacing
+# ──────────────────────────────────────────────────────────────────────────
+# nav2_multirobot_params.yaml (diff-drive) is a hand-tuned file that already
+# has ROBOT_NS placeholders baked into its text. For drive types that don't
+# have such a hand-tuned fleet template (mecanum, ackermann), the same
+# namespacing is instead applied programmatically to the single-robot
+# nav2_params_*.yaml file selected by nav2_params_filename() above — one
+# source of truth per drive type, for both single- and multi-robot launches.
+#
+# Rule: TF frame-name values get an "<ns>/" prefix (the shared "map" frame is
+# left alone, since ROS namespacing can't rewrite parameter string values —
+# only topics/services/actions). Absolute topics (leading "/") referring to
+# per-robot data get "/<ns>" inserted; relative topics already auto-namespace
+# via the node's own ROS namespace and are left untouched.
+_FRAME_KEYS = (
+    ('amcl', 'base_frame_id'),
+    ('amcl', 'odom_frame_id'),
+    ('bt_navigator', 'robot_base_frame'),
+    ('behavior_server', 'local_frame'),
+    ('behavior_server', 'robot_base_frame'),
+    ('collision_monitor', 'base_frame_id'),
+    ('collision_monitor', 'odom_frame_id'),
+)
+_ABS_TOPIC_KEYS = (
+    ('bt_navigator', 'odom_topic'),
+)
+# map_server/docking_server/loopback_simulator aren't part of the per-robot
+# fleet bringup (map_server runs once, globally; loopback_simulator isn't
+# used at all). docking_server IS wired for drive_type:=diff (see
+# multi_robot.launch.py's docking_actions, and nav2_multirobot_params.yaml's
+# docking_server: section) — but only the diff-drive template carries tuned
+# dock config, so it's still stripped here for the mecanum/ackermann
+# programmatic-namespacing path, which has no docking_server section at all.
+_UNUSED_MULTIROBOT_NODES = ('map_server', 'docking_server', 'loopback_simulator')
+# Per-robot initial pose is set dynamically (see multi_robot.launch.py); the
+# single-robot file's static default would only be correct for one robot.
+_STRIP_AMCL_KEYS = ('set_initial_pose', 'initial_pose_x', 'initial_pose_y', 'initial_pose_z', 'initial_pose_yaw')
+
+
+def namespace_nav2_params(params: dict, ns: str) -> dict:
+    """Rewrite a single-robot nav2 params dict in place for use inside a
+    namespaced multi-robot fleet. Mutates and returns `params`."""
+    for node, key in _FRAME_KEYS:
+        section = params.get(node, {}).get('ros__parameters', {})
+        if key in section and section[key] != 'map':
+            section[key] = f"{ns}/{section[key]}"
+
+    for node, key in _ABS_TOPIC_KEYS:
+        section = params.get(node, {}).get('ros__parameters', {})
+        if key in section and str(section[key]).startswith('/'):
+            section[key] = f"/{ns}{section[key]}"
+
+    for costmap in ('global_costmap', 'local_costmap'):
+        section = params.get(costmap, {}).get(costmap, {}).get('ros__parameters', {})
+        if 'robot_base_frame' in section:
+            section['robot_base_frame'] = f"{ns}/{section['robot_base_frame']}"
+        if costmap == 'local_costmap' and section.get('global_frame') not in (None, 'map'):
+            section['global_frame'] = f"{ns}/{section['global_frame']}"
+        scan = section.get('obstacle_layer', {}).get('scan', {})
+        if str(scan.get('topic', '')).startswith('/'):
+            scan['topic'] = f"/{ns}{scan['topic']}"
+
+    amcl = params.get('amcl', {}).get('ros__parameters', {})
+    for key in _STRIP_AMCL_KEYS:
+        amcl.pop(key, None)
+
+    for node in _UNUSED_MULTIROBOT_NODES:
+        params.pop(node, None)
+
+    return params
+
+
+def package_available(name: str) -> bool:
+    try:
+        get_package_share_directory(name)
+        return True
+    except Exception:
+        return False
+
+
+_EXPLORER_ALIASES = {
+    'builtin': 'builtin',
+    'rosnav': 'builtin',
+    'wfd': 'builtin',
+    'explore_lite': 'explore_lite',
+    'm-explore': 'explore_lite',
+    'm_explore': 'explore_lite',
+    'm-explore-ros2': 'explore_lite',
+    'frontier': 'frontier_exploration_ros2',
+    'frontier_exploration': 'frontier_exploration_ros2',
+    'frontier_exploration_ros2': 'frontier_exploration_ros2',
+    'mrtsp': 'frontier_exploration_ros2',
+    'rrt': 'rrt_explore',
+    'rrt_explore': 'rrt_explore',
+    'rrt-explore': 'rrt_explore',
+}
+
+_EXPLORER_PACKAGES = {
+    'explore_lite': 'explore_lite',
+    'frontier_exploration_ros2': 'frontier_exploration_ros2',
+    'rrt_explore': 'rrt_explore',
+}
+
+
+def resolve_explorer(explorer: str) -> str:
+    """Map explorer:= aliases to a backend; fall back to builtin if the package is missing."""
+    backend = _EXPLORER_ALIASES.get((explorer or 'builtin').strip().lower())
+    if not backend:
+        print(f'[rosnav] unknown explorer={explorer!r} — using builtin')
+        return 'builtin'
+    pkg = _EXPLORER_PACKAGES.get(backend)
+    if pkg and not package_available(pkg):
+        print(f'[rosnav] explorer={backend} requested but `{pkg}` is not built — using builtin. '
+              f'Link + build: bash src/rosnav_bot/scripts/link_third_party.sh && '
+              f'colcon build --symlink-install --packages-up-to {pkg}')
+        return 'builtin'
+    return backend
+
+
+def explorer_nodes(backend, pkg_share, *, map_topic='/map', namespaces=None,
+                   robot_count=1, builtin_params=None):
+    """Nodes for explorer:=builtin|explore_lite|frontier_exploration_ros2|rrt."""
+    namespaces = list(namespaces) if namespaces else ['']
+    if backend == 'builtin':
+        params = dict(builtin_params or {})
+        params.setdefault('use_sim_time', True)
+        if map_topic:
+            params.setdefault('map_topic', map_topic)
+        return [Node(
+            package='rosnav_bot',
+            executable='frontier_explorer.py',
+            name='frontier_explorer',
+            output='screen',
+            parameters=[params],
+        )]
+
+    if backend == 'rrt_explore':
+        ns0 = namespaces[0] if namespaces and namespaces[0] else ''
+        costmap = f'/{ns0}/global_costmap/costmap' if ns0 else '/global_costmap/costmap'
+        return [Node(
+            package='rrt_explore',
+            executable='rrt',
+            name='rrt',
+            namespace=ns0,
+            output='screen',
+            parameters=[os.path.join(pkg_share, 'config', 'rrt_explore.yaml'), {
+                'use_sim_time': True,
+                'map_topic': map_topic,
+                'costmap_topic': costmap,
+                'robot_base_frame': 'base_link',
+                'robot_frame_prefix': 'robot',
+                'robot_count': int(robot_count),
+            }],
+        )]
+
+    nodes = []
+    for ns in namespaces:
+        prefix = f'/{ns}' if ns else ''
+        base_frame = f'{ns}/base_link' if ns else 'base_link'
+        if backend == 'explore_lite':
+            nodes.append(Node(
+                package='explore_lite',
+                executable='explore',
+                name='explore_node',
+                namespace=ns,
+                output='screen',
+                parameters=[os.path.join(pkg_share, 'config', 'explore_lite.yaml'), {
+                    'use_sim_time': True,
+                    'robot_base_frame': base_frame,
+                    'costmap_topic': map_topic,
+                }],
+                remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')] if ns else [],
+            ))
+        elif backend == 'frontier_exploration_ros2':
+            nodes.append(Node(
+                package='frontier_exploration_ros2',
+                executable='frontier_explorer',
+                name='frontier_explorer',
+                namespace=ns,
+                output='screen',
+                parameters=[os.path.join(pkg_share, 'config', 'frontier_exploration.yaml'), {
+                    'use_sim_time': True,
+                    'map_topic': map_topic,
+                    'costmap_topic': f'{prefix}/global_costmap/costmap' if ns else '/global_costmap/costmap',
+                    'local_costmap_topic': f'{prefix}/local_costmap/costmap' if ns else '/local_costmap/costmap',
+                    'robot_base_frame': base_frame,
+                    'navigate_to_pose_action_name': 'navigate_to_pose',
+                    'autostart': True,
+                }],
+            ))
+    return nodes
+
+
