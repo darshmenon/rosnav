@@ -1,0 +1,36 @@
+# gs_speed_filter.yaml — Nav2 costmap filter pair that turns a GS-derived
+# density-graded mask (see scripts/gs_speed_mask_from_splat.py) into a
+# SpeedFilter layer, distinct from gs_keepout_filter.yaml's binary
+# KeepoutFilter — see concepts.md §30.
+# `yaml_filename` below is overridden at launch (slam_nav.launch.py
+# gs_speed_mask:=<path>) — the value here is just a placeholder.
+#
+# Top-level keys MUST match the actual launched node names
+# (slam_nav.launch.py names them gs_speed_filter_mask_server /
+# gs_speed_costmap_filter_info_server, distinct from gs_keepout_filter.yaml's
+# filter_mask_server / costmap_filter_info_server, so both filters can run
+# at once without a node-name collision) — ROS 2 silently ignores a
+# params-file entry whose top-level key doesn't match the node it's passed
+# to, so a mismatch here doesn't error, it just runs the node on pure
+# defaults (confirmed the hard way: this used to say filter_mask_server:/
+# costmap_filter_info_server: and both nodes silently defaulted, with the
+# mask server defaulting to topic_name="map" — colliding with the real SLAM
+# /map topic).
+gs_speed_filter_mask_server:
+  ros__parameters:
+    use_sim_time: true
+    frame_id: "map"
+    topic_name: "/gs/speed_filter_mask"
+    yaml_filename: ""
+
+gs_speed_costmap_filter_info_server:
+  ros__parameters:
+    use_sim_time: true
+    filter_info_topic: "/gs/speed_filter_info"
+    type: 1  # 0 = Keepout/Binary (nav2_costmap_2d::KeepoutFilter), 1 = Speed
+    mask_topic: "/gs/speed_filter_mask"
+    # gs_speed_mask_from_splat.py writes mask value 0 (empty) -> 100
+    # (max density); speed_pct = base + multiplier * value, so this maps
+    # 0 -> 100% speed (unrestricted) and 100 -> 0% speed (near-stop).
+    base: 100.0
+    multiplier: -1.0

@@ -14,10 +14,24 @@ nerfstudio venv needed, unlike gs_splat_to_pointcloud.py):
       --z-min 0.05 --z-max 2.0
 
 Gaussian centers in [z_min, z_max] are height-filtered (same obstacle band
-convention as the local/global costmap's VoxelLayer, see nav2_params.yaml)
-and rasterized to occupied cells, then dilated a couple cells to absorb
-splat noise. Pass --align-to an existing map yaml (e.g. maps/map_hospital.yaml)
-to pixel-align the mask to that map's resolution/origin/size instead of
+convention as the local/global costmap's VoxelLayer, see nav2_params.yaml),
+binned into a grid, and a cell is occupied only if its Gaussian COUNT clears
+a density threshold — NOT if any Gaussian center merely falls inside it.
+That distinction matters: a converged splat scatters real (non-floater)
+low-density Gaussians through open room volume, not just onto hard surfaces
+(soft haze, near-surface duplicates), so "any center present" rasterization
+marks the entire room interior occupied regardless of opacity/scale
+filtering upstream in gs_splat_to_pointcloud.py — confirmed empirically on a
+real 30000-step converged cafe splat, where per-cell Gaussian count is
+massively skewed (median nonzero cell ~5, 90th percentile ~77, max ~1700+),
+i.e. solid surfaces get hit by orders of magnitude more overlapping
+Gaussians across training views than open-air haze does. Thresholding on
+that count (default: keep the densest 10% of occupied cells) recovers an
+actual room outline; thresholding on presence does not, no matter how the
+upstream opacity/scale filter is tuned.
+
+Pass --align-to an existing map yaml (e.g. maps/map_hospital.yaml) to
+pixel-align the mask to that map's resolution/origin/size instead of
 auto-fitting a bounding box — required for the mask to overlay correctly
 with a real SLAM map's static_layer.
 
@@ -71,6 +85,11 @@ def main():
     ap.add_argument('--z-min', type=float, default=0.05, help='obstacle band floor (matches nav2_params.yaml VoxelLayer min_obstacle_height)')
     ap.add_argument('--z-max', type=float, default=2.0, help='obstacle band ceiling (matches nav2_params.yaml VoxelLayer max_obstacle_height)')
     ap.add_argument('--dilate', type=int, default=2, help='cells to grow occupied regions by, absorbs splat noise')
+    ap.add_argument('--density-percentile', type=float, default=90.0,
+                     help='a cell is occupied only if its Gaussian count is >= this percentile of all '
+                          'nonzero-count cells (default: densest 10%%). Presence-only rasterization '
+                          '(percentile 0) marks nearly the whole room occupied on a converged splat, since '
+                          'real low-density Gaussians scatter through open volume, not just onto surfaces.')
     ap.add_argument('--align-to', default='', help='existing map yaml to inherit resolution/origin/size from, for pixel-exact overlay')
     ap.add_argument('--xy-crop', type=float, nargs=4, default=None, metavar=('XMIN', 'YMIN', 'XMAX', 'YMAX'),
                      help='drop points outside this XY box before rasterizing. An orbit-style capture '
@@ -110,7 +129,6 @@ def main():
         origin = [origin_x, origin_y, 0.0]
         print(f'Auto-fit bbox: origin={origin}, size={width}x{height} @ {resolution} m/px', flush=True)
 
-    occ = np.zeros((height, width), dtype=bool)
     cols = np.floor((xyz[:, 0] - origin[0]) / resolution).astype(np.int64)
     # image row 0 is the top (max y), matching the map_saver/map_server convention.
     rows = (height - 1) - np.floor((xyz[:, 1] - origin[1]) / resolution).astype(np.int64)
@@ -118,7 +136,17 @@ def main():
     dropped = int((~in_bounds).sum())
     if dropped:
         print(f'{dropped} points fell outside the mask bounds (only relevant with --align-to) — dropped', flush=True)
-    occ[rows[in_bounds], cols[in_bounds]] = True
+
+    count = np.zeros((height, width), dtype=np.float64)
+    np.add.at(count, (rows[in_bounds], cols[in_bounds]), 1.0)
+    nonzero = count[count > 0]
+    if args.density_percentile <= 0 or nonzero.size == 0:
+        density_thresh = 0.0
+    else:
+        density_thresh = np.percentile(nonzero, args.density_percentile)
+    occ = count >= max(density_thresh, 1.0)
+    print(f'Gaussian count per cell: median(nonzero)={np.median(nonzero):.1f}, '
+          f'p{args.density_percentile:g}={density_thresh:.1f}, max={nonzero.max():.0f}', flush=True)
 
     if args.dilate:
         occ = dilate(occ, args.dilate)

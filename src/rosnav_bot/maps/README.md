@@ -14,6 +14,10 @@ Available worlds
   hospital    — 26×18 m hospital floor (patient rooms, nurse station, 4 m corridor)
   outdoor     — 129×129 m heightmap bowl (no pre-built map — use explore:=true)
   multi_terrain — ramps/stairs/rough patch (no pre-built map — use explore:=true)
+  cafe        — textured cafe (download_fuel_worlds.sh) — camera / RTAB-Map
+  aws_warehouse — AWS RoboMaker warehouse (download_fuel_worlds.sh)
+  tugbot_warehouse — OpenRobotics warehouse + shelves (download_fuel_worlds.sh)
+  lake_house  — PBR Lake House + furniture (download_fuel_worlds.sh)
 
 Multi-robot launch
 

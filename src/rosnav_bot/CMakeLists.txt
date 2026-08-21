@@ -22,6 +22,7 @@ ament_export_dependencies(rosidl_default_runtime)
 ament_get_python_install_dir(PYTHON_INSTALL_DIR)
 install(
   DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/rosnav_bot/rmf
+               ${CMAKE_CURRENT_SOURCE_DIR}/rosnav_bot/rl
   DESTINATION ${PYTHON_INSTALL_DIR}/rosnav_bot
 )
 install(
@@ -65,11 +66,25 @@ install(
     scripts/aruco_dock.py
     scripts/station_server.py
     scripts/yolo_detector.py
+    scripts/yolo_collect.py
+    scripts/yolo_train.py
     scripts/gs_capture.py
     scripts/gs_view_pointcloud.py
+    scripts/gs_mask_from_splat.py
+    scripts/gs_semantic_fusion.py
+    scripts/gs_speed_mask_from_splat.py
+    scripts/gs_merge_splats.py
+    scripts/gs_suggest_capture_waypoints.py
+    scripts/gs_relocalization_check.py
+    scripts/gs_train_keepout.sh
+    scripts/train_ppo.py
+    scripts/rl_policy_node.py
     scripts/rmf_fleet_adapter.py
     scripts/rmf_submit_task.py
     scripts/dynamic_obstacle_driver.py
+    scripts/pointcloud_to_scan.py
+    scripts/scan_quality_gate.py
+    scripts/benchmark.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(

@@ -32,9 +32,8 @@ TEB (Timed Elastic Band) is better than MPPI in narrow corridors / tight doorway
 `no_go_zones.yaml` exists but Nav2 also ships `SpeedFilter` and `KeepoutFilter` driven by a filter-mask image (per-pixel, not polygon) — useful for "slow zone near the dock" or "no-go near the charging bay" without hand-writing polygons.
 → `nav2_map_server::CostmapFilterInfoServer` + a mask PGM per world.
 
-### Learned local planner (DRL) as a research controller
-Train a small policy (e.g. PPO via `stable-baselines3` + Gazebo as the env) to output `cmd_vel` directly from `/scan` + goal-relative pose. Not for production nav — good for the blog-content angle (RoboCloud) and for benchmarking against MPPI in the `maze` world.
-→ new `rosnav_bot/rl/` package, Gymnasium wrapper around the existing Gazebo bridge.
+### Learned local planner (DRL) as a research controller — started
+Offline PPO on occupancy maps (`rosnav_bot/rl/ScanNavEnv` + `scripts/train_ppo.py`) → live `scripts/rl_policy_node.py` on `/scan`+odom. Not for production nav — benchmark vs MPPI in `maze`. Optional next: Gymnasium wrapper around live Gazebo instead of the PGM raycast env.
 
 ---
 
@@ -44,17 +43,9 @@ Train a small policy (e.g. PPO via `stable-baselines3` + Gazebo as the env) to o
 `yolo_detector.py` publishes detections but nothing feeds them back into planning. A semantic layer that marks "person" detections as a soft-cost region (not a hard obstacle) would make Nav2 slow down / give people berth without stopping dead like a static obstacle does.
 → custom `nav2_costmap_2d` plugin subscribing to `yolo/detections`, project image-space boxes to costmap cells via camera intrinsics + TF.
 
-### 3D obstacle layer (voxel/octomap) for `lidar_type:=3d`
-Right now 3D lidar mode is mentioned for RTAB-Map SLAM, but confirm the local costmap is using a `VoxelLayer`/`nav2_costmap_2d::VoxelLayer` rather than flattening to 2D — otherwise overhangs (tables, shelves) won't show up as obstacles.
-→ check `nav2_params.yaml` under `local_costmap.plugins`; add `voxel_layer` if missing.
-
 ### Object permanence / persistent semantic map
 Store YOLO detections with world-frame coordinates in a lightweight DB (sqlite) so `llm_nav.py` can answer "where did you last see the pallet jack?" — extends the existing LLM voice nav from navigation-only to query-answering.
 → small `semantic_memory.py` node, SQLite table `(class, x, y, timestamp, confidence)`.
-
-### Gaussian Splat as a Nav2 obstacle source
-`gs_capture.py`/`gs_splat_to_pointcloud.py` (see concepts.md §27) already turn a trained splat into an `(xyz, rgb, opacity)` point cloud — not yet fed into planning. Real research (Splat-Nav, Splatblox) fuses splat-derived ESDFs with Nav2; the practical shortcut here is simpler: publish the opacity-filtered Gaussian centers as a `PointCloud2` observation source straight into `obstacle_layer`/`voxel_layer`, no ESDF fusion needed.
-→ new launch arg/node wiring `gs_view_pointcloud.py`'s topic into `nav2_params.yaml`'s costmap `observation_sources`.
 
 ---
 

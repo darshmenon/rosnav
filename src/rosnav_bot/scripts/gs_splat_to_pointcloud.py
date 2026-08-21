@@ -23,7 +23,27 @@ converged cafe splat: median max-axis scale is ~0.009m within 2m of center vs.
 double the "occupied" fraction gs_mask_from_splat.py rasterizes. Opacity
 thresholding alone does NOT catch this (floaters are often high-opacity, just
 oversized) — scale is the actual discriminator.
+
+Undoes nerfstudio's training-time coordinate normalization. `ns-train` calls
+`auto_orient_and_center_poses` then auto-scales camera positions so the scene
+roughly fits a unit-ish cube (`dataparser_transforms.json`: `X_train = scale *
+(R @ X_world + t)`) — and confirmed by reading nerfstudio's own exporter
+source (nerfstudio/scripts/exporter.py: `positions = model.means...`),
+`ns-export gaussian-splat` writes those raw TRAINING-space positions straight
+to the .ply with no inverse applied. Left uncorrected, every exported splat
+is off by `scale` (e.g. 0.22 observed on a real capture — the whole scene
+comes out ~4.5x too small versus true Gazebo-world meters), which silently
+undersized every GS-derived Nav2 artifact this repo builds (keepout/speed
+masks, semantic-fusion 3D positions, relocalization checks) relative to the
+robot/map TF frames — caught by eyeballing the splat next to the robot model
+in RViz and looking implausibly small, not by any of this pipeline's own
+automated checks. Pass --dataparser-transform to correct it; omit only if
+you've already re-exported through a nerfstudio version/flag that undoes this
+itself (verify by comparing bbox extent against a known real-world distance
+before trusting an uncorrected npz).
 """
+import argparse
+import json
 import sys
 
 import numpy as np
@@ -32,19 +52,47 @@ from plyfile import PlyData
 SH_C0 = 0.28209479177387814
 
 
-def main():
-    if len(sys.argv) < 3:
-        print(f'Usage: {sys.argv[0]} <splat.ply> <out.npz> '
-              f'[opacity_thresh=0.3] [max_scale=0.05]', file=sys.stderr)
-        sys.exit(1)
+def load_dataparser_transform(path):
+    with open(path) as f:
+        d = json.load(f)
+    transform = np.array(d['transform'], dtype=np.float64)  # 3x4: [R | t]
+    r, t = transform[:, :3], transform[:, 3]
+    scale = float(d['scale'])
+    return r, t, scale
 
-    ply_path, out_path = sys.argv[1], sys.argv[2]
-    opacity_thresh = float(sys.argv[3]) if len(sys.argv) > 3 else 0.3
-    max_scale = float(sys.argv[4]) if len(sys.argv) > 4 else 0.05
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('ply_path')
+    ap.add_argument('out_path')
+    ap.add_argument('opacity_thresh', nargs='?', type=float, default=0.3)
+    ap.add_argument('max_scale', nargs='?', type=float, default=0.05)
+    ap.add_argument('--dataparser-transform', default='',
+                     help='path to dataparser_transforms.json from the training output dir '
+                          '(outputs/.../splatfacto/<timestamp>/dataparser_transforms.json) — '
+                          'undoes nerfstudio\'s training-time scale/center normalization so xyz '
+                          'comes out in true Gazebo-world meters. Strongly recommended; see the '
+                          'module docstring for why the .ply is wrong without it.')
+    args = ap.parse_args()
+
+    ply_path, out_path = args.ply_path, args.out_path
+    opacity_thresh, max_scale = args.opacity_thresh, args.max_scale
 
     ply = PlyData.read(ply_path)
     v = ply['vertex']
-    xyz = np.stack([v['x'], v['y'], v['z']], axis=1).astype(np.float32)
+    xyz = np.stack([v['x'], v['y'], v['z']], axis=1).astype(np.float64)
+
+    if args.dataparser_transform:
+        r, t, scale = load_dataparser_transform(args.dataparser_transform)
+        # Forward: X_train = scale * (R @ X_world + t)  =>  X_world = R^T @ (X_train / scale - t)
+        xyz = (xyz / scale - t) @ r  # R^T applied via right-multiply by R for row vectors
+        max_scale = max_scale / scale  # Gaussian extent scales the same way (no translation term)
+        print(f'Applied inverse dataparser transform (scale={scale}) — '
+              f'max_scale threshold corrected to {max_scale:.4f}m in training space', file=sys.stderr)
+    else:
+        print('WARNING: no --dataparser-transform given — xyz stays in nerfstudio\'s '
+              'training-normalized space, NOT true world meters (see module docstring)', file=sys.stderr)
+    xyz = xyz.astype(np.float32)
 
     opacity_logit = np.array(v['opacity'], dtype=np.float32)
     opacity = 1.0 / (1.0 + np.exp(-opacity_logit))

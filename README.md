@@ -17,6 +17,10 @@
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
 ```
 
+![3D lidar, camera, costmap, and Gaussian Splat overlay in RViz](images/gs_overview_3d_lidar.png)
+
+<p><sub>3D lidar point cloud · camera · costmap · Gaussian Splat semantic markers — all in one RViz config (<code>rviz/gs_overview.rviz</code>)</sub></p>
+
 ![Nav2 autonomous navigation](images/nav2spedup-ezgif.com-video-to-gif-converter.gif)
 
 <p><sub>Single-robot SLAM · Nav2 · frontier exploration</sub></p>
@@ -39,6 +43,8 @@ sudo apt install -y \
   ros-humble-nav2-bringup ros-humble-slam-toolbox \
   ros-humble-navigation2 ros-humble-teleop-twist-keyboard \
   ros-humble-laser-filters ros-humble-rviz2
+# optional SLAM backends:
+#   sudo apt install ros-humble-rtabmap-ros ros-humble-cartographer-ros
 
 git clone https://github.com/darshmenon/rosnav.git ~/rosnav
 cd ~/rosnav && colcon build --symlink-install
@@ -66,6 +72,8 @@ Watch the map in RViz (`Map` on `/map`), or:
 ros2 topic hz /scan          # ~10 Hz
 ros2 topic hz /odom          # ~50 Hz
 ros2 topic echo /map --once --field info    # width/height should grow
+# Optional: watch / reject malformed scans (on by default in slam_nav via scan_gate:=true)
+ros2 run rosnav_bot scan_quality_gate.py --ros-args -p use_sim_time:=true
 ```
 
 Or let the robot explore alone: add `explore:=true` to the launch above.
@@ -159,6 +167,20 @@ ros2 launch rosnav_bot slam_nav.launch.py world_name:=warehouse enable_yolo:=tru
 
 Topics: `yolo/detections` · `yolo/image_annotated`
 
+Stock `yolov8n.pt` (COCO) detects nothing in stylized sim worlds like `cafe` — fine-tune on collected sim frames:
+
+```bash
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=cafe enable_rgbd:=true explore:=true
+# auto-labeled (no manual annotation) for cafe's 5 known table poses:
+ros2 run rosnav_bot yolo_collect.py --ros-args \
+  -p out_dir:=$HOME/yolo_data/cafe_auto -p classes:=table -p map_frame:=odom \
+  -p auto_label_config:=$(pwd)/src/rosnav_bot/config/yolo_auto_label_cafe.yaml \
+  -p max_frames:=200 -p use_sim_time:=true
+python3 src/rosnav_bot/scripts/yolo_train.py --data $HOME/yolo_data/cafe_auto/dataset.yaml --epochs 50
+```
+
+Details (why `map_frame:=odom`, not the default `map`) → [concepts.md §35-A](concepts.md#35-ai-training-pipelines-yolo--gs-keepout--rl).
+
 ---
 
 <p align="center">
@@ -213,33 +235,111 @@ ros2 action send_goal /undock_from_station rosnav_bot/action/UndockFromStation "
 
 ---
 
-## 7. Drive bases & controllers
+## 7. Platforms — drive bases, chassis skins, how to switch
+
+Two independent launch args:
+
+| Arg | What it changes | Values |
+|---|---|---|
+| `drive_type` | Physics + Gazebo plugin + Nav2 params (how it moves) | `diff` (default) · `mecanum` · `ackermann` |
+| `robot_model` | Chassis **visual** only (same footprint / wheels / Nav2) | `custom` (default) · `mir100` · `husky` |
+
+`mir100` / `husky` only work with `drive_type:=diff`. Mixing them with mecanum/ackermann is ignored (with a warning).
+
+| Platform | Launch knobs | Motion | Notes |
+|---|---|---|---|
+| Diff box (default) | `drive_type:=diff` | Forward + turn in place | DWB (Humble) or MPPI (`controller:=mppi`) |
+| Mecanum | `drive_type:=mecanum` | Holonomic — can strafe (`vy`) | Nav2 unlocks `max_vel_y`; no pre-rotate |
+| Ackermann (car-like) | `drive_type:=ackermann` | Front steer, min turning radius ~0.66 m | Always MPPI; keep `safety:=true` |
+| MiR100 look | `robot_model:=mir100` (+ diff) | Same as diff | Mesh skin only |
+| Husky look | `robot_model:=husky` (+ diff) | Same as diff | Mesh skin only |
+
+### Switch (single robot — map + navigate)
 
 ```bash
-# Diff (default) · holonomic · car-like
+# Diff (default)
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital drive_type:=diff explore:=true
+
+# Holonomic
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital drive_type:=mecanum explore:=true
+
+# Car-like
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital drive_type:=ackermann explore:=true safety:=true
 
-# Fleet-wide
+# Same drive, different look
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital robot_model:=mir100
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital robot_model:=husky
+
+# Navigate on a saved map (same args work on robot.launch.py)
+ros2 launch rosnav_bot robot.launch.py world_name:=hospital \
+  map:=src/rosnav_bot/maps/map_hospital.yaml drive_type:=ackermann safety:=true
+```
+
+### Switch (fleet)
+
+```bash
 ros2 launch rosnav_bot multi_robot.launch.py drive_type:=mecanum
 ros2 launch rosnav_bot multi_robot.launch.py drive_type:=ackermann
+ros2 launch rosnav_bot multi_robot.launch.py robot_model:=mir100
+ros2 launch rosnav_bot multi_robot.launch.py robot_model:=husky
+```
 
-# MPPI instead of DWB (Humble; Jazzy already defaults to MPPI)
+### Controllers & sensors (orthogonal)
+
+```bash
+# MPPI instead of DWB (Humble; Jazzy already defaults to MPPI). Ackermann always MPPI.
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital controller:=mppi explore:=true
 
-# 3D lidar / RTAB-Map · MiR100 / Husky visual chassis
+# 3D lidar / RTAB-Map (diff only)
 ros2 launch rosnav_bot slam_nav.launch.py lidar_type:=3d
 ros2 launch rosnav_bot slam_nav.launch.py lidar_type:=3d slam_algo:=3d explore:=true
-ros2 launch rosnav_bot slam_nav.launch.py robot_model:=mir100
-ros2 launch rosnav_bot slam_nav.launch.py robot_model:=husky
+
+# More SLAM backends (same Nav2 stack)
+ros2 launch rosnav_bot slam_nav.launch.py slam_algo:=cartographer explore:=true   # needs cartographer-ros
+ros2 launch rosnav_bot slam_nav.launch.py slam_algo:=vslam world_name:=cafe explore:=true
+ros2 launch rosnav_bot slam_nav.launch.py slam_algo:=multisensor explore:=true    # RGB-D + lidar
+ros2 launch rosnav_bot slam_nav.launch.py lidar_type:=3d slam_algo:=multisensor explore:=true
 ```
+
+![3D lidar point cloud, SLAM map, and costmap in RViz](images/gs_3d_slam_view.png)
+
+### SLAM benchmark (headless compare)
+
+```bash
+# Default matrix: 2d | cartographer | vslam | multisensor | 3d  (maze, 120s explore)
+./src/rosnav_bot/scripts/benchmark_slam.sh
+WORLD=hospital DURATION_S=90 ALGOS="2d cartographer multisensor" ./src/rosnav_bot/scripts/benchmark_slam.sh
+# → /tmp/rosnav_slam_bench/<stamp>/comparison.md (+ per-algo summary.json / map.*)
+```
+
+Install Cartographer once if you want that row:
+`sudo apt install ros-${ROS_DISTRO}-cartographer-ros`
 
 Strafe example (mecanum):
 ```bash
 ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
   "{linear: {x: 0.0, y: 0.3, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}"
 ```
+
+Ackermann steer-while-driving:
+```bash
+ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
+  "{linear: {x: 0.4, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.3}}"
+```
+
+Deep dive → [concepts.md §18–20](concepts.md#18-mecanum-holonomic-drive) (mecanum / ackermann / MiR100 / Husky).
+
+### Headless smoke (all AMRs map + move)
+
+```bash
+# Gazebo server only — no GUI. Checks /odom /scan /map and a short drive per platform.
+./src/rosnav_bot/scripts/smoke_amr_matrix.sh
+# optional filters:
+#   WORLD=maze BOOT_WAIT_S=50 ./src/rosnav_bot/scripts/smoke_amr_matrix.sh
+#   ONLY=ackermann,diff_husky ./src/rosnav_bot/scripts/smoke_amr_matrix.sh
+```
+
+Stop other Gazebo/ROS sims first — parallel `gz sim` instances starve DDS and make later variants fail.
 
 ---
 
@@ -289,11 +389,6 @@ ros2 launch rosnav_bot multi_robot.launch.py world:=house
 ```
 
 ---
-
-<p align="center">
-  <img src="images/docking1.png" alt="Docking map view" width="720"/>
-  <br/><sub>Dock approach in map / TF view</sub>
-</p>
 
 ## 11. Gaussian Splatting capture
 
@@ -348,21 +443,86 @@ ns-viewer --load-config outputs/.../splatfacto/<timestamp>/config.yml   # → ht
 ```bash
 # Still in the nerfstudio venv
 ns-export gaussian-splat --load-config outputs/.../splatfacto/<timestamp>/config.yml --output-dir splat_export/
-python3 src/rosnav_bot/scripts/gs_splat_to_pointcloud.py splat_export/splat.ply splat_points.npz
+# --dataparser-transform is required — without it xyz stays in nerfstudio's
+# training-normalized space (~4.5x too small vs. true Gazebo-world meters on
+# a real capture), not the file ns-export itself writes; see concepts.md §29b.
+python3 src/rosnav_bot/scripts/gs_splat_to_pointcloud.py splat_export/splat.ply splat_points.npz \
+    --dataparser-transform outputs/.../splatfacto/<timestamp>/dataparser_transforms.json
 deactivate
 
 # Back in the ROS 2 environment
 ros2 run rosnav_bot gs_view_pointcloud.py --ros-args -p npz_path:=$(pwd)/splat_points.npz
 rviz2 -d src/rosnav_bot/rviz/gs_capture.rviz
+
+# Or the fuller overview config (splat + keepout/speed costmap + semantic
+# markers + robot model in one view — see §27-29 in concepts.md):
+rviz2 -d src/rosnav_bot/rviz/gs_overview.rviz
 ```
 
-**Navigation plan:** not wired into Nav2 yet — the plan is to export Gaussian centers as a point cloud (`gs_splat_to_pointcloud.py` already does this) and feed it into `obstacle_layer`/`voxel_layer` as a static observation source, the same practical shortcut real research (Splat-Nav, Splatblox) uses via full ESDF fusion.
+![GS splat point cloud in RViz (gs_overview.rviz)](images/gs_splat_rviz_overview.png)
+
+![GS splat, correctly world-scaled, alongside the robot and 3D lidar (see §29b fix)](images/gs_overview_3d_lidar_wide.png)
+
+**Navigation plan:** already wired for a static costmap layer — see [§28](concepts.md#28-gs-costmap-keepout-filter-gs_mask_from_splatpy) (`KeepoutFilter`) and [§30](concepts.md#30-gs-speed-costmap-filter-gs_speed_mask_from_splatpy) (`SpeedFilter`), both driven by `gs_mask_from_splat.py`/`gs_speed_mask_from_splat.py` rasterizing the same Gaussian point cloud into a Nav2 costmap filter mask.
 
 Details → [concepts.md §27](concepts.md#27-gaussian-splatting-capture-rig-gs_capturepy).
 
 ---
 
-## 12. Update YAML (tuning)
+## 12. AI training (YOLO · Gaussian Splat keepout · RL)
+
+Three research pipelines that plug into the existing stack. Core SLAM/Nav2 stay classical.
+
+### A — YOLO fine-tune
+
+```bash
+# Collect frames (camera up)
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=cafe enable_camera:=true
+ros2 run rosnav_bot yolo_collect.py --ros-args -p out_dir:=$HOME/yolo_data/cafe -p max_frames:=200
+# annotate labels/*.txt (YOLO format), then:
+python3 src/rosnav_bot/scripts/yolo_train.py --data $HOME/yolo_data/cafe/dataset.yaml --epochs 50
+
+# smoke (no Gazebo)
+python3 src/rosnav_bot/scripts/yolo_train.py --smoke
+
+# deploy
+ros2 launch rosnav_bot slam_nav.launch.py enable_yolo:=true \
+  yolo_model:=runs/detect/rosnav_yolo/weights/best.pt
+```
+
+### B — Gaussian Splat → Nav2 keepout
+
+```bash
+# full capture → ns-train → mask (needs nerfstudio venv)
+bash src/rosnav_bot/scripts/gs_train_keepout.sh cafe
+
+# or mask-only from an existing points.npz
+MASK_ONLY=1 NPZ=$HOME/gs_data/cafe_points_final.npz \
+  bash src/rosnav_bot/scripts/gs_train_keepout.sh cafe
+
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=cafe \
+  gs_keepout_mask:=src/rosnav_bot/maps/gs_keepout_cafe.yaml
+```
+
+### C — RL local planner (PPO)
+
+Trains offline on a map PGM (no Gazebo). Deploys as a research `/cmd_vel` source.
+
+```bash
+pip install stable-baselines3 gymnasium   # optional; default trainer is pure torch
+python3 src/rosnav_bot/scripts/train_ppo.py --smoke
+python3 src/rosnav_bot/scripts/train_ppo.py \
+  --map src/rosnav_bot/maps/map_maze.yaml --timesteps 200000 --out runs/rl/ppo_maze
+
+# with robot up (disable Nav2 controller or remap cmd_vel when testing)
+ros2 run rosnav_bot rl_policy_node.py --ros-args \
+  -p model_path:=runs/rl/ppo_maze/ppo_scan_nav.pt -p goal_x:=2.0 -p goal_y:=1.0
+```
+
+`train_ppo.py` defaults to a pure-PyTorch PPO (`--backend torch`). `--backend sb3` needs a working stable-baselines3 build.
+---
+
+## 13. Update YAML (tuning)
 
 All configs live under `src/rosnav_bot/config/`. With `--symlink-install`, edit then **relaunch** (no rebuild).
 
@@ -394,7 +554,7 @@ More → [`concepts.md`](concepts.md).
 
 ---
 
-## 13. Fixes
+## 14. Fixes
 
 | Problem | Try |
 |---|---|

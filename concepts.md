@@ -17,7 +17,9 @@ A **node** is a single executable process in ROS 2. Each node does one thing (e.
 
 ### TF (Transform Tree)
 TF tracks the **position of every frame** (coordinate system) relative to every other:
-- `map → odom → base_link → laser_frame`
+- `map → odom → base_link → laser_frame` (lidar)
+- `base_link → imu_link` (IMU, used by Cartographer)
+- `base_link → camera_link` (RGB / RGB-D when enabled)
 - Lets Nav2 know where the robot is in the world at any moment.
 
 ### Actions
@@ -29,31 +31,167 @@ Nav2 exposes `navigate_to_pose` and `follow_waypoints` as action servers.
 ## 2. Gazebo Harmonic
 
 A physics simulator that models the robot's body, wheels, sensors, and environment.
-The **gz_bridge** translates Gazebo topics to ROS 2 topics and back:
-- `/scan` (Gazebo) → `/scan` (ROS 2 LaserScan)
-- `/cmd_vel` (ROS 2 Twist) → `/cmd_vel` (Gazebo motors)
-- `/points` (Gazebo) → `/points` (ROS 2 PointCloud2) — when using 3D LiDAR
+The **gz_bridge** translates Gazebo topics to ROS 2 topics and back.
+Config is selected by `_common.gz_bridge_yaml(lidar_type, enable_rgbd)`:
+
+| Config | When |
+|---|---|
+| `gz_bridge.yaml` | Default 2D lidar (+ optional RGB) |
+| `gz_bridge_3d.yaml` | `lidar_type:=3d` (no empty `/scan` bridge) |
+| `gz_bridge_rgbd.yaml` | `enable_rgbd:=true` / `slam_algo:=vslam`\|`multisensor` |
+| `gz_bridge_3d_rgbd.yaml` | 3D lidar + RGB-D (`multisensor` with `lidar_type:=3d`, etc.) |
+
+Typical ROS topics after bridging:
+- `/scan_raw` ← Gazebo `/scan` (2D lidar only)
+- `/points` ← Gazebo `/points/points` (3D lidar PointCloudPacked)
+- `/camera/image_raw`, `/camera/depth/image_raw`, `/camera/depth/points` (RGB-D)
+- `/cmd_vel_safe` (ROS) → Gazebo `/cmd_vel` (motors)
+- `/odom`, `/tf`, `/clock`, `/imu`
 
 ---
 
 ## 3. SLAM (Simultaneous Localisation and Mapping)
 
-**SLAM Toolbox** builds a 2D occupancy grid map while simultaneously tracking where the robot is inside it, using only LiDAR data.
+SLAM builds a map while tracking the robot inside it. Every backend here still
+publishes a 2D `nav_msgs/OccupancyGrid` on `/map` (plus `map→odom` TF) so Nav2
+is unchanged — only the mapper behind `/map` swaps.
 
-- **Mapping mode** (`mode: mapping`) — build a new map from scratch.
-- **Localization mode** (`mode: localization`) — load a saved map and locate the robot within it (no new map built).
+### Mapping vs navigating on a saved map
 
-The output is a `/map` topic (OccupancyGrid) used by Nav2.
+| Mode | Arg | What runs |
+|---|---|---|
+| Live mapping (default) | `slam:=true` | Chosen `slam_algo` builds `/map`; Nav2 follows |
+| Nav on saved map | `slam:=false` | `map_server` + **AMCL** (or RTAB localize if `slam_algo:=vslam` + `rtabmap_db`) |
+| Explore while mapping | `explore:=true` (needs `slam:=true`) | Frontier explorer sends Nav2 goals into unknown |
+| SLAM backend | `slam_algo:=…` | See matrix below |
+
+```bash
+# Build the map (SLAM on)
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital
+
+# Auto-explore and progressively save
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
+
+# Navigate on the saved map (SLAM off → AMCL)
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital slam:=false
+# Maps autosave under src/rosnav_bot/maps/map_<world> when explore:=true
+```
+
+Fleet equivalent: `multi_robot.launch.py` uses `explore:=true/false` and optional
+`slam_mode:=single|multi` (see §10).
+
+### Algorithm matrix (`slam_algo`)
+
+| `slam_algo` | Package | Sensors | When to use |
+|---|---|---|---|
+| `2d` (default) | **slam_toolbox** | `/scan` + `/odom` | Indoor 2D mapping; default / most tested |
+| `cartographer` | **cartographer_ros** | `/scan` + `/odom` + **`/imu`** | Strong loop closure; apt: `ros-$ROS_DISTRO-cartographer-ros` |
+| `3d` | **rtabmap_slam** | `/points` + RGB + `/odom` | Needs `lidar_type:=3d`; ICP + RGB place recognition |
+| `vslam` | **rtabmap_slam** | **RGB-D** + `/odom` | Textured worlds; can localize from a `.db` (no AMCL) |
+| `multisensor` | **rtabmap_slam** | **RGB-D + lidar** + `/odom` | Lidar ICP + depth occupancy + visual cues |
+| `cslam` | **cslam** + RTAB | `/points` (fleet) | Swarm-SLAM; `link_third_party.sh --cslam` + `lidar_type:=3d` |
+
+Missing optional packages fall back to `2d` (or `3d` for `cslam`) with a launch warning.
+
+### Sensors & TF
 
 ```
-Run to build the map:
-  ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital
-
-Run to auto-explore and progressively save the map:
-  ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
-
-Maps will automatically be saved to `src/rosnav_bot/maps/map_hospital` or `map_obstacles`.
+map → odom → base_link → laser_frame | imu_link | camera_link
 ```
+
+- **2D lidar** — filtered `/scan` feeds slam_toolbox / Cartographer / multisensor.
+- **3D lidar** — `lidar_type:=3d` → `/points`; `pointcloud_to_scan.py` still feeds `/scan` for Nav2.
+- **IMU** — `urdf/imu.xacro` on every chassis; Cartographer tracks `imu_link`.
+- **RGB / RGB-D** — forced for `3d` (RGB), `vslam`, and `multisensor`.
+
+Wheel odom from Gazebo remains the sole `odom→base_link` publisher for every
+backend (no separate ICP/visual odometry node) — avoids a two-parent TF conflict.
+
+### slam_toolbox (`slam_algo:=2d`)
+
+Default. Params: `config/mapper_params_online_async.yaml` (and multi-robot variants).
+
+```bash
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
+```
+
+### Cartographer (`slam_algo:=cartographer`)
+
+Google Cartographer 2D submaps + pose-graph. Launch starts `cartographer_node` +
+`cartographer_occupancy_grid_node` (`/map`). Lua: `config/cartographer/rosnav_2d.lua`
+(IMU) and `rosnav_2d_no_imu.lua`. Upstream includes are merged at runtime from
+`cartographer_ros/configuration_files`.
+
+```bash
+sudo apt install ros-$ROS_DISTRO-cartographer-ros
+ros2 launch rosnav_bot slam_nav.launch.py slam_algo:=cartographer explore:=true
+```
+
+### RTAB-Map lidar (`slam_algo:=3d`)
+
+Requires `lidar_type:=3d`. ICP on `/points`; RGB (no depth) for bag-of-words loop
+closure only. Always projects 2D `/map` for Nav2; `octomap:=true` also fills
+`/octomap_binary` / `/octomap_full`.
+
+```bash
+ros2 launch rosnav_bot slam_nav.launch.py lidar_type:=3d slam_algo:=3d explore:=true
+ros2 launch rosnav_bot slam_nav.launch.py lidar_type:=3d slam_algo:=3d octomap:=true
+```
+
+### RTAB-Map visual (`slam_algo:=vslam`)
+
+Forces `enable_rgbd:=true`. Visual registration (`Reg/Strategy=0`), occupancy from
+depth (`Grid/Sensor=1`). Prefer textured Fuel worlds (`cafe`, …). Details also in §13.
+
+```bash
+ros2 launch rosnav_bot slam_nav.launch.py slam_algo:=vslam world_name:=cafe \
+  rtabmap_db:=src/rosnav_bot/maps/rtabmap_cafe.db explore:=true
+ros2 launch rosnav_bot slam_nav.launch.py slam:=false slam_algo:=vslam \
+  rtabmap_db:=src/rosnav_bot/maps/rtabmap_cafe.db   # RTAB replaces AMCL
+```
+
+### Multi-sensor RTAB-Map (`slam_algo:=multisensor`)
+
+One RTAB-Map node: RGB-D **and** lidar (`Grid/Sensor=2`, ICP `Reg/Strategy=1`).
+Default 2D `/scan`, or `lidar_type:=3d` for `/points`.
+
+```bash
+ros2 launch rosnav_bot slam_nav.launch.py slam_algo:=multisensor explore:=true
+ros2 launch rosnav_bot slam_nav.launch.py lidar_type:=3d slam_algo:=multisensor explore:=true
+```
+
+### Swarm-SLAM (`slam_algo:=cslam`)
+
+Multi-robot only (`multi_robot.launch.py slam_mode:=multi lidar_type:=3d`). Needs
+the optional `cslam` package.
+
+```bash
+bash src/rosnav_bot/scripts/link_third_party.sh --cslam
+colcon build --packages-up-to cslam
+ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi lidar_type:=3d slam_algo:=cslam
+```
+
+### Benchmarking algorithms
+
+`scripts/benchmark_slam.sh` runs each algo headless with the same world +
+`explore:=true` budget, then `benchmark.py` (`mode:=slam`) logs coverage % and
+time-to-converge → `/tmp/rosnav_slam_bench/<stamp>/comparison.md`.
+
+```bash
+./src/rosnav_bot/scripts/benchmark_slam.sh
+WORLD=maze DURATION_S=90 ALGOS="2d cartographer multisensor" ./src/rosnav_bot/scripts/benchmark_slam.sh
+
+# Manual (stack already running)
+ros2 run rosnav_bot benchmark.py --ros-args \
+  -p mode:=slam -p label:=carto -p duration_sec:=120 -p out_dir:=~/rosnav_benchmarks
+
+# Diff two JSON reports offline
+ros2 run rosnav_bot benchmark.py --ros-args -p mode:=report \
+  -p inputs:="['~/rosnav_benchmarks/2d_slam.json','~/rosnav_benchmarks/carto_slam.json']"
+```
+
+`benchmark.py` also has `mode:=nav` (goal timing) and `mode:=localization` (AMCL
+covariance) for controllers / localizers, not only mappers.
 
 ---
 
@@ -76,8 +214,10 @@ Nav2 is the ROS 2 navigation framework. It is a collection of nodes managed by *
 
 ### Launch Modes
 
+- **`slam_nav.launch.py`** — primary single-robot entry. Toggle mapping vs localisation with `slam:=true|false` (see §3); Nav2 always comes up.
 - **`bringup_launch.py`** — full stack (map_server + AMCL + navigation). Use for autonomous navigation with a saved map.
 - **`navigation_launch.py`** — navigation stack only (no map_server). Use when SLAM is running separately.
+- **`robot.launch.py`** — Gazebo + robot + Nav2 on a saved `map:=…` (nav-on-map path; good for drive-type demos).
 
 ---
 
@@ -113,6 +253,18 @@ Costmaps are grids that encode how dangerous each cell is.
 - **Local costmap** — small rolling window around the robot, used by the controller to avoid close-range obstacles.
 
 **Inflation layer** — expands obstacle cells outward by `inflation_radius` so the robot steers away from walls.
+
+**Obstacle layer plugin** — both costmaps use `nav2_costmap_2d::VoxelLayer`, not the 2D-only `ObstacleLayer` (all `nav2_params*.yaml` / multirobot templates). Observation sources are listed unconditionally:
+
+| Source | Topic | Active when |
+|---|---|---|
+| `scan` | `/scan` | Always (2D lidar, or projected from `/points` when `lidar_type:=3d`) |
+| `points` | `/points` | `lidar_type:=3d` (empty otherwise — harmless) |
+| `depth` | `/camera/depth/points` | `enable_rgbd:=true` / `slam_algo:=vslam` (empty otherwise) |
+
+With the default 2D lidar, VoxelLayer behaves like ObstacleLayer (single-slice marking from `/scan`). With 3D lidar it marks a real voxel grid from `/points` so overhangs (shelves, tables) show up. Depth adds close-range front obstacles from the RGB-D cloud. `z_voxels` is capped at 16 — `voxel_grid` packs each column into a 16-bit mask, so more silently errors every cycle ("can only support up to 16 z values"); `z_resolution: 0.125` × `z_voxels: 16` = 2.0m, matching `max_obstacle_height`.
+
+**OctoMap** — RTAB-Map (`slam_algo:=3d` or `vslam`) always projects its map to the 2D `/map` OccupancyGrid Nav2 uses; `octomap:=true` additionally sets `Grid/3D:=true` so `/octomap_binary`/`/octomap_full` (and `/octomap_occupied_space`) populate a real 3D voxel map for visualization — Nav2 itself still consumes `/map` + the VoxelLayer above, not the octomap directly.
 
 ---
 
@@ -219,10 +371,11 @@ This is a lightweight, 2D-native equivalent of the idea behind two open-source
 collaborative-SLAM frameworks — [Swarm-SLAM](https://github.com/MISTLab/Swarm-SLAM)'s
 sparse inter-robot loop closure and [Multi-Robot-Graph-SLAM](https://github.com/aserbremen/Multi-Robot-Graph-SLAM)'s
 graph sharing between per-robot SLAM instances — not a vendored port of either:
-both are 3D point-cloud/PCL/GICP pipelines built for Velodyne-class lidars, a poor
-fit here since `slam_toolbox` in this repo always consumes 2D `LaserScan`, even
-when `lidar_type:=3d` is set (that's a separate point-cloud sensor, not wired into
-SLAM).
+both are 3D point-cloud/PCL/GICP pipelines built for Velodyne-class lidars. With
+`slam_mode:=multi` + default `slam_algo:=2d`, each robot still runs `slam_toolbox` on
+2D `LaserScan` — and when `lidar_type:=3d`, that scan is the projected `/scan` from
+`pointcloud_to_scan`, not the raw cloud. For true 3D multi-SLAM use
+`slam_mode:=multi lidar_type:=3d slam_algo:=3d` (per-robot RTAB-Map on `/points`).
 
 ```
 robot1 slam_toolbox ──► /robot1/map ─┬────────────────────────────┐
@@ -277,7 +430,7 @@ frame names with `<ns>/`, leave the shared `map` frame alone, absolute per-robot
 topics get `/<ns>` inserted).
 
 ```bash
-# SLAM + frontier exploration in hospital (default)
+# SLAM + frontier exploration in cafe (default)
 ros2 launch rosnav_bot multi_robot.launch.py
 
 # Pre-built map mode
@@ -465,22 +618,55 @@ ros2 run rosnav_bot rmf_submit_task.py patrol room_a room_b --rounds 2
 | | 2D LiDAR (`lidar.xacro`) | 3D LiDAR (`lidar3d.xacro`) |
 |---|---|---|
 | Channels | 1 horizontal ring | 16 vertical channels |
-| Output topic | `/scan` (LaserScan) | `/points` (PointCloud2) |
-| Nav2 compatibility | Native | Needs `pointcloud_to_laserscan` node |
-| Typical use | Navigation, SLAM | Object detection, 3D mapping |
+| Bridge topic | `/scan_raw` (LaserScan) | `/points` (PointCloud2) |
+| Nav2 / SLAM input | Native after filter chain → `/scan` | `pointcloud_to_scan` → `/scan_raw`, then same filter chain |
+| Typical use | Navigation, SLAM | 3D mapping + projected `/scan` for Nav2 |
 
-To enable 3D LiDAR, edit `robot.urdf.xacro`:
-```xml
-<!-- Replace -->
-<xacro:include filename="lidar.xacro" />
-<!-- With -->
-<xacro:include filename="lidar3d.xacro" />
+In this repo you do **not** hand-edit the URDF for 3D — pass `lidar_type:=3d` to
+`slam_nav.launch.py` / `multi_robot.launch.py` (diff-drive only). That swaps in
+`lidar3d.xacro`, the matching `gz_bridge_3d*.yaml`, and
+`scripts/pointcloud_to_scan.py` (or `pointcloud_to_laserscan` if installed).
+
+```bash
+ros2 launch rosnav_bot slam_nav.launch.py lidar_type:=3d
+ros2 launch rosnav_bot slam_nav.launch.py lidar_type:=3d slam_algo:=3d octomap:=true
+ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi lidar_type:=3d slam_algo:=3d
+# Optional mount / FOV: lidar3d_height:=0.25 lidar3d_vfov_deg:=10
 ```
 
-Then for Nav2 to work you need to convert PointCloud2 → LaserScan:
+### Scan cleaning chain (before SLAM / Nav2)
+
+Everything that consumes lidar for mapping or costmaps sees **`/scan`**, never the
+raw Gazebo feed. Pipeline in `slam_nav.launch.py`:
+
+```
+/points (3D only) ──► pointcloud_to_scan ──► /scan_raw
+                                              │
+/scan_raw (2D bridge) ────────────────────────┤
+                                              ▼
+                                    laser_filters
+                                    (range + shadows)
+                                              │
+                         scan_gate:=true (default)
+                                              ▼
+                                    /scan_pre ──► scan_quality_gate ──► /scan
+                         scan_gate:=false
+                                              ▼
+                                            /scan
+```
+
+| Stage | Config / script | What it drops |
+|---|---|---|
+| `laser_filters` | `config/laser_filters.yaml` | Near-range band, beyond max range, shadow/veiling points at corners |
+| `scan_quality_gate` | `scripts/scan_quality_gate.py` | **Malformed** frames: empty `frame_id`, zero/backwards stamp, broken angle/range metadata, beam-count vs angles mismatch, sudden beam-count jump, too many NaNs, too few finite in-range hits |
+
+`laser_filters` cleans *content*; the gate rejects *structurally* bad messages so
+`slam_toolbox` / Cartographer / RTAB-Map never integrate them. Disable with
+`scan_gate:=false`. Monitor-only (no remapping):
+
 ```bash
-ros2 run pointcloud_to_laserscan pointcloud_to_laserscan_node \
-  --ros-args -r cloud_in:=/points -r scan:=/scan
+ros2 run rosnav_bot scan_quality_gate.py --ros-args -p use_sim_time:=true
+# logs: scans ok=… rejected=… (reasons: …)
 ```
 
 ---
@@ -529,8 +715,60 @@ Bridge to ROS 2 (add to `gz_bridge.yaml`):
   direction: GZ_TO_ROS
 ```
 
-### Depth camera (RGBD)
-Use `sensor type="depth_camera"` in Gazebo and bridge `sensor_msgs/msg/PointCloud2` or `sensor_msgs/msg/Image` (depth). Can replace or supplement 2D LiDAR for richer obstacle data.
+### Depth camera (RGBD) / VSLAM
+
+`rgbd_camera.xacro` mounts an RGB-D sensor on the same `camera_link` as the RGB camera
+(mutually exclusive with RGB-only `camera.xacro`).
+
+**Enable:**
+- `enable_rgbd:=true` — depth for Nav2 costmaps / perception (independent of SLAM algo)
+- `slam_algo:=vslam` — forces RGB-D + RTAB-Map visual SLAM (`Reg/Strategy=0`, `Grid/Sensor=1`)
+
+Bridge configs (`gz_bridge_rgbd.yaml` / `gz_bridge_3d_rgbd.yaml`) publish:
+- `/camera/image_raw` — RGB
+- `/camera/depth/image_raw` — depth image (`32FC1`)
+- `/camera/camera_info`
+- `/camera/depth/points` — depth PointCloud2 → VoxelLayer source `depth`
+
+RTAB-Map camera QoS is set to **Reliable** so it matches `ros_gz_bridge` publishers
+(BEST_EFFORT would never match).
+
+```bash
+# Depth-aware Nav2 (keep 2D slam_toolbox) — costmaps use /camera/depth/points
+ros2 launch rosnav_bot slam_nav.launch.py enable_rgbd:=true
+
+# 3D lidar + depth camera together
+ros2 launch rosnav_bot slam_nav.launch.py lidar_type:=3d slam_algo:=3d enable_rgbd:=true octomap:=true
+
+# Visual SLAM (RGB-D registration)
+ros2 launch rosnav_bot slam_nav.launch.py slam_algo:=vslam world_name:=cafe
+# Localization + Nav2 (no AMCL):
+ros2 launch rosnav_bot slam_nav.launch.py slam:=false slam_algo:=vslam rtabmap_db:=/path/to.db
+```
+
+Prefer textured Fuel worlds (`cafe`, `lake_house`, …) for VSLAM — see README §10b.
+`slam_algo:=3d` is separate: lidar ICP + RGB bag-of-words only (RGB-only camera unless `enable_rgbd:=true`).
+
+Full SLAM backend matrix (including **Cartographer**, **multisensor**, **cslam**, and
+the headless **benchmark**) → **§3**.
+
+Both `camera.xacro` and `rgbd_camera.xacro` render at **1280×960** (bumped from
+640×480 — 4:3 kept so the tuned 90° horizontal FOV / ArUco framing doesn't
+shift). `gs_capture.py`'s `image_width`/`image_height` params default to the
+same values so its intrinsics stay correct.
+
+### Overview camera (`world_monitor_cam`)
+
+Every world file has a fixed, static third-party camera named
+`world_monitor_cam`, bridged to `/world_monitor/image_raw`
+(`gz_bridge.yaml`/`gz_bridge_rgbd.yaml`) and shown in `bot.rviz`'s "World
+Monitor" Image display — useful for watching the robot from outside its own
+sensors without opening the Gazebo GUI (works headless). `hospital.world`'s
+is hand-tuned to frame the ArUco dock marker; the rest use a generic
+spawn-relative placement (elevated, looking back down at the robot's start
+point) that hasn't been individually verified per world — retune the
+`<pose>`/`<clip><far>` in the world file if it clips geometry or misses the
+interesting area.
 
 ### Mobile robot / arched camera mount
 Mount the camera link at any offset from `chassis`:
@@ -572,6 +810,11 @@ the staging-zone edges and loading dock, out of the camera's 8 m range from
 the *default* generic spawn — drive/explore toward them, or override
 `spawn_x`/`spawn_y`/`spawn_yaw` to start closer, to get a detection quickly.
 
+**Fine-tuning for sim assets:** stock `yolov8n.pt` (COCO) often misses low-poly
+Gazebo furniture (see §29). Collect frames with `yolo_collect.py`, annotate
+YOLO-format `labels/*.txt`, then `yolo_train.py` — deploy the resulting
+`best.pt` via `yolo_model:=…`. Full pipeline → §35.
+
 ---
 
 ## 14. New Tool Scripts
@@ -597,6 +840,21 @@ and scan-fusion fleets report/save the right OccupancyGrid without remapping by 
 ```bash
 ros2 run rosnav_bot multi_teleop.py
 # → shows robot list, select one, drive it, switch with R, spawn new with N
+```
+
+### `scan_quality_gate.py` — Reject malformed LaserScans before SLAM
+
+See §12. Default mode is **monitor** (log rejects); `slam_nav` launches it in
+**gate** mode between `laser_filters` (`/scan_pre`) and `/scan`.
+
+```bash
+# Monitor a live stack
+ros2 run rosnav_bot scan_quality_gate.py --ros-args -p use_sim_time:=true
+
+# Manual gate (if you remapped laser_filters → scan_pre yourself)
+ros2 run rosnav_bot scan_quality_gate.py --ros-args \
+    -p mode:=gate -p use_sim_time:=true \
+    -r scan_in:=scan_pre -r scan_out:=scan
 ```
 
 ---
@@ -644,6 +902,46 @@ ros2 run rosnav_bot path_planning.py
 ros2 run rosnav_bot path_planning.py --ros-args \
   -p start_x:=0.0 -p start_y:=0.0 -p goal_x:=3.0 -p goal_y:=-1.0
 ```
+
+---
+
+## 17b. Navigation Platforms (AMR matrix)
+
+Two independent launch args pick **how it moves** vs **how it looks**:
+
+| Arg | Changes | Values |
+|---|---|---|
+| `drive_type` | Physics + Gazebo plugin + Nav2 params | `diff` (default) · `mecanum` · `ackermann` |
+| `robot_model` | Chassis **visual** only (same footprint / wheels / Nav2) | `custom` (default) · `mir100` · `husky` |
+
+`mir100` / `husky` only work with `drive_type:=diff`. Mixing them with mecanum/ackermann is ignored (warning in the log). **Husky is not car-like** — it is a skid-steer *look* on diff drive; car-like motion is `drive_type:=ackermann` only.
+
+### All vehicles at a glance
+
+| Vehicle | Launch knobs | Motion | Turn in place? | Strafe? | Nav2 | Sensors (always / optional) |
+|---|---|---|---|---|---|---|
+| Diff box | `drive_type:=diff` | Forward + rotate | Yes | No | DWB (Humble) or `controller:=mppi` | **2D lidar + IMU**; `lidar_type:=3d` OK; camera via `enable_camera` / `enable_rgbd` |
+| MiR100 look | `robot_model:=mir100` | Same as diff | Yes | No | Same as diff | Same as diff (mesh skin only) |
+| Husky look | `robot_model:=husky` | Same as diff | Yes | No | Same as diff | Same as diff (mesh skin only) |
+| Mecanum | `drive_type:=mecanum` | Holonomic | Yes | Yes (`vy`) | `max_vel_y` unlocked | **2D lidar + IMU** (no 3D lidar path); camera opt-in |
+| Ackermann (car-like) | `drive_type:=ackermann` | Front steer, ~0.66 m min radius | No | No | Always MPPI + Reeds-Shepp | **2D lidar + IMU** (no 3D lidar path); camera opt-in |
+
+Shared footprint ≈ 0.55 × 0.4 m so costmaps stay consistent across skins. Lidar is on for every platform (`lidar.xacro` → `/scan` after the §12 filter chain). Camera defaults **off** in `slam_nav` (render cost); forced on for YOLO / `slam_algo:=vslam` / `enable_rgbd:=true` / `slam_algo:=3d` (RGB for RTAB loop-closure).
+
+```bash
+# Diff / skins / holonomic / car-like (SLAM or slam:=false both work)
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital drive_type:=diff
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital robot_model:=husky
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital robot_model:=mir100
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital drive_type:=mecanum
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital drive_type:=ackermann safety:=true
+
+# Headless smoke: /clock /odom /scan /map + short drive for all five
+./src/rosnav_bot/scripts/smoke_amr_matrix.sh
+# WORLD=maze BOOT_WAIT_S=50 ./src/rosnav_bot/scripts/smoke_amr_matrix.sh
+```
+
+Deep dives: §18 mecanum · §18b ackermann · §19 MiR100 · §20 Husky · §12 lidar.
 
 ---
 
@@ -760,7 +1058,8 @@ y=±0.205 to ±0.245, outside the mesh's y-span).
 ## 20. Husky Chassis Skin (`robot_model:=husky`)
 
 Same idea as the MiR100 skin above — chassis **visual only**, same wheels/
-physics/nav2 footprint. Only valid with `drive_type:=diff`.
+physics/nav2 footprint. Only valid with `drive_type:=diff`. This is **not**
+ackermann/car-like motion; for that use `drive_type:=ackermann` (§18b).
 
 ```bash
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital robot_model:=husky
@@ -818,13 +1117,13 @@ Gazebo after the fix.
 | Launch file | What it does | Key args |
 |---|---|---|
 | `robot.launch.py` | Gazebo + robot + Nav2 full bringup with saved map | `map`, `world`, `robot_name`, `spawn_x/y/z/yaw`, `rviz`, `use_sim_time`, `drive_type` (`diff`\|`mecanum`\|`ackermann`) |
-| `slam_nav.launch.py` | Gazebo + robot + SLAM Toolbox + Nav2 (+ optional auto frontier) | `world_name`, `world`, `explore`, `map_prefix`, `rviz`, `robot_name`, `spawn_x/y/z/yaw`, `drive_type` (`diff`\|`mecanum`\|`ackermann`), `controller` (`dwb`\|`mppi`) |
+| `slam_nav.launch.py` | Gazebo + robot + SLAM/AMCL + Nav2 (+ optional frontier) | `world_name`, `slam` (`true`\|`false` — see §3), `explore`, `slam_algo` (`2d`\|`cartographer`\|`3d`\|`vslam`\|`multisensor`\|`cslam`), `lidar_type`, `rtabmap_db`, `octomap`, `drive_type`, `robot_model`, `controller`, `enable_camera`/`enable_rgbd`, `scan_gate`, `rviz` |
 | `slam.launch.py` | Gazebo + robot + SLAM Toolbox mapping mode | `use_sim_time` |
-| `multi_robot.launch.py` | Scalable N-robot fleet: SLAM+frontier or shared map + Nav2 per robot | `world`, `map`, `explore`, `slam_mode`, `collab_loop_closure`, `robot_count`, `robot_layout`, `robots_json`, `drive_type` (`diff`\|`mecanum`\|`ackermann`), `controller` (`dwb`\|`mppi`), `fleet_mgmt`, `rviz`, `headless` |
+| `multi_robot.launch.py` | Scalable N-robot fleet: SLAM+frontier or shared map + Nav2 per robot | `world`, `map`, `explore`, `slam_mode`, `lidar_type`, `slam_algo`, `enable_rgbd`, `collab_loop_closure`, `robot_count`, `robot_layout`, `robots_json`, `drive_type` (`diff`\|`mecanum`\|`ackermann`), `controller` (`dwb`\|`mppi`), `fleet_mgmt`, `rviz`, `headless` |
 | `nav2.launch.py` | Nav2 only (attach to running Gazebo) | `map`, `world`, `use_sim_time` |
 | `rmf_fleet.launch.py` | Open-RMF traffic scheduling on top of an already-running static-map fleet (see §11b) | `robot_count`, `robots`, `fleet_name`, `map_name`, `adapter_delay` |
 | `gs_capture.launch.py` | Gazebo (headless) + the teleportable `gs_capture_rig` camera, no robot/nav stack (see §27) | `world_name` |
-| `_common.py` | Not a launch file — shared helper module (world resolution, Gazebo/RSP/laser-filter builders, nav2 params selection + multi-robot namespacing) imported by `slam_nav.launch.py` and `multi_robot.launch.py` | — |
+| `_common.py` | Not a launch file — shared helper module (world resolution, Gazebo/RSP/laser-filter/scan-quality-gate builders, nav2 params selection + multi-robot namespacing) imported by `slam_nav.launch.py` and `multi_robot.launch.py` | — |
 
 ## Quick Reference — Scripts
 
@@ -834,15 +1133,26 @@ Gazebo after the fix.
 | `path_planning.py` | Standalone A* path planner (from `/map`, hardcoded fallback) | `map_topic`, `grid_size_x/y`, `resolution`, `safety_margin`, `start_x/y`, `goal_x/y` |
 | `waypoint_nav.py` | Navigate through a sequence of waypoints via Nav2 | `waypoints_file`, `frame_id` |
 | `frontier_explorer.py` | Autonomous map exploration via frontier detection + optional auto-save | `frontier_detector` (`wfd`\|`classic`\|`rrt`), `frontier_scorer`, `min_frontier_size`, `revisit_radius`, `poll_period`, `map_save_path` |
+| `benchmark.py` | SLAM coverage / Nav2 goal / AMCL covariance benchmarks + offline `mode:=report` | `mode`, `label`, `duration_sec`, `out_dir`, `goals_file`, `inputs` |
+| `benchmark_slam.sh` | Headless matrix over `slam_algo` values; wraps `benchmark.py` | env: `WORLD`, `DURATION_S`, `ALGOS`, `OUT_DIR` |
 | `check_odometry.py` | Debug odometry data | — |
+| `scan_quality_gate.py` | Find / reject malformed LaserScans before SLAM (see §12) | `mode` (`monitor`\|`gate`), `scan_in`, `scan_out`, `min_valid_ratio`, `min_valid_beams`, `max_nan_ratio` |
+| `smoke_amr_matrix.sh` | Headless smoke of all five AMRs (diff/mecanum/ackermann/mir100/husky): topics + short drive (see §17b) | env: `WORLD`, `BOOT_WAIT_S`, `DRIVE_S`, `LOG_DIR` |
 | `reset_pose.py` | Reset robot pose in simulation | `world_name`, `robot_name`, `reset_x/y/z/yaw` |
 | `rmf_fleet_adapter.py` | Registers the fleet with Open-RMF, bridges RMF path commands to Nav2 (see §11b) | `--fleet-name`, `--map-name`, `--robots` |
 | `rmf_submit_task.py` | Submits a patrol task to `rmf_task_dispatcher` to exercise traffic scheduling | `category`, `places`, `--rounds`, `--wait` |
 | `obstacle_tracker.py` | Detects + tracks moving obstacles from `/scan`, with ellipse extent estimation (see §25) | `min_speed`, `cluster_radius`, `track_gate_dist`, `min_extent`, `extent_gain` |
+| `pointcloud_to_scan.py` | Projects 3D `/points` → `/scan_raw` when `lidar_type:=3d` (fallback if `pointcloud_to_laserscan` not installed; see §12) | `min_height`, `max_height`, `range_min/max` |
 | `dynamic_obstacle_driver.py` | Patrols a spawned `dynamic_obstacle` model back and forth (see §26) | `obstacle_name`, `axis`, `amplitude`, `speed` |
 | `gs_capture.py` | Sweeps the `gs_capture_rig` camera through a waypoint grid, saves nerfstudio-format capture data (see §27) | `world_name`, `out_dir`, `centers_x/y`, `heights`, `yaw_steps`, `pitch_deg` |
 | `gs_splat_to_pointcloud.py` | Not a ROS node — converts a `ns-export gaussian-splat` `.ply` to `(xyz, rgb, opacity)` `.npz` (see §27) | `argv`: ply path, out path, opacity thresh |
 | `gs_view_pointcloud.py` | Publishes a converted splat `.npz` as a latched `PointCloud2` for viewing in RViz (see §27) | `npz_path`, `topic`, `frame_id` |
+| `gs_mask_from_splat.py` | Not a ROS node — rasterizes a converted splat `.npz` into a Nav2 costmap-filter-mask (KeepoutFilter) PGM+YAML (see §28) | `argv`: `--npz`, `--out`, `--z-min/max`, `--dilate`, `--align-to` |
+| `gs_train_keepout.sh` | Orchestrates capture → `ns-train` → export → keepout mask (see §28 / §35); `MASK_ONLY=1` skips train | env: `DATA_DIR`, `NPZ`, `OUT_MASK`, `MAX_ITERS`, `SKIP_CAPTURE` |
+| `yolo_collect.py` | Saves RGB frames (+ empty labels) for YOLO fine-tuning (see §35) | `out_dir`, `max_frames`, `classes`, `split` |
+| `yolo_train.py` | Not a ROS node — fine-tunes Ultralytics YOLO on `dataset.yaml` (see §35); `--smoke` for a synthetic 1-epoch dry run | `argv`: `--data`, `--model`, `--epochs`, `--smoke` |
+| `train_ppo.py` | Not a ROS node — offline PPO on `ScanNavEnv` (map PGM raycast, no Gazebo; see §35) | `argv`: `--map`, `--timesteps`, `--out`, `--backend`, `--smoke` |
+| `rl_policy_node.py` | Research `/cmd_vel` from a trained ScanNav policy (`.pt` or SB3 `.zip`; see §35) | `model_path`, `goal_x/y`, `scan_topic`, `odom_topic` |
 
 ---
 
@@ -875,10 +1185,18 @@ After launching any launch file, open RViz and add these displays:
 | Map | `/map_merged` | Multi-SLAM merge live (`slam_mode:=multi`) |
 | Map | `/map_fused` | Scan-fusion layer live (`merge_scans:=true`) |
 | RobotModel | — | URDF loaded, TF tree working |
-| LaserScan | `/scan` | LiDAR data flowing from Gazebo |
+| LaserScan | `/scan` | 2D lidar, or projected scan when `lidar_type:=3d` |
+| PointCloud2 | `/points` | 3D lidar cloud (`lidar_type:=3d`) |
+| PointCloud2 | `/camera/depth/points` | RGB-D depth cloud (`enable_rgbd:=true`) |
+| PointCloud2 | `/cloud_map` | RTAB-Map assembled cloud (`slam_algo:=3d`\|`vslam`) |
+| PointCloud2 | `/octomap_occupied_space` | OctoMap voxels (`octomap:=true`) |
+| Image | `/camera/image_raw` | RGB / RGB-D color |
+| Image | `/camera/depth/image_raw` | Depth image (`enable_rgbd` / `vslam`) |
 | Pose | `/amcl_pose` | AMCL is localising the robot (only in `robot.launch.py`) |
 | Path | `/plan` | Nav2 planner computed a path |
-| MarkerArray | `/local_costmap/costmap` | Local obstacle avoidance active |
+| Map | `/local_costmap/costmap` | Local obstacle avoidance active |
+
+`bot.rviz` already includes Lidar3D, DepthCloud, CloudMap, Depth, and OctomapOccupied displays.
 
 Set **Fixed Frame** to `map` in RViz Global Options.
 
@@ -887,20 +1205,32 @@ Set **Fixed Frame** to `map` in RViz Global Options.
 ## Checking SLAM / Localization from Terminal
 
 ```bash
-# Is the map being published?
-ros2 topic echo /map --once | head -5
+# Which mapper is running?
+ros2 node list | grep -Ei 'slam_toolbox|cartographer|rtabmap'
 
-# Is AMCL running and localising?
+# Is the map being published? (width/height should grow while mapping)
+ros2 topic echo /map --once --field info
+
+# IMU (Cartographer) / depth (vslam|multisensor)
+ros2 topic hz /imu
+ros2 topic hz /camera/depth/image_raw
+
+# Is AMCL running and localising? (saved-map mode only — not live SLAM)
 ros2 topic echo /amcl_pose
 
-# Is the TF tree complete? (map → odom → base_link → laser_frame)
+# Is the TF tree complete? (map → odom → base_link → laser_frame [/ imu_link])
 ros2 run tf2_tools view_frames   # saves frames.pdf
 
 # Is Nav2 active?
 ros2 node list | grep -E "amcl|planner|controller|bt_navigator"
 
 # Is the robot moving? (should show non-zero during navigation)
-ros2 topic hz /cmd_vel
+ros2 topic hz /cmd_vel_safe
+
+# Are LaserScans clean enough for SLAM? (scan_gate is on by default in slam_nav)
+ros2 topic hz /scan
+ros2 run rosnav_bot scan_quality_gate.py --ros-args -p use_sim_time:=true
+# expect rejected≈0%; non-zero reasons → empty_frame_id / too_few_valid / …
 
 # Save map after SLAM mapping (world-aware naming)
 ros2 run nav2_map_server map_saver_cli -f src/rosnav_bot/maps/map_hospital
@@ -909,6 +1239,9 @@ ros2 run nav2_map_server map_saver_cli -f src/rosnav_bot/maps/map_obstacles
 # Multi-SLAM / scan-fusion: pick the merged topic explicitly
 ros2 run nav2_map_server map_saver_cli -t /map_merged -f src/rosnav_bot/maps/map_hospital
 ros2 run rosnav_bot fleet_manager.py savemap src/rosnav_bot/maps/map_hospital  # auto-picks topic
+
+# Compare SLAM backends headless (see §3 Benchmarking)
+./src/rosnav_bot/scripts/benchmark_slam.sh
 
 # Load custom waypoints
 ros2 run rosnav_bot waypoint_nav.py --ros-args \
@@ -1297,8 +1630,241 @@ ns-viewer --load-config outputs/.../splatfacto/<timestamp>/config.yml   # → ht
 `--pipeline.model.random-init True` is needed because this pipeline has no COLMAP sparse point cloud to seed the Gaussians from — splatfacto falls back to random initialization instead.
 
 **Viewing in RViz instead of the nerfstudio browser viewer:** `ns-viewer`'s live web viewer competes with an in-progress `ns-train` for the same GPU, so it can get stuck on a broken preview while training is still running (fine once training is finished, though). As an alternative — RViz has no Gaussian-Splat renderer, but a splat's Gaussian centers can be shown as a colored `PointCloud2`, which RViz displays natively:
-1. `scripts/gs_splat_to_pointcloud.py` (run inside the nerfstudio venv, needs `plyfile`) — reads a `ns-export gaussian-splat` `.ply`, converts each Gaussian's spherical-harmonics DC color term to RGB (`0.5 + 0.28209479177387814 * f_dc`), filters by opacity, writes `(xyz, rgb, opacity)` to a `.npz`.
+1. `scripts/gs_splat_to_pointcloud.py` (run inside the nerfstudio venv, needs `plyfile`) — reads a `ns-export gaussian-splat` `.ply`, converts each Gaussian's spherical-harmonics DC color term to RGB (`0.5 + 0.28209479177387814 * f_dc`), filters by opacity, writes `(xyz, rgb, opacity)` to a `.npz`. **Pass `--dataparser-transform <dataparser_transforms.json>`** — see §29b, this is required to get true-world-meter coordinates.
 2. `scripts/gs_view_pointcloud.py` — a ROS 2 node (run in the normal ROS environment, not the nerfstudio venv) that loads that `.npz` and publishes it as a latched (`TRANSIENT_LOCAL`) `sensor_msgs/PointCloud2` on `/gs_capture/splat_points`, RGB packed PCL-style (uint8 r/g/b packed into the float32 `rgb` field).
-3. `rviz/gs_capture.rviz` — Fixed Frame `world`, an `Image` display on `/gs_capture/image_raw` (live capture feed) plus a `PointCloud2` display on `/gs_capture/splat_points` (Color Transformer `RGB8`, Durability Policy `Transient Local`).
+3. `rviz/gs_capture.rviz` — minimal, Fixed Frame `world`, just the capture-rig `Image` feed + splat `PointCloud2`. `rviz/gs_overview.rviz` (§29) is the fuller config — Fixed Frame `map`, adds SLAM map, keepout/speed costmap, robot model, 3D lidar, semantic markers, and camera alongside the splat cloud, so the splat can be viewed against a live running sim instead of standalone.
 
 This shows the reconstruction as discrete colored dots (no soft Gaussian blending/alpha), not photoreal like the nerfstudio viewer — good enough to sanity-check shape and color at a glance without leaving RViz.
+
+## 28. GS Costmap Keepout Filter (`gs_mask_from_splat.py`)
+
+First real Nav2 integration for the Gaussian-Splatting spike (§27) — turns a trained splat into a Nav2 **KeepoutFilter** costmap layer, the "GS as costmap layer" path from the GS-navigation integration plan: enrich free-space, not the planner/controller. `planner_server`/`controller_server`/MPPI/DWB are untouched; GS only ever contributes cost, never `cmd_vel`.
+
+**Pipeline:** `splat.ply` (nerfstudio venv) → `gs_splat_to_pointcloud.py` → `.npz` → `gs_mask_from_splat.py` (plain ROS env, no venv) → Nav2 costmap-filter-mask (`.pgm` + `.yaml`, same trinary format as a normal `map_server` map: 0=occupied/black, 254=free/white) → `filter_mask_server` + `costmap_filter_info_server` → `keepout_filter` plugin on `local_costmap`/`global_costmap`.
+
+**One-shot orchestrator:** `scripts/gs_train_keepout.sh` chains §27 capture → `ns-train splatfacto` → `ns-export` → `gs_splat_to_pointcloud.py` → `gs_mask_from_splat.py`. Skip training with an existing npz:
+
+```bash
+MASK_ONLY=1 NPZ=$HOME/gs_data/cafe_points_final.npz \
+  bash src/rosnav_bot/scripts/gs_train_keepout.sh cafe
+# full train (needs Gazebo + ~/venvs/nerfstudio):
+# bash src/rosnav_bot/scripts/gs_train_keepout.sh cafe
+```
+
+**`gs_mask_from_splat.py`:**
+- Height-band filters Gaussian centers (default `z ∈ [0.05, 2.0]`, matching the `obstacle_layer`/`VoxelLayer` `min/max_obstacle_height` already used in `nav2_params.yaml`), rasterizes the XY footprint to occupied cells, dilates a couple of cells to absorb splat noise.
+- `--align-to <existing map.yaml>` inherits that map's resolution/origin/size for pixel-exact overlay with a real SLAM map's `static_layer` (e.g. `maps/map_hospital.yaml`); omit it to auto-fit a bounding box + margin instead.
+- No coordinate-frame correction beyond the height band — rasterizes whatever xyz the `.npz` carries, same "good enough for a spike" convention `gs_view_pointcloud.py` already uses. Mask quality is only as good as the underlying splat training (see §27's `gs_capture.py` coordinate gotcha).
+
+```bash
+python3 src/rosnav_bot/scripts/gs_splat_to_pointcloud.py splat_export/splat.ply cafe_points.npz \
+    --dataparser-transform outputs/.../splatfacto/<timestamp>/dataparser_transforms.json  # nerfstudio venv, see §29b
+ros2 run rosnav_bot gs_mask_from_splat.py \
+    --npz cafe_points.npz --out src/rosnav_bot/maps/gs_keepout_cafe.yaml \
+    --align-to src/rosnav_bot/maps/map_hospital.yaml   # or omit for auto-fit bbox
+```
+
+**Nav2 wiring:**
+- `config/gs_keepout_filter.yaml` — params for `filter_mask_server` (a `nav2_map_server::MapServer` instance, just serving the mask instead of the main map, on `/gs/keepout_filter_mask`) and `costmap_filter_info_server` (publishes `/gs/costmap_filter_info`, `type: 0` = Keepout).
+- `nav2_params*.yaml` (all 6 variants — humble/jazzy × default/mecanum/ackermann/mppi) and both `nav2_multirobot_params*.yaml` templates always list a `keepout_filter` (`nav2_costmap_2d::KeepoutFilter`) plugin on both costmaps, pointed at `/gs/costmap_filter_info` — safe by default since the plugin is inert until that topic is actually published. `filter_info_topic` is an absolute (leading-`/`) topic name, so `_common.namespace_nav2_params()` leaves it alone — one shared publisher covers every `robotN` namespace.
+- `slam_nav.launch.py gs_keepout_mask:=<mask.yaml>` (default `''` = disabled) starts `filter_mask_server` + `costmap_filter_info_server` + a dedicated `lifecycle_manager_gs_keepout` (autostart) 9s after nav2 comes up.
+- `multi_robot.launch.py gs_keepout_mask:=<mask.yaml>` does the same, but only **once** for the whole fleet (not per-robot) — every robot's namespaced costmaps subscribe to the same shared `/gs/costmap_filter_info`.
+
+**Verified (2026-08-20):**
+- Exported a real (if undertrained — 999-step smoke-test checkpoint) `cafe` splat via `ns-export gaussian-splat` and ran it through the full script — output PGM/YAML is well-formed but ~50% "occupied" since the checkpoint hadn't converged (splatfacto default budget in this spike's config was only 1000 steps); this is a training-data-quality issue, not a pipeline bug.
+- Ran `slam_nav.launch.py world_name:=hospital slam:=false gs_keepout_mask:=<synthetic aligned mask>` headless — log confirms `filter_mask_server`/`costmap_filter_info_server` configure+activate and bond to `lifecycle_manager_gs_keepout`, and both `local_costmap` and `global_costmap` log `Initialized plugin "keepout_filter"`.
+- Ran `multi_robot.launch.py world:=hospital explore:=false robot_count:=2 gs_keepout_mask:=<same mask>` headless — one `filter_mask_server`/`costmap_filter_info_server` pair started (not two), and both `robot1.local_costmap`/`robot1.global_costmap` and `robot2.local_costmap`/`robot2.global_costmap` independently logged `Initialized plugin "keepout_filter"`, confirming the fleet-wide-shared-topic design works. Clean process exit both times, no lingering PIDs.
+- A real end-to-end demo (visible keepout dent in `/global_costmap/costmap`) needs a properly-converged splat — this session's checkpoint wasn't trained long enough for that.
+
+---
+
+## 29. GS Semantic Fusion (`gs_semantic_fusion.py`)
+
+Second GS-navigation integration, built on the same converged `cafe` splat as §28: lifts `yolo_detector.py`'s 2D image detections into real 3D map-frame positions/extents by projecting the splat point cloud through the camera, instead of the flat-ground-plane assumption ROADMAP_CONCEPTS.md's plain "Semantic costmap layer from YOLO detections" idea would need. This is the perception/labeling half of a Splat-Nav-style fusion — **not** wired into a live Nav2 costmap filter yet (the existing `gs_keepout_filter.yaml` pipeline is a static, offline-generated mask; feeding live per-frame semantic regions into it would need a mutable `filter_mask_server`, left as follow-up).
+
+**How it works:** for each `Detection2DArray` from `yolo_detector.py`, look up the `map` → camera-optical-frame TF at the detection's timestamp, coarse-crop the splat point cloud by range from the camera (cheap vectorized pass, keeps per-frame cost low even at ~500k+ points), project the survivors through the camera intrinsics (`sensor_msgs/CameraInfo`'s `k` matrix, standard pinhole/optical convention — the URDF's `camera_optical_frame` is a distinct child link from `camera_link` specifically to give ROS the standard x-right/y-down/z-forward convention regardless of Gazebo's native sensor-frame convention, same pattern as the lidar), and keep whichever splat points land inside each detection's 2D bbox. The matched points' map-frame median + robust (90th-percentile) extent become a `visualization_msgs/MarkerArray` (a colored `CUBE` + `TEXT_VIEW_FACING` label per detection) on `gs_semantic/markers`.
+
+```bash
+# enable_yolo:=true is required — gs_semantic_fusion has nothing to fuse without it
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=cafe enable_yolo:=true enable_camera:=true \
+  gs_semantic_npz:=/home/asimov/gs_data/cafe_points_clean2.npz
+```
+In RViz: add a `MarkerArray` display on `gs_semantic/markers`.
+
+**Verified (2026-08-21):** ran the full projection pipeline against the real converged `cafe` splat (583592 points post scale-filter, see §28) and a live TF tree from a running `slam_nav.launch.py world_name:=cafe` — a synthetic full-frame `Detection2DArray` (bypassing YOLO, see below) correctly resolved to map=(0.81, 0.04, 0.12) with extent (1.91, 1.52, 0.84)m from 24211 matched splat points, and published a well-formed `MarkerArray` (`DELETEALL` + `CUBE` + `TEXT_VIEW_FACING`) confirmed via `ros2 topic echo`.
+
+**Known limitation, not a pipeline bug:** `yolov8n.pt` (COCO-trained on real photos) detects nothing in the `cafe` world's low-poly stylized furniture (single-leg pedestal tables, flat-shaded) even down to `confidence:=0.15` — a real sim-to-real domain gap for this asset style, not specific to this node. The mechanical fusion pipeline (TF → projection → bbox filter → marker) is verified correct via the synthetic-detection test above; an actual end-to-end "YOLO sees a chair → 3D marker appears" demo needs either a more photorealistic world/asset set or a fine-tuned detector. §35-A's `yolo_auto_label_cafe.yaml` mode is built to close this for the **`table`** class specifically (auto-labeled from `cafe.world`'s known table poses, no manual annotation) — see §35-A for current status (mechanism verified, an actual fine-tuned model not yet trained). `chair` stays unclosed either way, since cafe's chairs are baked into the opaque `model://Cafe` mesh with no separate per-object pose to auto-label from.
+
+---
+
+## 29b. GS Coordinate Scale Bug (`--dataparser-transform`)
+
+Real bug, found by eyeballing the splat next to the robot model in `rviz/gs_overview.rviz` (§29) and it looking implausibly small — not caught by any automated check in §28-29, since those verified geometry/logic *shape* (masks rasterize, markers publish) without an independent ground-truth distance to check absolute scale against.
+
+**Root cause:** `ns-train` normalizes camera poses into a roughly unit-scale training space (`camera_utils.auto_orient_and_center_poses` then `poses[:, :3, 3] *= scale_factor`, saved as `dataparser_transforms.json`: `X_train = scale * (R @ X_world + t)`). Confirmed by reading nerfstudio's own exporter source directly (`nerfstudio/scripts/exporter.py`, `ExportGaussianSplat.main`): `positions = model.means.cpu().numpy()` — the exported `.ply` is the model's raw internal (training-space) Gaussian positions, with **no inverse transform applied**. Every `.ply` this repo has exported this session was in that squashed space, off by `scale` (0.2222 observed on the real `cafe` capture — the whole scene came out ~4.5x too small vs. true Gazebo-world meters).
+
+**Blast radius:** every GS-derived artifact built on an uncorrected npz this session was undersized by the same factor relative to the robot/map TF frames it's meant to align with — §28's keepout masks, §29's semantic-fusion 3D positions, §30's speed masks, §32's merge tool, §34's relocalization check. None of those are wrong in *logic* (the projection/rasterization math is correct), just in absolute scale, since they all operate purely on whatever xyz the npz carries.
+
+**Fix:** `gs_splat_to_pointcloud.py` now takes `--dataparser-transform <path to dataparser_transforms.json>` (from the training output dir, `outputs/.../splatfacto/<timestamp>/`) and applies the inverse: `X_world = R^T @ (X_train / scale - t)`. Also corrects the `max_scale` floater-filter threshold (§29 body text) by the same factor, since Gaussian extent is a length quantity in the same squashed space. Omitting the flag still works (backward compatible) but prints a stderr warning and leaves xyz in training-space, matching this session's prior (buggy) behavior — every example command in this doc and the README has been updated to pass it.
+
+**Verified (2026-08-21):** re-exported the real converged `cafe` splat with the flag — bbox grew from (11.1m, 12.0m, 7.5m) to (58.1m, 59.6m, 51.1m) span, ~4.5-5.2x per axis (roughly consistent with `1/scale = 4.5`; not exactly uniform since the pre-correction bbox included floater outliers at the extremes, not a clean scale reference). Re-launched `rviz/gs_overview.rviz` against a live sim with the corrected npz — splat geometry now sits at plausible, consistent scale next to the `RobotModel` and TF frames (screenshot: `images/gs_overview_3d_lidar.png`).
+
+**Not done:** the *committed* example command outputs (§28/§30's demonstrated mask percentages, §29's marker centroid/extent numbers) were generated before this fix and are now stale by the same ~4.5x factor — left as-is rather than mass-edited, since re-verifying every downstream number would mean re-running the full pipeline again; treat those specific figures as illustrating the *mechanism*, not current absolute scale.
+
+---
+
+## 30. GS Speed Costmap Filter (`gs_speed_mask_from_splat.py`)
+
+Density-graded sibling of §28's binary `KeepoutFilter`: `gs_speed_mask_from_splat.py` rasterizes the same per-cell Gaussian COUNT grid `gs_mask_from_splat.py` uses, but instead of thresholding to occupied/free, linearly maps count → a 0-100 mask value (0 = empty cell, 100 = at/above `--dense-percentile`) written with `mode: scale` (not `trinary`). A `nav2_costmap_2d::SpeedFilter` (`type: 1`) plugin reads it and slows the robot through sparse/hazy splat regions instead of refusing to enter them outright, while still forcing a near-stop through the densest (most likely solid) cells — useful when a `KeepoutFilter`'s all-or-nothing cutoff is too blunt (e.g. splat noise near a real doorway shouldn't hard-block it).
+
+**Wiring:** `config/gs_speed_filter.yaml` configures two nodes — `gs_speed_filter_mask_server` (serves the mask on `/gs/speed_filter_mask`) and `gs_speed_costmap_filter_info_server` (publishes `/gs/speed_filter_info`, `type: 1`, `base: 100.0`/`multiplier: -1.0` so mask value 0→100% speed and 100→0% speed). Deliberately distinct node names from §28's `filter_mask_server`/`costmap_filter_info_server` so both filters can run simultaneously without a name collision. `nav2_params*.yaml` (all 8 variants: humble/jazzy × default/mecanum/ackermann/mppi × single/multirobot) list a `speed_filter` plugin alongside `keepout_filter` on both costmaps, pointed at `/gs/speed_filter_info` — inert until that topic is actually published, same safe-by-default pattern as §28. `slam_nav.launch.py gs_speed_mask:=<mask.yaml>` starts the two filter nodes + a dedicated `lifecycle_manager_gs_speed`.
+
+**Real bug hit and fixed during this build:** a ROS 2 node-parameters YAML file is silently ignored if its top-level key doesn't match the actual launched node's name (no error — the node just runs on pure defaults). `gs_speed_filter.yaml` initially kept §28's key names (`filter_mask_server:`/`costmap_filter_info_server:`) while the launch file (correctly) gave the nodes distinct names to avoid colliding with a simultaneously-running keepout filter — so none of the file's params applied, and the mask server defaulted to `topic_name: "map"`, i.e. a **second publisher on the real SLAM `/map` topic**. Fixed by renaming the YAML's top-level keys to match the actual node names. Caught by checking `ros2 param get /gs_speed_filter_mask_server topic_name` live rather than trusting that "no launch errors" meant it was wired correctly.
+
+**Verified (2026-08-21):** ran `gs_speed_mask_from_splat.py` against the real converged+floater-filtered `cafe` splat (§28/§29's `cafe_points_clean2.npz`, same `--xy-crop` as the keepout mask) — 3.1% of cells fully restricted, mean mask value 8.1/100, visibly graded (not a hard blob) when rendered. Launched `slam_nav.launch.py world_name:=cafe gs_speed_mask:=<that mask>` headless on an isolated `ROS_DOMAIN_ID` — after the yaml-key fix, `ros2 param get` confirmed both nodes picked up the real config (`topic_name=/gs/speed_filter_mask`, `filter_info_topic=/gs/speed_filter_info`, `type=1`), and both `local_costmap` and `global_costmap` logged `SpeedFilter: Received filter info` and `SpeedFilter: Received filter mask`.
+
+---
+
+## 31. GS Mask as a Static-Layer Prior (`map_override`)
+
+A `gs_mask_from_splat.py` KeepoutFilter mask (§28) is already a plain Nav2 map — trinary PGM+YAML, same format `map_server`/`static_layer` expect — so instead of only *subtracting* space via a filter overlay, it can seed nav-on-map mode (`slam:=false`) directly as a GS-derived floor-plan prior, letting Nav2 navigate with global structure from one offline splat flythrough before the robot has mapped anything itself with lidar.
+
+`slam_nav.launch.py` previously had no way to point nav-on-map mode at an arbitrary map file — `map_yaml` was always auto-resolved to `maps/map_<world_name>.yaml`. Added a `map_override:=<path>` launch arg (default `''`) that takes priority over the auto-resolved path when set:
+
+```bash
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=cafe slam:=false \
+  map_override:=src/rosnav_bot/maps/gs_keepout_cafe_final.yaml
+```
+
+**Not yet live-verified** (static-verified only — `py_compile` + a full offline `LaunchDescription` build both pass; the 2-line resolution change — `map_override` if set, else the existing `_resolve_map_yaml()` call — is low-risk, unlike §30's filter-info wiring, which is why it wasn't prioritized for a live Gazebo run on an already heavily-loaded shared machine this session). Follow-up: launch it for real and confirm `map_server` loads the GS mask and Nav2 plans against it before any SLAM/AMCL correction.
+
+---
+
+## 32. Multi-Splat Merging (`gs_merge_splats.py`)
+
+Extends the "one shared `/gs/costmap_filter_info` topic covers every `robotN` namespace" design `multi_robot.launch.py`'s `gs_keepout_mask` already uses (§28) upstream to the splat data itself: `gs_merge_splats.py` concatenates several `splat_points.npz` files (e.g. one per robot, or one per capture session covering a different room) into a single merged npz that `gs_mask_from_splat.py`/`gs_speed_mask_from_splat.py`/`gs_semantic_fusion.py` can all consume unchanged.
+
+Common case needs no registration: multiple `gs_capture.py` runs against the *same* Gazebo world already share one absolute coordinate frame (see §27's coordinate-convention note), so their npz files can just be concatenated directly. For a capture that used its own independent frame, `--transform X Y Z YAW_DEG` (paired positionally with the preceding `--npz`) applies a rigid translation + yaw-about-Z before merging.
+
+```bash
+ros2 run rosnav_bot gs_merge_splats.py \
+    --npz robot1_lobby.npz --npz robot2_kitchen.npz --transform 8.5 -2.0 0 90 \
+    --out merged_facility.npz
+```
+
+**Known limitation:** overlapping Gaussians where two captures see the same physical area are not deduplicated — left as-is since downstream density-threshold rasterization already tolerates overlap fine (it counts per-cell, so overlap just adds count); a raw merged point count in an overlap region just isn't independently meaningful.
+
+**Verified (2026-08-21):** merged the real `cafe` splat with a translated+rotated copy of itself (`--transform 20 0 0 90`) — output point count was exactly the sum of both inputs (1167184 = 583592×2), and the transformed copy's X range shifted to the expected ~20-26m band, confirming the transform math and the `--npz`/`--transform` positional-pairing argparse logic both work correctly.
+
+---
+
+## 33. Capture View-Planning (`gs_suggest_capture_waypoints.py`)
+
+Closes the GS↔navigation loop in the other direction from §28-32 (which all use a splat to improve navigation): use what SLAM has already mapped to suggest where `gs_capture.py`'s *next* orbit sweep should point, so the splat grows to cover what the robot has actually explored instead of staying fixed to one manually-chosen capture area.
+
+Reads a saved Nav2 map (`map_saver_cli` output) and, optionally, an existing splat's npz to know what's already covered (grid-approximated: a free cell counts as covered if it's within `--cover-radius` of any covered-npz point, checked via a 3×3 bin neighborhood rather than an O(n·m) distance query). Remaining uncovered free cells are grid-binned into clusters (`--cell-size`); each cluster's centroid, ranked by cluster size, becomes a suggested capture waypoint.
+
+```bash
+ros2 run rosnav_bot gs_suggest_capture_waypoints.py \
+    --map src/rosnav_bot/maps/map_cafe.yaml \
+    --covered-npz /home/asimov/gs_data/cafe_points_clean2.npz \
+    --cell-size 2.0 --top-n 6
+```
+
+**Known limitation:** `gs_capture.py`'s `centers_x`/`centers_y` parameters form a *cartesian grid* (`[(x, y) for x in centers_x for y in centers_y]`), not an arbitrary waypoint list — so scattered cluster centroids from an irregular uncovered region don't collapse cleanly into that parameterization. This script prints the suggested `(x, y)` points directly; turning each into an actual capture pass currently means running `gs_capture.py` once per point (single-element `centers_x`/`centers_y` each time), or extending `gs_capture.py` to accept an explicit waypoint list — not attempted here.
+
+**Verified (2026-08-21):** two checks. (1) Cross-world sanity check (`map_hospital.yaml` vs. the unrelated `cafe` splat) ran without error but wasn't semantically meaningful — different physical spaces that happen to both be centered near the same absolute coordinates, so "coverage" there is coincidental, not real. (2) Self-consistent check — used `gs_keepout_cafe_final.yaml` (§28, itself derived from `cafe_points_clean2.npz`) as `--map` against that *same* npz as `--covered-npz`: 93.6% of the mask's own free space was correctly recognized as already covered, with the uncovered fringe (~6.4%) landing exactly at `gs_mask_from_splat.py`'s own 1.0m auto-fit-bbox margin (no real data there by construction) — confirms the coverage-detection grid logic is doing the right computation, not just returning plausible-looking noise.
+
+---
+
+## 34. GS Relocalization Confidence Check (`gs_relocalization_check.py`)
+
+A coarse, cheap localization-confidence signal from the splat, layered on top of the geometric one RTAB-Map/AMCL already provide: at the robot's current estimated pose, project the splat's own point *colors* through the camera (same TF + intrinsics projection as §29's `gs_semantic_fusion.py`) into a low-res (`--grid-bins`² ) color grid, and compare it against the live camera frame downsampled to the same grid. If the pose estimate is right, average color per region should roughly agree; a bad pose (drift, kidnapped robot, bad loop closure) desyncs them.
+
+**Deliberately not** full photometric splat rendering — a real Splat-Nav-style render-and-compare needs the actual differentiable Gaussian rasterizer (gsplat/nerfstudio's rendering pipeline) running live inside a ROS node, a much heavier GPU/dependency lift than this spike takes on. This is a coarse proxy — binned average point color vs. binned average pixel color, nothing photoreal — and its output (`gs_reloc/color_error`, `gs_reloc/coverage`) is meant as a soft signal to log/monitor, not something wired into gating actual localization; no such consumer exists.
+
+```bash
+ros2 run rosnav_bot gs_relocalization_check.py --ros-args \
+    -p use_sim_time:=true -p npz_path:=/home/asimov/gs_data/cafe_points_clean2.npz
+```
+
+**Verified (2026-08-21):** ran live against the real converged `cafe` splat and a running `slam_nav.launch.py world_name:=cafe` sim — stable output across multiple cycles: `color_error=41.0/255` (~16%, plausible given Gazebo's flat-shaded low-poly rendering vs. the splat's training-blended colors won't match pixel-perfectly), `coverage=0.99` (254/256 grid bins had splat points to compare, i.e. the splat's capture footprint covers almost the whole camera view from this pose). Check-interval grew from ~2s to ~20s over the run — real-time-factor slowdown from several *other* concurrent Gazebo instances competing for the same GPU/CPU on this shared machine (confirmed via `ROS_DOMAIN_ID` isolation checks — several unrelated sessions were running simultaneously), not a bug in this node.
+
+---
+
+## 35. AI Training Pipelines (YOLO · GS keepout · RL)
+
+Classic SLAM Toolbox / AMCL / Nav2+MPPI stay **tuned, not neural-net trained**. These three add-ons are where actual model training lands — perception weights, a splat used as cost, and a research local planner. They do not replace the core stack.
+
+### A — YOLO fine-tune (`yolo_collect.py` / `yolo_train.py`)
+
+Closes the §13 / §29 domain gap: collect sim RGB, annotate in YOLO format (`class cx cy w h` normalized), fine-tune Ultralytics, point `yolo_detector.py` at `best.pt`.
+
+```bash
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=cafe enable_camera:=true
+ros2 run rosnav_bot yolo_collect.py --ros-args \
+    -p out_dir:=$HOME/yolo_data/cafe -p max_frames:=200 -p classes:=chair,table
+# annotate labels/train/*.txt (empty files = background), then:
+python3 src/rosnav_bot/scripts/yolo_train.py \
+    --data $HOME/yolo_data/cafe/dataset.yaml --epochs 50
+# smoke (no Gazebo / no labels):
+python3 src/rosnav_bot/scripts/yolo_train.py --smoke
+
+ros2 launch rosnav_bot slam_nav.launch.py enable_yolo:=true \
+    yolo_model:=runs/detect/rosnav_yolo/weights/best.pt
+```
+
+`yolo_collect.py` writes `dataset.yaml` + `images/{train,val}` / `labels/{train,val}`. Collect a second pass with `-p split:=val` for a real validation split (smoke mode synthesizes both).
+
+**Verified (2026-08-21):** `--smoke` built a tiny synthetic 2-class set and completed 1 epoch on CPU; weights landed under `runs/detect/_smoke/weights/best.pt`.
+
+**Auto-labeling (no manual annotation) for `cafe`'s tables:** `yolo_collect.py`'s `auto_label_config` param (see `config/yolo_auto_label_cafe.yaml`) projects each of cafe's 5 known-pose `table1..table5` 3D AABBs into every captured frame via TF + camera intrinsics — same projection convention as `gs_semantic_fusion.py` — and writes real YOLO labels instead of empty ones. Only `table` is covered this way; `chair`/other cafe furniture is baked into the opaque `model://Cafe` mesh with no separate pose to auto-label from.
+
+Two real bugs surfaced while building this:
+1. **Degenerate boxes at near-camera crossings.** Projecting only the AABB corners still in front of the camera (`z > 0.1`) and taking their 2D hull is wrong when *some but not all* 8 corners cross the near plane — the hull of the survivors can stretch across most of the frame (confirmed visually: a thin sliver box spanning ~90% of image height that didn't correspond to anything in the rendered image). Fixed by requiring *all 8* corners in front before accepting a box — a strictly stricter, monotonic tightening (can only shrink the accept set, never introduce a wrong box).
+2. **`map` frame is the wrong frame for static ground-truth coordinates.** `slam_toolbox`'s `map` frame is an active *estimate* it keeps re-correcting via scan matching — confirmed empirically by solving the world→map rigid transform from live data twice a few minutes apart in the same run: the same solve implied `table1` was at two different map-frame positions ~0.9m/~23° apart. A frame that drifts mid-session can't hold a hardcoded object list. Fixed by using **`odom`** instead (`-p map_frame:=odom`) — fixed at launch, no active re-estimation, only (much smaller) wheel-odometry integration error. `yolo_auto_label_cafe.yaml`'s coordinates were produced by solving the exact world↔odom rigid transform from one live sample (odom-frame `base_link` TF vs `gz topic -e -t /world/cafe/pose/info` ground truth) right after launch, before wheel drift could accumulate — see the YAML's header comment for the derivation. This is specific to cafe's default spawn; re-solve if `spawn_x/y/yaw` are overridden.
+
+**Status (2026-08-21):** both fixes are verified analytically (a hand-built synthetic camera pose reproduced the correct sign/scale conventions; the odom-frame transform was checked live and correctly clips off-screen tables to zero-width rather than a degenerate box) and partially verified live (individual frames showed correct clip-to-edge behavior for out-of-view tables). Not yet confirmed: a rendered overlay of an actual in-view, non-empty-label frame using the corrected odom-frame config — two capture attempts happened to have frontier exploration wander to other parts of the cafe (the kitchen/counter area) rather than the table row during the capture window, a matter of exploration timing/luck rather than a code issue. Re-running the capture for longer, or driving toward the table row first, should get a confirmable frame — left as a follow-up before actually fine-tuning on this dataset.
+
+### B — GS train → keepout (`gs_train_keepout.sh`)
+
+Orchestrates §27 → nerfstudio `splatfacto` → §28 mask in one script. Env knobs: `DATA_DIR`, `NS_VENV` (default `~/venvs/nerfstudio`), `OUT_MASK`, `MAX_ITERS`, `SKIP_CAPTURE`, `ALIGN_TO`, `DENSITY_PERCENTILE`.
+
+```bash
+# mask only (existing npz — no GPU train):
+MASK_ONLY=1 NPZ=$HOME/gs_data/cafe_points_final.npz \
+    OUT_MASK=src/rosnav_bot/maps/gs_keepout_cafe.yaml \
+    bash src/rosnav_bot/scripts/gs_train_keepout.sh cafe
+
+# then:
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=cafe \
+    gs_keepout_mask:=src/rosnav_bot/maps/gs_keepout_cafe.yaml
+```
+
+**Verified (2026-08-21):** `MASK_ONLY=1` on `cafe_points_final.npz` wrote a well-formed keepout PGM/YAML (~5.6% cells occupied at density-percentile 90). Full `ns-train` path is the same script without `MASK_ONLY` (long GPU job; not re-run in that smoke).
+
+### C — RL local planner (`rosnav_bot/rl` + `train_ppo.py` + `rl_policy_node.py`)
+
+Research controller from ROADMAP_CONCEPTS ("learned local planner"): train offline on a static Nav2 occupancy map with raycast LiDAR — **no Gazebo in the train loop** — then deploy as a `/cmd_vel` source. Observation = downsampled scan (`n_beams`, default 36, normalized by `max_range`) + goal `(dx, dy, dyaw)` in the robot frame; action = `[v, w]` in `[-1, 1]` scaled by `v_max`/`w_max`.
+
+| Piece | Role |
+|---|---|
+| `rosnav_bot/rl/scan_nav_env.py` | Gymnasium env: load PGM+YAML, unicycle dynamics, progress/collision reward |
+| `rosnav_bot/rl/policy.py` | Small continuous Actor–Critic (PyTorch) |
+| `scripts/train_ppo.py` | PPO loop; default `--backend torch` (pure PyTorch). `--backend sb3` optional if stable-baselines3 works on your stack |
+| `scripts/rl_policy_node.py` | Loads `.pt` (or SB3 `.zip`), subscribes `/scan` + `/odom` (+ `/goal_pose`), publishes `/cmd_vel` |
+
+```bash
+python3 src/rosnav_bot/scripts/train_ppo.py --smoke
+python3 src/rosnav_bot/scripts/train_ppo.py \
+    --map src/rosnav_bot/maps/map_maze.yaml --timesteps 200000 --out runs/rl/ppo_maze
+
+# with robot up — disable / remap Nav2's controller when testing this node
+ros2 run rosnav_bot rl_policy_node.py --ros-args \
+    -p model_path:=runs/rl/ppo_maze/ppo_scan_nav.pt \
+    -p goal_x:=2.0 -p goal_y:=1.0
+```
+
+Not for production nav — benchmark against MPPI in `maze`, blog/demo angle. Live Gazebo-as-Gym wrapper is still optional follow-up (ROADMAP); the PGM raycast env is deliberately enough to train and deploy the same observation layout.
+
+**Verified (2026-08-21):** `--smoke` (2048 steps, `map_maze.yaml`, `--backend torch`) saved `runs/rl/_smoke/ppo_scan_nav.pt`; deterministic forward pass loads and infers. On this machine `stable-baselines3` `PPO(...)` segfaults during construction (Torch 2.12+cu130 interaction) — hence the pure-torch default; use `--backend sb3` only where SB3 is known-good.
