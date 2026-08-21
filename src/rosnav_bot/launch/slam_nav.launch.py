@@ -6,10 +6,19 @@ One-shot launch: Gazebo + Robot + Nav2 + RViz.
 SLAM mode (default):
   ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
 
-Nav-on-map mode (pre-built map, AMCL localization):
+RGB-D visual SLAM (RTAB-Map, textured worlds recommended):
+  ros2 launch rosnav_bot slam_nav.launch.py world_name:=cafe \\
+    slam_algo:=vslam rtabmap_db:=src/rosnav_bot/maps/rtabmap_cafe.db
+
+VSLAM localization + Nav2 (no AMCL; loads the RTAB .db):
+  ros2 launch rosnav_bot slam_nav.launch.py world_name:=cafe \\
+    slam:=false slam_algo:=vslam rtabmap_db:=src/rosnav_bot/maps/rtabmap_cafe.db
+
+Nav-on-map mode (pre-built OccupancyGrid, AMCL localization):
   ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital slam:=false
 
-When slam:=false the launch uses map_<world_name>.yaml from the maps/ directory.
+When slam:=false and slam_algo is not vslam, the launch uses
+map_<world_name>.yaml from the maps/ directory with AMCL.
 """
 
 import os
@@ -79,6 +88,14 @@ _WORLD_SPAWN_DEFAULTS = {
     'multi_terrain': {'x': '2.2', 'y': '-2.0', 'z': '0.3', 'yaw': '0.0'},
     # Open aisle near west wall of OpenRobotics Depot (~30×15 m)
     'warehouse_depot': {'x': '-11.0', 'y': '0.0', 'z': '0.3', 'yaw': '0.0'},
+    # Living-room floor of Lake House (interior ~z=6.90)
+    'lake_house': {'x': '1.2', 'y': '0.8', 'z': '7.2', 'yaw': '0.0'},
+    # Center aisle of AWS RoboMaker warehouse (away from clutter at y>2)
+    'aws_warehouse': {'x': '0.5', 'y': '0.0', 'z': '0.3', 'yaw': '0.0'},
+    # Open floor between shelf rows in Tugbot warehouse
+    'tugbot_warehouse': {'x': '0.0', 'y': '12.0', 'z': '0.3', 'yaw': '3.14'},
+    # Cafe interior, looking down the seating aisle
+    'cafe': {'x': '0.0', 'y': '-2.0', 'z': '0.3', 'yaw': '-1.57'},
 }
 _GENERIC_SPAWN_DEFAULT = {'x': '1.5', 'y': '1.0', 'z': '0.3', 'yaw': '0.0'}
 
@@ -112,8 +129,51 @@ def _build_runtime_actions(context, pkg_share: str):
         lidar_type = '2d'
     lidar3d_height = LaunchConfiguration('lidar3d_height').perform(context).strip()
     lidar3d_vfov_deg = LaunchConfiguration('lidar3d_vfov_deg').perform(context).strip()
+    octomap = _common.truthy(LaunchConfiguration('octomap').perform(context))
 
     slam_algo = LaunchConfiguration('slam_algo').perform(context).strip().lower()
+    rtabmap_db = os.path.expanduser(
+        LaunchConfiguration('rtabmap_db').perform(context).strip())
+    run_cslam = False
+    if slam_algo == 'cslam':
+        if lidar_type != '3d':
+            print('[slam_nav] slam_algo=cslam requires lidar_type:=3d — falling back to slam_algo=2d')
+            slam_algo = '2d'
+        elif not _common.package_available('cslam'):
+            print('[slam_nav] slam_algo=cslam requested but `cslam` is not built '
+                  '(bash src/rosnav_bot/scripts/link_third_party.sh --cslam && '
+                  'colcon build --packages-up-to cslam) — falling back')
+            slam_algo = '3d' if _common.package_available('rtabmap_slam') else '2d'
+        else:
+            run_cslam = True
+            slam_algo = '3d'
+    if slam_algo == 'vslam':
+        if not _common.package_available('rtabmap_slam'):
+            print('[slam_nav] slam_algo=vslam requested but ros-humble-rtabmap-ros is not '
+                  'installed (sudo apt install ros-humble-rtabmap-ros) — falling back to slam_algo=2d')
+            slam_algo = '2d'
+        elif not use_slam and not rtabmap_db:
+            print('[slam_nav] slam:=false slam_algo:=vslam needs rtabmap_db:=/path/to.db — '
+                  'falling back to AMCL on OccupancyGrid map')
+            slam_algo = '2d'
+        elif not use_slam and rtabmap_db and not os.path.isfile(rtabmap_db):
+            print(f'[slam_nav] rtabmap_db not found: {rtabmap_db} — falling back to AMCL')
+            slam_algo = '2d'
+        elif use_slam and rtabmap_db:
+            os.makedirs(os.path.dirname(os.path.abspath(rtabmap_db)) or '.', exist_ok=True)
+    if slam_algo == 'multisensor':
+        if not _common.package_available('rtabmap_slam'):
+            print('[slam_nav] slam_algo=multisensor needs ros-humble-rtabmap-ros — '
+                  'falling back to slam_algo=2d')
+            slam_algo = '2d'
+        elif use_slam and rtabmap_db:
+            os.makedirs(os.path.dirname(os.path.abspath(rtabmap_db)) or '.', exist_ok=True)
+    if slam_algo in ('cartographer', 'carto'):
+        slam_algo = 'cartographer'
+        if not _common.package_available('cartographer_ros'):
+            print('[slam_nav] slam_algo=cartographer needs ros-humble-cartographer-ros '
+                  '(sudo apt install ros-humble-cartographer-ros) — falling back to slam_algo=2d')
+            slam_algo = '2d'
     if slam_algo == '3d' and lidar_type != '3d':
         print('[slam_nav] slam_algo=3d requires lidar_type:=3d — falling back to slam_algo=2d')
         slam_algo = '2d'
@@ -124,6 +184,7 @@ def _build_runtime_actions(context, pkg_share: str):
             print('[slam_nav] slam_algo=3d requested but ros-humble-rtabmap-ros is not '
                   'installed (sudo apt install ros-humble-rtabmap-ros) — falling back to slam_algo=2d')
             slam_algo = '2d'
+            run_cslam = False
 
     world_path = _resolve_world_path(world_name_arg, world_arg, pkg_share)
     world_name = _resolve_world_name(world_name_arg, world_path)
@@ -138,18 +199,34 @@ def _build_runtime_actions(context, pkg_share: str):
     )
     map_prefix = _resolve_map_prefix(
         LaunchConfiguration('map_prefix').perform(context).strip(), world_name, pkg_share)
-    map_yaml = _resolve_map_yaml(world_name, pkg_share)
+    map_override = LaunchConfiguration('map_override').perform(context).strip()
+    # A gs_mask_from_splat.py KeepoutFilter mask is already a plain Nav2 map
+    # (trinary 0=occupied/254=free PGM+YAML) — same format map_server/
+    # static_layer expect, so it can seed nav-on-map mode directly as a
+    # GS-derived floor-plan prior instead of only subtracting space via
+    # gs_keepout_mask's filter overlay. See concepts.md §31.
+    map_yaml = os.path.expanduser(map_override) if map_override else _resolve_map_yaml(world_name, pkg_share)
 
     enable_camera_arg = LaunchConfiguration('enable_camera').perform(context).strip().lower()
+    enable_rgbd_arg = LaunchConfiguration('enable_rgbd').perform(context).strip().lower()
     enable_yolo_arg = LaunchConfiguration('enable_yolo').perform(context).strip().lower()
     # yolo_detector.py has nothing to detect on without the camera, so
     # enable_yolo:=true pulls it in even if enable_camera wasn't set explicitly.
-    enable_camera = 'true' if (_common.truthy(enable_camera_arg) or _common.truthy(enable_yolo_arg)) else 'false'
+    # slam_algo=3d also wants it: RTAB-Map's own bag-of-words loop closure
+    # needs an RGB image on top of the lidar cloud (lidar ICP alone can
+    # alias in geometrically repetitive aisles/corridors).
+    # slam_algo=vslam|multisensor forces RGB-D; enable_rgbd:=true does the same for
+    # depth-aware costmaps without switching SLAM.
+    enable_rgbd = 'true' if (
+        slam_algo in ('vslam', 'multisensor') or _common.truthy(enable_rgbd_arg)) else 'false'
+    enable_camera = 'true' if (
+        _common.truthy(enable_camera_arg) or _common.truthy(enable_yolo_arg)
+        or slam_algo in ('3d', 'multisensor') or enable_rgbd == 'true') else 'false'
     urdf_filename = _common.urdf_filename_for(drive_type, robot_model)
     rsp = _common.rsp_include(
         pkg_share, os.path.join(pkg_share, 'urdf', urdf_filename), lidar_type=lidar_type,
         lidar3d_height=lidar3d_height, lidar3d_vfov_deg=lidar3d_vfov_deg,
-        enable_camera=enable_camera)
+        enable_camera=enable_camera, enable_rgbd=enable_rgbd)
 
     gazebo_server = _common.gazebo_server_action(world_path, pkg_share)
 
@@ -161,26 +238,59 @@ def _build_runtime_actions(context, pkg_share: str):
     spawn_robot = _common.spawn_robot_node(
         gazebo_world_name, 'robot_description', robot_name, spawn_x, spawn_y, spawn_z, spawn_yaw)
 
+    bridge_yaml = _common.gz_bridge_yaml(lidar_type, enable_rgbd == 'true')
     ros_gz_bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
         arguments=[
             '--ros-args',
             '-p',
-            f'config_file:={os.path.join(pkg_share, "config", "gz_bridge.yaml")}',
+            f'config_file:={os.path.join(pkg_share, "config", bridge_yaml)}',
         ],
     )
 
     # Lidar filter chain: raw Gazebo scan (/scan_raw) in, cleaned /scan out.
-    # SLAM Toolbox, AMCL, and the costmaps below never see the unfiltered feed.
-    laser_filter = _common.laser_filter_node(pkg_share)
+    # With lidar_type:=3d, pointcloud_to_scan projects /points → /scan_raw first.
+    # Optional scan_quality_gate drops malformed frames before SLAM/Nav2 see them.
+    scan_gate = _common.truthy(LaunchConfiguration('scan_gate').perform(context))
+    laser_filter = _common.laser_filter_node(
+        pkg_share, filtered_out=('scan_pre' if scan_gate else 'scan'))
+    scan_quality_gate = (
+        _common.scan_quality_gate_node() if scan_gate else None)
+    points_to_scan = (
+        _common.pointcloud_to_scan_node() if lidar_type == '3d' else None)
 
     # Patch the BT path placeholder before passing params to nav2.
     nav2_params_name = _common.nav2_params_filename(controller, drive_type, ROS_DISTRO)
     _raw_params = os.path.join(pkg_share, 'config', nav2_params_name)
     _params_file = _common.patch_pkg_share_placeholder(_raw_params, pkg_share)
 
-    if use_slam and slam_algo == '3d':
+    use_vslam_localize = (not use_slam) and slam_algo == 'vslam'
+
+    if use_slam and slam_algo == 'vslam':
+        slam_or_localization = TimerAction(
+            period=5.0,
+            actions=[_common.rtabmap_vslam_node(
+                localization=False,
+                database_path=rtabmap_db,
+                octomap=octomap,
+            )],
+        )
+    elif use_slam and slam_algo == 'multisensor':
+        slam_or_localization = TimerAction(
+            period=5.0,
+            actions=[_common.rtabmap_multisensor_node(
+                lidar_type=lidar_type,
+                octomap=octomap,
+                database_path=rtabmap_db,
+            )],
+        )
+    elif use_slam and slam_algo == 'cartographer':
+        slam_or_localization = TimerAction(
+            period=5.0,
+            actions=_common.cartographer_slam_nodes(pkg_share, use_imu=True),
+        )
+    elif use_slam and slam_algo == '3d':
         # RTAB-Map lidar SLAM: consumes the *existing* wheel /odom directly (like
         # slam_toolbox does) instead of running RTAB-Map's own icp_odometry — that
         # keeps this a drop-in swap with exactly one odom->base_link TF publisher
@@ -199,15 +309,30 @@ def _build_runtime_actions(context, pkg_share: str):
                         'odom_frame_id': 'odom',
                         'map_frame_id': 'map',
                         'subscribe_depth': False,
-                        'subscribe_rgb': False,
+                        # RGB (no depth) from the existing docking/YOLO camera: gives
+                        # RTAB-Map's bag-of-words detector real image features for loop
+                        # closure hypotheses, on top of the lidar cloud. Registration
+                        # (the actual transform estimate) still comes from ICP below —
+                        # the image is only used to *recognize* a place, not to localize
+                        # against it, so this doesn't need camera-lidar extrinsic calib
+                        # beyond the URDF's static TF.
+                        'subscribe_rgb': True,
                         'subscribe_scan_cloud': True,
                         'approx_sync': True,
                         'wait_for_transform': 0.2,
+                        # Match ros_gz_bridge RELIABLE camera pubs (1=Reliable).
+                        'qos_image': 1,
+                        'qos_camera_info': 1,
+                        'qos': 1,
                         # RTAB-Map's internal parameters are strings:
-                        'Reg/Strategy': '1',           # ICP — no camera to do Vis registration
+                        'Reg/Strategy': '1',           # ICP registration; RGB is loop-closure-only
                         'Icp/PointToPlane': 'true',
                         'Grid/Sensor': '0',             # occupancy grid from the lidar cloud, not depth
-                        'Grid/3D': 'false',              # project to 2D for Nav2's /map
+                        # RTAB-Map still projects a 2D nav_msgs/OccupancyGrid onto /map for
+                        # Nav2 either way; Grid/3D only switches whether it *also* assembles
+                        # the full 3D voxel grid that /octomap_binary and /octomap_full are
+                        # built from (empty topics when false — see octomap:=true arg).
+                        'Grid/3D': 'true' if octomap else 'false',
                         'Grid/CellSize': '0.05',
                         'Grid/RangeMax': '20.0',
                         # NoiseFilteringRadius defaults to 0 (disabled); the 16-channel 3D
@@ -228,7 +353,9 @@ def _build_runtime_actions(context, pkg_share: str):
                         'Grid/MinClusterSize': '20',
                         'Mem/IncrementalMemory': 'true',  # mapping mode (vs. localization)
                     }],
-                    remappings=[('odom', '/odom'), ('scan_cloud', '/points')],
+                    remappings=[('odom', '/odom'), ('scan_cloud', '/points'),
+                                ('rgb/image', '/camera/image_raw'),
+                                ('rgb/camera_info', '/camera/camera_info')],
                     arguments=['-d'],  # fresh database each run — no stale map from a previous session
                 )
             ],
@@ -252,9 +379,23 @@ def _build_runtime_actions(context, pkg_share: str):
                 )
             ],
         )
+    elif use_vslam_localize:
+        slam_or_localization = TimerAction(
+            period=5.0,
+            actions=[
+                LogInfo(msg=f'[slam_nav] VSLAM localization from {rtabmap_db}'),
+                _common.rtabmap_vslam_node(
+                    localization=True,
+                    database_path=rtabmap_db,
+                    octomap=octomap,
+                ),
+            ],
+        )
+    else:
+        slam_or_localization = LogInfo(msg=f'[slam_nav] SLAM disabled — loading map: {map_yaml}')
 
-    if use_slam:
-        # Same Nav2 bringup regardless of which SLAM backend is producing /map.
+    if use_slam or use_vslam_localize:
+        # Nav2 navigation only — /map (+ map→odom) comes from SLAM or VSLAM localize.
         nav2 = TimerAction(
             period=8.0,
             actions=[
@@ -274,7 +415,6 @@ def _build_runtime_actions(context, pkg_share: str):
             ],
         )
     else:
-        slam_or_localization = LogInfo(msg=f'[slam_nav] SLAM disabled — loading map: {map_yaml}')
         nav2 = TimerAction(
             period=8.0,
             actions=[
@@ -295,6 +435,94 @@ def _build_runtime_actions(context, pkg_share: str):
                 )
             ],
         )
+
+    # ── GS keepout costmap filter (optional) ────────────────────────────────
+    # See concepts.md §28 and scripts/gs_mask_from_splat.py — nav2_params.yaml
+    # always lists the keepout_filter plugin (inert without a live
+    # /gs/costmap_filter_info), this just starts the two nodes that publish it.
+    gs_keepout_mask = LaunchConfiguration('gs_keepout_mask').perform(context).strip()
+    if gs_keepout_mask:
+        gs_keepout_filter_params = os.path.join(pkg_share, 'config', 'gs_keepout_filter.yaml')
+        gs_keepout_group = TimerAction(
+            period=9.0,
+            actions=[
+                LogInfo(msg=f'[slam_nav] GS keepout filter ENABLED — mask={gs_keepout_mask}'),
+                Node(
+                    package='nav2_map_server',
+                    executable='map_server',
+                    name='filter_mask_server',
+                    output='screen',
+                    parameters=[gs_keepout_filter_params, {
+                        'use_sim_time': True,
+                        'yaml_filename': gs_keepout_mask,
+                    }],
+                ),
+                Node(
+                    package='nav2_map_server',
+                    executable='costmap_filter_info_server',
+                    name='costmap_filter_info_server',
+                    output='screen',
+                    parameters=[gs_keepout_filter_params, {'use_sim_time': True}],
+                ),
+                Node(
+                    package='nav2_lifecycle_manager',
+                    executable='lifecycle_manager',
+                    name='lifecycle_manager_gs_keepout',
+                    output='screen',
+                    parameters=[{
+                        'use_sim_time': True,
+                        'autostart': True,
+                        'node_names': ['filter_mask_server', 'costmap_filter_info_server'],
+                    }],
+                ),
+            ],
+        )
+    else:
+        gs_keepout_group = LogInfo(msg='[slam_nav] GS keepout filter disabled (gs_keepout_mask not set).')
+
+    # ── GS speed costmap filter (optional) ──────────────────────────────────
+    # See concepts.md §30 and scripts/gs_speed_mask_from_splat.py — density-
+    # graded slow zones instead of gs_keepout_mask's binary no-go. Distinct
+    # node names from the keepout group above so both can run together.
+    gs_speed_mask = LaunchConfiguration('gs_speed_mask').perform(context).strip()
+    if gs_speed_mask:
+        gs_speed_filter_params = os.path.join(pkg_share, 'config', 'gs_speed_filter.yaml')
+        gs_speed_group = TimerAction(
+            period=9.0,
+            actions=[
+                LogInfo(msg=f'[slam_nav] GS speed filter ENABLED — mask={gs_speed_mask}'),
+                Node(
+                    package='nav2_map_server',
+                    executable='map_server',
+                    name='gs_speed_filter_mask_server',
+                    output='screen',
+                    parameters=[gs_speed_filter_params, {
+                        'use_sim_time': True,
+                        'yaml_filename': gs_speed_mask,
+                    }],
+                ),
+                Node(
+                    package='nav2_map_server',
+                    executable='costmap_filter_info_server',
+                    name='gs_speed_costmap_filter_info_server',
+                    output='screen',
+                    parameters=[gs_speed_filter_params, {'use_sim_time': True}],
+                ),
+                Node(
+                    package='nav2_lifecycle_manager',
+                    executable='lifecycle_manager',
+                    name='lifecycle_manager_gs_speed',
+                    output='screen',
+                    parameters=[{
+                        'use_sim_time': True,
+                        'autostart': True,
+                        'node_names': ['gs_speed_filter_mask_server', 'gs_speed_costmap_filter_info_server'],
+                    }],
+                ),
+            ],
+        )
+    else:
+        gs_speed_group = LogInfo(msg='[slam_nav] GS speed filter disabled (gs_speed_mask not set).')
 
     # ── RViz ──────────────────────────────────────────────────────────────
     # Independent of `headless` — that flag controls Gazebo's GPU-heavy 3D
@@ -352,35 +580,36 @@ def _build_runtime_actions(context, pkg_share: str):
     )
 
     # ── Frontier Explorer (SLAM mode only) ───────────────────────────────
+    explorer_backend = _common.resolve_explorer(LaunchConfiguration('explorer').perform(context))
     actions = []
     if use_slam and explore.perform(context).lower() in ('true', '1', 'yes'):
+        if explorer_backend == 'builtin':
+            explore_nodes = _common.explorer_nodes(
+                'builtin', pkg_share, map_topic='/map',
+                builtin_params={
+                    'map_save_path': map_prefix,
+                    'use_sim_time': True,
+                    'frontier_detector': LaunchConfiguration('frontier_detector'),
+                    'frontier_scorer': LaunchConfiguration('frontier_scorer'),
+                    'info_gain_weight': LaunchConfiguration('info_gain_weight'),
+                    'potential_scale': LaunchConfiguration('potential_scale'),
+                    'gain_scale': LaunchConfiguration('gain_scale'),
+                    'behavior_tree': LaunchConfiguration('explore_bt'),
+                    'validate_on_costmap': LaunchConfiguration('validate_on_costmap'),
+                    'costmap_max_cost': LaunchConfiguration('costmap_max_cost'),
+                    'goal_pullback': LaunchConfiguration('goal_pullback'),
+                    'frontier_clearance_radius': LaunchConfiguration('frontier_clearance_radius'),
+                })
+        else:
+            explore_nodes = _common.explorer_nodes(explorer_backend, pkg_share, map_topic='/map')
         actions = [
-            LogInfo(msg="[slam_nav] Auto-exploration ENABLED. Starting frontier_explorer in 20s..."),
-            TimerAction(
-                period=20.0,
-                actions=[Node(
-                    package='rosnav_bot',
-                    executable='frontier_explorer.py',
-                    name='frontier_explorer',
-                    output='screen',
-                    parameters=[{
-                        'map_save_path': map_prefix,
-                        'use_sim_time': True,
-                        'frontier_detector': LaunchConfiguration('frontier_detector'),
-                        'frontier_scorer': LaunchConfiguration('frontier_scorer'),
-                        'info_gain_weight': LaunchConfiguration('info_gain_weight'),
-                        'potential_scale': LaunchConfiguration('potential_scale'),
-                        'gain_scale': LaunchConfiguration('gain_scale'),
-                        'behavior_tree': LaunchConfiguration('explore_bt'),
-                        'validate_on_costmap': LaunchConfiguration('validate_on_costmap'),
-                        'costmap_max_cost': LaunchConfiguration('costmap_max_cost'),
-                        'goal_pullback': LaunchConfiguration('goal_pullback'),
-                        'frontier_clearance_radius': LaunchConfiguration('frontier_clearance_radius'),
-                    }]
-                )]
-            )
+            LogInfo(msg=f'[slam_nav] Auto-exploration ENABLED ({explorer_backend}). Starting in 20s...'),
+            TimerAction(period=20.0, actions=explore_nodes),
         ]
     frontier_node = GroupAction(actions=actions) if actions else LogInfo(msg='[slam_nav] Frontier explorer disabled.')
+    cslam_group = (
+        GroupAction(actions=_common.cslam_lidar_nodes(pkg_share))
+        if run_cslam else LogInfo(msg='[slam_nav] C-SLAM disabled.'))
 
     # ── Object Detection: YOLO (optional, off by default) ────────────────
     enable_yolo = LaunchConfiguration('enable_yolo')
@@ -406,6 +635,35 @@ def _build_runtime_actions(context, pkg_share: str):
         ]
     )
 
+    # ── GS semantic fusion (optional) ───────────────────────────────────────
+    # Lifts yolo_detector.py's 2D detections into real 3D map-frame regions by
+    # projecting the splat point cloud through the camera (see concepts.md
+    # §29) — needs enable_yolo:=true for detections to fuse against.
+    gs_semantic_npz = LaunchConfiguration('gs_semantic_npz').perform(context).strip()
+    if gs_semantic_npz and not _common.truthy(enable_yolo_arg):
+        print('[slam_nav] gs_semantic_npz set but enable_yolo is not true — '
+              'gs_semantic_fusion has no detections to fuse, disabling')
+        gs_semantic_npz = ''
+    if gs_semantic_npz:
+        gs_semantic_fusion = TimerAction(
+            period=14.0,
+            actions=[
+                LogInfo(msg=f'[slam_nav] GS semantic fusion ENABLED — npz={gs_semantic_npz}'),
+                Node(
+                    package='rosnav_bot',
+                    executable='gs_semantic_fusion.py',
+                    name='gs_semantic_fusion',
+                    output='screen',
+                    parameters=[{
+                        'npz_path': gs_semantic_npz,
+                        'use_sim_time': True,
+                    }],
+                ),
+            ],
+        )
+    else:
+        gs_semantic_fusion = LogInfo(msg='[slam_nav] GS semantic fusion disabled (gs_semantic_npz not set).')
+
     # ── Dynamic obstacles (optional) ───────────────────────────────────────
     dynamic_obstacles = int(LaunchConfiguration('dynamic_obstacles').perform(context).strip())
     dynamic_obstacle_actions = []
@@ -430,24 +688,35 @@ def _build_runtime_actions(context, pkg_share: str):
             ]
 
     mode = 'SLAM+frontier' if (use_slam and actions) else ('SLAM' if use_slam else f'nav-on-map ({os.path.basename(map_yaml)})')
+    if run_cslam:
+        mode += '+cslam'
     return [
         LogInfo(msg=f'[slam_nav.launch] mode={mode}, ROS_DISTRO={ROS_DISTRO}, controller={controller}, drive_type={drive_type}'),
         LogInfo(msg=f'[slam_nav.launch] world={world_path}'),
         LogInfo(msg=f'[slam_nav.launch] robot_name={robot_name.perform(context)}'),
         LogInfo(msg=f'[slam_nav.launch] urdf={urdf_filename}, nav2_params={nav2_params_name}'),
+        LogInfo(msg=f'[slam_nav.launch] octomap={octomap} (slam_algo=3d only; Grid/3D={"true" if octomap else "false"})'),
+        LogInfo(msg=f'[slam_nav.launch] bridge={bridge_yaml}, lidar_type={lidar_type}, '
+                    f'enable_rgbd={enable_rgbd}'),
         rsp,
         gazebo_server,
         gazebo_client,
         ros_gz_bridge,
+        *([points_to_scan] if points_to_scan is not None else []),
         laser_filter,
+        *([scan_quality_gate] if scan_quality_gate is not None else []),
         spawn_robot,
         slam_or_localization,
+        cslam_group,
         nav2,
+        gs_keepout_group,
+        gs_speed_group,
         rviz2,
         collision_monitor,
         mission_server,
         frontier_node,
         yolo_detector,
+        gs_semantic_fusion,
     ] + dynamic_obstacle_actions
 
 
@@ -458,7 +727,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'world_name',
             default_value='cafe',
-            description='Gazebo world name in package worlds/ (example: cafe, hospital, corridor, maze, or obstacles)',
+            description='Gazebo world name in package worlds/ (cafe, hospital, '
+                        'lake_house, aws_warehouse, tugbot_warehouse, …). Textured '
+                        'Fuel worlds need: bash src/rosnav_bot/scripts/download_fuel_worlds.sh',
         ),
         DeclareLaunchArgument(
             'world',
@@ -469,9 +740,15 @@ def generate_launch_description():
         DeclareLaunchArgument('robot_name', default_value='diff_drive', description='Gazebo robot entity name'),
         DeclareLaunchArgument(
             name='enable_camera', default_value='false',
-            description='Include the RGB camera sensor (used by aruco_dock.py and '
-                        'yolo_detector.py). Off by default to save render cost — set '
-                        'true when you need docking or YOLO object detection.'),
+            description='Include the RGB camera sensor (used by aruco_dock.py, '
+                        'yolo_detector.py, and RTAB-Map loop closure). Off by default '
+                        'to save render cost — set true when you need docking or YOLO '
+                        'object detection. Automatically forced true when slam_algo:=3d '
+                        'or slam_algo:=vslam|multisensor / enable_rgbd:=true (RGB-D replaces RGB).'),
+        DeclareLaunchArgument(
+            name='enable_rgbd', default_value='false',
+            description='Use RGB-D camera (depth image + /camera/depth/points for '
+                        'Nav2 VoxelLayer). Forced true for slam_algo:=vslam|multisensor.'),
         # Maze default spawn moved away from origin so robot is immediately visible.
         DeclareLaunchArgument(
             name='spawn_x', default_value='auto',
@@ -491,11 +768,30 @@ def generate_launch_description():
             default_value='',
             description='Output prefix for map_saver_cli. If empty, uses <package_share>/maps/map_<world_name>'),
         DeclareLaunchArgument(
+            name='map_override',
+            default_value='',
+            description='Explicit map yaml for nav-on-map mode (slam:=false), overriding the '
+                        'auto-resolved maps/map_<world_name>.yaml. A gs_mask_from_splat.py '
+                        'KeepoutFilter mask is already in this exact format, so this can seed '
+                        'Nav2 with a GS-derived floor plan before any SLAM. See concepts.md §31.'),
+        DeclareLaunchArgument(
             name='slam', default_value='true',
-            description='true=SLAM Toolbox (live mapping), false=AMCL on pre-built map'),
+            description='true=live mapping (2d/3d/vslam), false=localize. With '
+                        'slam_algo:=vslam and rtabmap_db set, false runs RTAB '
+                        'localization + Nav2 (no AMCL). Otherwise AMCL on map yaml.'),
+        DeclareLaunchArgument(
+            name='rtabmap_db', default_value='',
+            description='RTAB-Map SQLite path for slam_algo:=vslam. Mapping: optional '
+                        'persist path (created if missing). Localization (slam:=false): '
+                        'required existing .db.'),
         DeclareLaunchArgument(
             name='explore', default_value='false',
             description='Auto-start frontier explorer (only valid when slam:=true)'),
+        DeclareLaunchArgument(
+            name='explorer', default_value='builtin',
+            description='Exploration backend when explore:=true: builtin (rosnav WFD/utility), '
+                        'explore_lite (m-explore-ros2), frontier (frontier_exploration_ros2 MRTSP), '
+                        'or rrt (rrt_explore). Falls back to builtin if the package is not built.'),
         DeclareLaunchArgument(
             name='frontier_detector', default_value='wfd',
             description='Frontier detector: wfd (reachable wavefront), classic, or rrt (sampling-based)'),
@@ -565,6 +861,13 @@ def generate_launch_description():
                         'only, same physics/nav2 tuning. mir100/husky only supported with '
                         'drive_type:=diff.'),
         DeclareLaunchArgument(
+            name='scan_gate',
+            default_value='true',
+            description='Insert scan_quality_gate between laser_filters and /scan — '
+                        'rejects malformed LaserScans (empty frame, broken angles, '
+                        'too few valid beams, stamp jumps) so SLAM never sees them. '
+                        'Chain: scan_raw → laser_filters → scan_pre → gate → scan.'),
+        DeclareLaunchArgument(
             name='lidar_type',
             default_value='2d',
             description='"2d" (default, LaserScan on /scan) or "3d" (16-channel PointCloud2 on '
@@ -577,11 +880,17 @@ def generate_launch_description():
             name='lidar3d_vfov_deg', default_value='10',
             description='3D lidar vertical half-angle in degrees (+/-), lidar_type:=3d only.'),
         DeclareLaunchArgument(
+            name='octomap', default_value='false',
+            description='slam_algo:=3d|vslam|multisensor. true sets RTAB-Map Grid/3D:=true so '
+                        '/octomap_binary and /octomap_full actually populate (a full 3D '
+                        'voxel map), on top of the same 2D /map Nav2 always gets.'),
+        DeclareLaunchArgument(
             name='slam_algo', default_value='2d',
-            description='"2d" (default, slam_toolbox — 2D occupancy grid only) or "3d" '
-                        '(RTAB-Map lidar SLAM, real 3D map + projected 2D grid for Nav2). '
-                        'Requires lidar_type:=3d and ros-humble-rtabmap-ros installed; '
-                        'falls back to 2d with a warning if either is missing.'),
+            description='"2d" (slam_toolbox), "cartographer" (Cartographer 2D+IMU), '
+                        '"3d" (RTAB-Map lidar), "vslam" (RTAB-Map RGB-D), '
+                        '"multisensor" (RTAB-Map RGB-D+lidar), or "cslam" (Swarm-SLAM). '
+                        'cslam/3d need lidar_type:=3d; cartographer needs '
+                        'ros-humble-cartographer-ros; cslam needs link_third_party.sh --cslam.'),
         DeclareLaunchArgument(
             'dynamic_obstacles', default_value='0',
             description='Number of patrolling dynamic_obstacle models to spawn '
@@ -603,5 +912,23 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'dynamic_obstacle_speed', default_value='0.4',
             description='Dynamic obstacle patrol speed in m/s'),
+        DeclareLaunchArgument(
+            'gs_semantic_npz', default_value='',
+            description='Path to a splat_points.npz (from gs_splat_to_pointcloud.py) for '
+                        'gs_semantic_fusion.py to project YOLO detections against for 3D '
+                        'semantic markers. Requires enable_yolo:=true. Empty (default) = '
+                        'disabled. See concepts.md §29.'),
+        DeclareLaunchArgument(
+            'gs_keepout_mask', default_value='',
+            description='Path to a Nav2 costmap-filter-mask yaml produced by '
+                        'scripts/gs_mask_from_splat.py (Gaussian-Splat-derived keepout '
+                        'zones). Empty (default) = disabled, no extra nodes started. '
+                        'See concepts.md §28.'),
+        DeclareLaunchArgument(
+            'gs_speed_mask', default_value='',
+            description='Path to a Nav2 costmap-filter-mask yaml produced by '
+                        'scripts/gs_speed_mask_from_splat.py (Gaussian-Splat density-graded '
+                        'slow zones, distinct from the binary gs_keepout_mask). Empty '
+                        '(default) = disabled. See concepts.md §30.'),
         OpaqueFunction(function=_build_runtime_actions, args=[pkg_share]),
     ])

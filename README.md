@@ -39,6 +39,8 @@ sudo apt install -y \
   ros-humble-nav2-bringup ros-humble-slam-toolbox \
   ros-humble-navigation2 ros-humble-teleop-twist-keyboard \
   ros-humble-laser-filters ros-humble-rviz2
+# optional SLAM backends:
+#   sudo apt install ros-humble-rtabmap-ros ros-humble-cartographer-ros
 
 git clone https://github.com/darshmenon/rosnav.git ~/rosnav
 cd ~/rosnav && colcon build --symlink-install
@@ -66,6 +68,8 @@ Watch the map in RViz (`Map` on `/map`), or:
 ros2 topic hz /scan          # ~10 Hz
 ros2 topic hz /odom          # ~50 Hz
 ros2 topic echo /map --once --field info    # width/height should grow
+# Optional: watch / reject malformed scans (on by default in slam_nav via scan_gate:=true)
+ros2 run rosnav_bot scan_quality_gate.py --ros-args -p use_sim_time:=true
 ```
 
 Or let the robot explore alone: add `explore:=true` to the launch above.
@@ -213,33 +217,109 @@ ros2 action send_goal /undock_from_station rosnav_bot/action/UndockFromStation "
 
 ---
 
-## 7. Drive bases & controllers
+## 7. Platforms — drive bases, chassis skins, how to switch
+
+Two independent launch args:
+
+| Arg | What it changes | Values |
+|---|---|---|
+| `drive_type` | Physics + Gazebo plugin + Nav2 params (how it moves) | `diff` (default) · `mecanum` · `ackermann` |
+| `robot_model` | Chassis **visual** only (same footprint / wheels / Nav2) | `custom` (default) · `mir100` · `husky` |
+
+`mir100` / `husky` only work with `drive_type:=diff`. Mixing them with mecanum/ackermann is ignored (with a warning).
+
+| Platform | Launch knobs | Motion | Notes |
+|---|---|---|---|
+| Diff box (default) | `drive_type:=diff` | Forward + turn in place | DWB (Humble) or MPPI (`controller:=mppi`) |
+| Mecanum | `drive_type:=mecanum` | Holonomic — can strafe (`vy`) | Nav2 unlocks `max_vel_y`; no pre-rotate |
+| Ackermann (car-like) | `drive_type:=ackermann` | Front steer, min turning radius ~0.66 m | Always MPPI; keep `safety:=true` |
+| MiR100 look | `robot_model:=mir100` (+ diff) | Same as diff | Mesh skin only |
+| Husky look | `robot_model:=husky` (+ diff) | Same as diff | Mesh skin only |
+
+### Switch (single robot — map + navigate)
 
 ```bash
-# Diff (default) · holonomic · car-like
+# Diff (default)
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital drive_type:=diff explore:=true
+
+# Holonomic
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital drive_type:=mecanum explore:=true
+
+# Car-like
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital drive_type:=ackermann explore:=true safety:=true
 
-# Fleet-wide
+# Same drive, different look
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital robot_model:=mir100
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital robot_model:=husky
+
+# Navigate on a saved map (same args work on robot.launch.py)
+ros2 launch rosnav_bot robot.launch.py world_name:=hospital \
+  map:=src/rosnav_bot/maps/map_hospital.yaml drive_type:=ackermann safety:=true
+```
+
+### Switch (fleet)
+
+```bash
 ros2 launch rosnav_bot multi_robot.launch.py drive_type:=mecanum
 ros2 launch rosnav_bot multi_robot.launch.py drive_type:=ackermann
+ros2 launch rosnav_bot multi_robot.launch.py robot_model:=mir100
+ros2 launch rosnav_bot multi_robot.launch.py robot_model:=husky
+```
 
-# MPPI instead of DWB (Humble; Jazzy already defaults to MPPI)
+### Controllers & sensors (orthogonal)
+
+```bash
+# MPPI instead of DWB (Humble; Jazzy already defaults to MPPI). Ackermann always MPPI.
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital controller:=mppi explore:=true
 
-# 3D lidar / RTAB-Map · MiR100 / Husky visual chassis
+# 3D lidar / RTAB-Map (diff only)
 ros2 launch rosnav_bot slam_nav.launch.py lidar_type:=3d
 ros2 launch rosnav_bot slam_nav.launch.py lidar_type:=3d slam_algo:=3d explore:=true
-ros2 launch rosnav_bot slam_nav.launch.py robot_model:=mir100
-ros2 launch rosnav_bot slam_nav.launch.py robot_model:=husky
+
+# More SLAM backends (same Nav2 stack)
+ros2 launch rosnav_bot slam_nav.launch.py slam_algo:=cartographer explore:=true   # needs cartographer-ros
+ros2 launch rosnav_bot slam_nav.launch.py slam_algo:=vslam world_name:=cafe explore:=true
+ros2 launch rosnav_bot slam_nav.launch.py slam_algo:=multisensor explore:=true    # RGB-D + lidar
+ros2 launch rosnav_bot slam_nav.launch.py lidar_type:=3d slam_algo:=multisensor explore:=true
 ```
+
+### SLAM benchmark (headless compare)
+
+```bash
+# Default matrix: 2d | cartographer | vslam | multisensor | 3d  (maze, 120s explore)
+./src/rosnav_bot/scripts/benchmark_slam.sh
+WORLD=hospital DURATION_S=90 ALGOS="2d cartographer multisensor" ./src/rosnav_bot/scripts/benchmark_slam.sh
+# → /tmp/rosnav_slam_bench/<stamp>/comparison.md (+ per-algo summary.json / map.*)
+```
+
+Install Cartographer once if you want that row:
+`sudo apt install ros-${ROS_DISTRO}-cartographer-ros`
 
 Strafe example (mecanum):
 ```bash
 ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
   "{linear: {x: 0.0, y: 0.3, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}"
 ```
+
+Ackermann steer-while-driving:
+```bash
+ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
+  "{linear: {x: 0.4, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.3}}"
+```
+
+Deep dive → [concepts.md §18–20](concepts.md#18-mecanum-holonomic-drive) (mecanum / ackermann / MiR100 / Husky).
+
+### Headless smoke (all AMRs map + move)
+
+```bash
+# Gazebo server only — no GUI. Checks /odom /scan /map and a short drive per platform.
+./src/rosnav_bot/scripts/smoke_amr_matrix.sh
+# optional filters:
+#   WORLD=maze BOOT_WAIT_S=50 ./src/rosnav_bot/scripts/smoke_amr_matrix.sh
+#   ONLY=ackermann,diff_husky ./src/rosnav_bot/scripts/smoke_amr_matrix.sh
+```
+
+Stop other Gazebo/ROS sims first — parallel `gz sim` instances starve DDS and make later variants fail.
 
 ---
 
@@ -362,7 +442,60 @@ Details → [concepts.md §27](concepts.md#27-gaussian-splatting-capture-rig-gs_
 
 ---
 
-## 12. Update YAML (tuning)
+## 12. AI training (YOLO · Gaussian Splat keepout · RL)
+
+Three research pipelines that plug into the existing stack. Core SLAM/Nav2 stay classical.
+
+### A — YOLO fine-tune
+
+```bash
+# Collect frames (camera up)
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=cafe enable_camera:=true
+ros2 run rosnav_bot yolo_collect.py --ros-args -p out_dir:=$HOME/yolo_data/cafe -p max_frames:=200
+# annotate labels/*.txt (YOLO format), then:
+python3 src/rosnav_bot/scripts/yolo_train.py --data $HOME/yolo_data/cafe/dataset.yaml --epochs 50
+
+# smoke (no Gazebo)
+python3 src/rosnav_bot/scripts/yolo_train.py --smoke
+
+# deploy
+ros2 launch rosnav_bot slam_nav.launch.py enable_yolo:=true \
+  yolo_model:=runs/detect/rosnav_yolo/weights/best.pt
+```
+
+### B — Gaussian Splat → Nav2 keepout
+
+```bash
+# full capture → ns-train → mask (needs nerfstudio venv)
+bash src/rosnav_bot/scripts/gs_train_keepout.sh cafe
+
+# or mask-only from an existing points.npz
+MASK_ONLY=1 NPZ=$HOME/gs_data/cafe_points_final.npz \
+  bash src/rosnav_bot/scripts/gs_train_keepout.sh cafe
+
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=cafe \
+  gs_keepout_mask:=src/rosnav_bot/maps/gs_keepout_cafe.yaml
+```
+
+### C — RL local planner (PPO)
+
+Trains offline on a map PGM (no Gazebo). Deploys as a research `/cmd_vel` source.
+
+```bash
+pip install stable-baselines3 gymnasium   # optional; default trainer is pure torch
+python3 src/rosnav_bot/scripts/train_ppo.py --smoke
+python3 src/rosnav_bot/scripts/train_ppo.py \
+  --map src/rosnav_bot/maps/map_maze.yaml --timesteps 200000 --out runs/rl/ppo_maze
+
+# with robot up (disable Nav2 controller or remap cmd_vel when testing)
+ros2 run rosnav_bot rl_policy_node.py --ros-args \
+  -p model_path:=runs/rl/ppo_maze/ppo_scan_nav.pt -p goal_x:=2.0 -p goal_y:=1.0
+```
+
+`train_ppo.py` defaults to a pure-PyTorch PPO (`--backend torch`). `--backend sb3` needs a working stable-baselines3 build.
+---
+
+## 13. Update YAML (tuning)
 
 All configs live under `src/rosnav_bot/config/`. With `--symlink-install`, edit then **relaunch** (no rebuild).
 
@@ -394,7 +527,7 @@ More → [`concepts.md`](concepts.md).
 
 ---
 
-## 13. Fixes
+## 14. Fixes
 
 | Problem | Try |
 |---|---|
