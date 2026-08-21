@@ -1,0 +1,122 @@
+<?xml version="1.0" ?>
+<!--
+  cafe.world — OpenRobotics Cafe + tables (textured interior).
+
+  Classic Gazebo cafe: posters, wood, and furniture give RGB cameras
+  enough features for RTAB-Map visual odometry / 3D mapping.
+
+  Fetch models first:
+    bash src/rosnav_bot/scripts/download_fuel_worlds.sh cafe
+
+  Launch:
+    ros2 launch rosnav_bot slam_nav.launch.py world_name:=cafe \
+      enable_camera:=true lidar_type:=3d slam_algo:=3d
+-->
+<sdf version='1.8'>
+  <world name='cafe'>
+
+    <physics name='4ms' type='ignored'>
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system"
+            name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system"
+            name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system"
+            name="ignition::gazebo::systems::SceneBroadcaster"/>
+    <plugin filename="ignition-gazebo-sensors-system"
+            name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="ignition-gazebo-contact-system"
+            name="ignition::gazebo::systems::Contact"/>
+
+    <light name='sun' type='directional'>
+      <pose>0 -18 8 0 0.523 1.5707</pose>
+      <cast_shadows>true</cast_shadows>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>0 0.5 -0.9</direction>
+    </light>
+    <light name='interior' type='point'>
+      <pose>0 -5 3.5 0 0 0</pose>
+      <diffuse>0.85 0.82 0.75 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>20</range><linear>0.05</linear></attenuation>
+    </light>
+
+    <model name='ground_plane'>
+      <static>true</static>
+      <link name='link'>
+        <collision name='c'>
+          <geometry><plane><normal>0 0 1</normal><size>50 50</size></plane></geometry>
+        </collision>
+        <visual name='v'>
+          <geometry><plane><normal>0 0 1</normal><size>50 50</size></plane></geometry>
+          <material><ambient>0.55 0.55 0.55 1</ambient><diffuse>0.55 0.55 0.55 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <include>
+      <name>cafe</name>
+      <uri>model://Cafe</uri>
+      <pose>0 0 0 0 0 0</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <name>table1</name>
+      <uri>model://Cafe table</uri>
+      <pose>0.5 -1.6 0.0 0 0 0</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <name>table2</name>
+      <uri>model://Cafe table</uri>
+      <pose>2.4 -5.5 0.0 0 0 0</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <name>table3</name>
+      <uri>model://Cafe table</uri>
+      <pose>-1.5 -5.5 0.0 0 0 0</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <name>table4</name>
+      <uri>model://Cafe table</uri>
+      <pose>2.4 -9.0 0.0 0 0 0</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <name>table5</name>
+      <uri>model://Cafe table</uri>
+      <pose>-1.5 -9.0 0.0 0 0 0</pose>
+      <static>true</static>
+    </include>
+
+    <!-- Overview camera — elevated, angled across the table row so the
+         seating aisle (robot spawns at 0,-2 facing -Y down it) fills the
+         frame. Hand-placed from the table layout above, not launch-verified
+         live. -->
+    <model name='world_monitor_cam'>
+      <static>true</static>
+      <pose>4.5 -5.5 3.5 0 0.62 3.1416</pose>
+      <link name='link'>
+        <sensor name='monitor_camera' type='camera'>
+          <always_on>true</always_on>
+          <update_rate>10</update_rate>
+          <topic>world_monitor/image_raw</topic>
+          <camera>
+            <horizontal_fov>1.3</horizontal_fov>
+            <image><width>960</width><height>540</height><format>R8G8B8</format></image>
+            <clip><near>0.05</near><far>20.0</far></clip>
+          </camera>
+        </sensor>
+      </link>
+    </model>
+
+  </world>
+</sdf>

@@ -119,8 +119,8 @@ class GsCapture(Node):
         self.declare_parameter('yaw_steps', 8)
         self.declare_parameter('pitch_deg', [0.0, -15.0])
         self.declare_parameter('horizontal_fov_rad', 1.5708)
-        self.declare_parameter('image_width', 640)
-        self.declare_parameter('image_height', 480)
+        self.declare_parameter('image_width', 1280)
+        self.declare_parameter('image_height', 960)
 
         self._world = str(self.get_parameter('world_name').value)
         self._model = str(self.get_parameter('model_name').value)

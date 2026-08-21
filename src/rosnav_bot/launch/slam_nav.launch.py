@@ -46,7 +46,7 @@ def _resolve_world_path(world_name_arg: str, world_arg: str, pkg_share: str) -> 
     world_arg = world_arg.strip()
     if world_arg:
         return os.path.expanduser(world_arg)
-    world_name = os.path.splitext(os.path.basename(world_name_arg.strip() or 'hospital'))[0]
+    world_name = os.path.splitext(os.path.basename(world_name_arg.strip() or 'cafe'))[0]
     return os.path.join(pkg_share, 'worlds', f'{world_name}.world')
 
 
@@ -457,8 +457,8 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'world_name',
-            default_value='hospital',
-            description='Gazebo world name in package worlds/ (example: hospital, corridor, maze, or obstacles)',
+            default_value='cafe',
+            description='Gazebo world name in package worlds/ (example: cafe, hospital, corridor, maze, or obstacles)',
         ),
         DeclareLaunchArgument(
             'world',

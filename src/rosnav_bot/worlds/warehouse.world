@@ -1,23 +1,41 @@
 <?xml version="1.0" ?>
 <!--
   warehouse.world — Large warehouse environment for multi-robot fleet testing.
-  Structure (walls/shelves/pillars/pallets) is all primitives: loads instantly,
-  no downloads needed for those. A handful of real-world objects (person, chair,
-  fire hydrant, suitcase — for yolo_detector.py / enable_yolo:=true testing) are
-  pulled from Gazebo Fuel via <include><uri>, which gz sim downloads once and
-  caches locally (~/.gz/fuel) — needs internet on first launch only.
+  Structure (walls/shelves/pillars/pallets/catwalk/forklift) is all primitives:
+  loads instantly, no downloads needed for those. A handful of real-world
+  objects (person, chair, fire hydrant, suitcase — for yolo_detector.py /
+  enable_yolo:=true testing) are pulled from Gazebo Fuel via <include><uri>,
+  which gz sim downloads once and caches locally (~/.gz/fuel) — needs internet
+  on first launch only.
 
-  Layout (24 m × 20 m):
+  Layout (29 m × 20 m):
     Staging / spawn zone  :  x = -11 to -4,  y = -8 to 8  (western open area)
     Separator wall        :  x = -3            (with 2 m gap at y = 0 for passage)
     Storage zone          :  x = -2  to 11,   y = -8 to 8
-      - 4 double shelf-rows (each pair separated by 1 m pick-aisle)
+      - 5 double shelf-rows (each pair separated by 1 m pick-aisle)
       - 3 m drive-aisles between row-pairs
-      - 3 shelf segments per row (3 m each, 0.5 m gap between)
-      - Support pillars at x = 0, 4, 8   along y = ±3
+      - Row 1 (y=8/7): two-tier racking (upper shelf board + posts) — tallest, 2.2 m
+      - Row 2 (y=4.5/3.5): low waist-height shelving, 1.1 m — deliberately
+        shorter so a 3D lidar scan can't alias it with the other rows
+      - Row 3 (y=1.0/0.0): middle segment removed on both sides — opens a
+        north-south cross-aisle at x=3.5, giving frontier exploration and
+        RTAB-Map loop closure an actual loop path instead of a dead-end grid
+      - Row 4 (y=-3/-4): standard 1.6 m, 3 segments (unchanged baseline)
+      - Row 5 (y=-7/-8): tall single-tier, 1.8 m
+      - Support pillars at x = 0, 4, 8   along y = ±3, each with 2 safety
+        bollards at the base
+    East bay (x = 12 to 17, y = -10 to 10) — through a 2.4 m doorway in the
+    former east wall:
+      - NE corner: enclosed break room (desk, chair, table)
+      - SE area: raised loading-dock platform (0.6 m, forklift/pallet-jack
+        access only — not navigable, a real 3D obstacle for the 2D costmap)
+      - Center corridor: overhead catwalk/mezzanine (poles + railed deck at
+        z≈2.4 m) with a parked forklift and pallet jack underneath, plus a
+        ceiling-height pipe run along the far wall
 
   Robot spawn area:  x = -9 to -5,  y = -6 to 6
-  Loading dock:      x = 10 to 11,  y = -4 to 4
+  Loading dock (staging pallets before the doorway):  x = 10 to 11,  y = -4 to 4
+  Raised dock platform (east bay):  x = 12.3 to 16.8,  y = -9.7 to -3
 
   Launch:
     ros2 launch rosnav_bot multi_robot.launch.py world:=warehouse
@@ -60,6 +78,18 @@
     </light>
     <light name='light_east' type='point'>
       <pose>5 0 4 0 0 0</pose>
+      <diffuse>0.8 0.8 0.9 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>15</range><linear>0.05</linear></attenuation>
+    </light>
+    <light name='light_bay_n' type='point'>
+      <pose>14.5 4 4 0 0 0</pose>
+      <diffuse>0.8 0.8 0.9 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>15</range><linear>0.05</linear></attenuation>
+    </light>
+    <light name='light_bay_s' type='point'>
+      <pose>14.5 -6 4 0 0 0</pose>
       <diffuse>0.8 0.8 0.9 1</diffuse>
       <specular>0.1 0.1 0.1 1</specular>
       <attenuation><range>15</range><linear>0.05</linear></attenuation>
@@ -110,31 +140,61 @@
         </visual>
       </link>
     </model>
+    <!-- East bay floor: cool industrial grey -->
+    <model name='zone_bay'>
+      <static>true</static><pose>14.5 0 0.003 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>5 20 0.005</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>5 20 0.005</size></box></geometry>
+          <material><ambient>0.65 0.68 0.70 0.6</ambient><diffuse>0.65 0.68 0.70 0.6</diffuse></material>
+        </visual>
+      </link>
+    </model>
 
     <!-- ── Outer walls (24 m × 20 m, 3 m tall) ─────────────────────────── -->
-    <!-- North wall -->
+    <!-- North wall (extended east to cover the new east bay) -->
     <model name='wall_north'>
-      <static>true</static><pose>0 10 1.5 0 0 0</pose>
+      <static>true</static><pose>2.5 10 1.5 0 0 0</pose>
       <link name='link'>
-        <collision name='c'><geometry><box><size>24.4 0.2 3</size></box></geometry></collision>
-        <visual name='v'><geometry><box><size>24.4 0.2 3</size></box></geometry>
+        <collision name='c'><geometry><box><size>29.4 0.2 3</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>29.4 0.2 3</size></box></geometry>
           <material><ambient>0.70 0.62 0.52 1</ambient><diffuse>0.70 0.62 0.52 1</diffuse></material>
         </visual>
       </link>
     </model>
-    <!-- South wall -->
+    <!-- South wall (extended east to cover the new east bay) -->
     <model name='wall_south'>
-      <static>true</static><pose>0 -10 1.5 0 0 0</pose>
+      <static>true</static><pose>2.5 -10 1.5 0 0 0</pose>
       <link name='link'>
-        <collision name='c'><geometry><box><size>24.4 0.2 3</size></box></geometry></collision>
-        <visual name='v'><geometry><box><size>24.4 0.2 3</size></box></geometry>
+        <collision name='c'><geometry><box><size>29.4 0.2 3</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>29.4 0.2 3</size></box></geometry>
           <material><ambient>0.70 0.62 0.52 1</ambient><diffuse>0.70 0.62 0.52 1</diffuse></material>
         </visual>
       </link>
     </model>
-    <!-- East wall -->
-    <model name='wall_east'>
-      <static>true</static><pose>12 0 1.5 0 0 0</pose>
+    <!-- Former east wall (x=12) is now a doorway into the east bay: two
+         segments with a 2.4 m gap at y=-1.2..1.2 -->
+    <model name='wall_east_n'>
+      <static>true</static><pose>12 5.6 1.5 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>0.2 8.8 3</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>0.2 8.8 3</size></box></geometry>
+          <material><ambient>0.70 0.62 0.52 1</ambient><diffuse>0.70 0.62 0.52 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name='wall_east_s'>
+      <static>true</static><pose>12 -5.6 1.5 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>0.2 8.8 3</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>0.2 8.8 3</size></box></geometry>
+          <material><ambient>0.70 0.62 0.52 1</ambient><diffuse>0.70 0.62 0.52 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <!-- Far east wall (outer boundary of the east bay) -->
+    <model name='wall_east_far'>
+      <static>true</static><pose>17 0 1.5 0 0 0</pose>
       <link name='link'>
         <collision name='c'><geometry><box><size>0.2 20 3</size></box></geometry></collision>
         <visual name='v'><geometry><box><size>0.2 20 3</size></box></geometry>
@@ -211,20 +271,40 @@
     <model name='sh_1b_2'><static>true</static><pose>3.5 7.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.45 0.30 0.18 1</ambient><diffuse>0.45 0.30 0.18 1</diffuse></material></visual></link></model>
     <model name='sh_1b_3'><static>true</static><pose>7.0 7.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.45 0.30 0.18 1</ambient><diffuse>0.45 0.30 0.18 1</diffuse></material></visual></link></model>
 
-    <!-- ROW PAIR 2 — y=4.5 / 3.5 -->
-    <model name='sh_2f_1'><static>true</static><pose>0   4.5 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.30 0.40 0.22 1</ambient><diffuse>0.30 0.40 0.22 1</diffuse></material></visual></link></model>
-    <model name='sh_2f_2'><static>true</static><pose>3.5 4.5 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.30 0.40 0.22 1</ambient><diffuse>0.30 0.40 0.22 1</diffuse></material></visual></link></model>
-    <model name='sh_2f_3'><static>true</static><pose>7.0 4.5 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.30 0.40 0.22 1</ambient><diffuse>0.30 0.40 0.22 1</diffuse></material></visual></link></model>
-    <model name='sh_2b_1'><static>true</static><pose>0   3.5 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.30 0.40 0.22 1</ambient><diffuse>0.30 0.40 0.22 1</diffuse></material></visual></link></model>
-    <model name='sh_2b_2'><static>true</static><pose>3.5 3.5 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.30 0.40 0.22 1</ambient><diffuse>0.30 0.40 0.22 1</diffuse></material></visual></link></model>
-    <model name='sh_2b_3'><static>true</static><pose>7.0 3.5 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.30 0.40 0.22 1</ambient><diffuse>0.30 0.40 0.22 1</diffuse></material></visual></link></model>
+    <!-- Row pair 1 upper tier: a second shelf board at z=2.0 on posts, on
+         top of each lower segment above — two-tier racking gives the 3D
+         lidar/RTAB-Map a distinct height profile for this row that the
+         other (single-tier) rows don't share. -->
+    <model name='sh_1f_1_post_a'><static>true</static><pose>-1.2 7.85 1.1 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.03</radius><length>2.2</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.03</radius><length>2.2</length></cylinder></geometry><material><ambient>0.3 0.3 0.3 1</ambient><diffuse>0.3 0.3 0.3 1</diffuse></material></visual></link></model>
+    <model name='sh_1f_1_post_b'><static>true</static><pose>1.2 7.85 1.1 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.03</radius><length>2.2</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.03</radius><length>2.2</length></cylinder></geometry><material><ambient>0.3 0.3 0.3 1</ambient><diffuse>0.3 0.3 0.3 1</diffuse></material></visual></link></model>
+    <model name='sh_1f_1_upper'><static>true</static><pose>0 8.0 2.0 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 0.08</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 0.08</size></box></geometry><material><ambient>0.45 0.30 0.18 1</ambient><diffuse>0.45 0.30 0.18 1</diffuse></material></visual></link></model>
+    <model name='sh_1f_2_post_a'><static>true</static><pose>2.3 7.85 1.1 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.03</radius><length>2.2</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.03</radius><length>2.2</length></cylinder></geometry><material><ambient>0.3 0.3 0.3 1</ambient><diffuse>0.3 0.3 0.3 1</diffuse></material></visual></link></model>
+    <model name='sh_1f_2_post_b'><static>true</static><pose>4.7 7.85 1.1 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.03</radius><length>2.2</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.03</radius><length>2.2</length></cylinder></geometry><material><ambient>0.3 0.3 0.3 1</ambient><diffuse>0.3 0.3 0.3 1</diffuse></material></visual></link></model>
+    <model name='sh_1f_2_upper'><static>true</static><pose>3.5 8.0 2.0 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 0.08</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 0.08</size></box></geometry><material><ambient>0.45 0.30 0.18 1</ambient><diffuse>0.45 0.30 0.18 1</diffuse></material></visual></link></model>
+    <model name='sh_1f_3_post_a'><static>true</static><pose>5.8 7.85 1.1 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.03</radius><length>2.2</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.03</radius><length>2.2</length></cylinder></geometry><material><ambient>0.3 0.3 0.3 1</ambient><diffuse>0.3 0.3 0.3 1</diffuse></material></visual></link></model>
+    <model name='sh_1f_3_post_b'><static>true</static><pose>8.2 7.85 1.1 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.03</radius><length>2.2</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.03</radius><length>2.2</length></cylinder></geometry><material><ambient>0.3 0.3 0.3 1</ambient><diffuse>0.3 0.3 0.3 1</diffuse></material></visual></link></model>
+    <model name='sh_1f_3_upper'><static>true</static><pose>7.0 8.0 2.0 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 0.08</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 0.08</size></box></geometry><material><ambient>0.45 0.30 0.18 1</ambient><diffuse>0.45 0.30 0.18 1</diffuse></material></visual></link></model>
+    <model name='sh_1b_1_upper'><static>true</static><pose>0   7.0 2.0 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 0.08</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 0.08</size></box></geometry><material><ambient>0.45 0.30 0.18 1</ambient><diffuse>0.45 0.30 0.18 1</diffuse></material></visual></link></model>
+    <model name='sh_1b_2_upper'><static>true</static><pose>3.5 7.0 2.0 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 0.08</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 0.08</size></box></geometry><material><ambient>0.45 0.30 0.18 1</ambient><diffuse>0.45 0.30 0.18 1</diffuse></material></visual></link></model>
+    <model name='sh_1b_3_upper'><static>true</static><pose>7.0 7.0 2.0 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 0.08</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 0.08</size></box></geometry><material><ambient>0.45 0.30 0.18 1</ambient><diffuse>0.45 0.30 0.18 1</diffuse></material></visual></link></model>
 
-    <!-- ROW PAIR 3 — y=1.0 / 0.0 -->
+    <!-- ROW PAIR 2 — y=4.5 / 3.5 — deliberately low (1.1 m, waist height)
+         so this row's lidar scan profile can't alias with the taller rows -->
+    <model name='sh_2f_1'><static>true</static><pose>0   4.5 0.55 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.1</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.1</size></box></geometry><material><ambient>0.30 0.40 0.22 1</ambient><diffuse>0.30 0.40 0.22 1</diffuse></material></visual></link></model>
+    <model name='sh_2f_2'><static>true</static><pose>3.5 4.5 0.55 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.1</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.1</size></box></geometry><material><ambient>0.30 0.40 0.22 1</ambient><diffuse>0.30 0.40 0.22 1</diffuse></material></visual></link></model>
+    <model name='sh_2f_3'><static>true</static><pose>7.0 4.5 0.55 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.1</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.1</size></box></geometry><material><ambient>0.30 0.40 0.22 1</ambient><diffuse>0.30 0.40 0.22 1</diffuse></material></visual></link></model>
+    <model name='sh_2b_1'><static>true</static><pose>0   3.5 0.55 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.1</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.1</size></box></geometry><material><ambient>0.30 0.40 0.22 1</ambient><diffuse>0.30 0.40 0.22 1</diffuse></material></visual></link></model>
+    <model name='sh_2b_2'><static>true</static><pose>3.5 3.5 0.55 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.1</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.1</size></box></geometry><material><ambient>0.30 0.40 0.22 1</ambient><diffuse>0.30 0.40 0.22 1</diffuse></material></visual></link></model>
+    <model name='sh_2b_3'><static>true</static><pose>7.0 3.5 0.55 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.1</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.1</size></box></geometry><material><ambient>0.30 0.40 0.22 1</ambient><diffuse>0.30 0.40 0.22 1</diffuse></material></visual></link></model>
+
+    <!-- ROW PAIR 3 — y=1.0 / 0.0 — middle segment (x=3.5) removed on both
+         sides to open a north-south cross-aisle, connecting the row2/3
+         drive-aisle (y=2.0) to the row3/4 drive-aisle (y=-1.5). Gives
+         frontier exploration and RTAB-Map loop closure an actual loop
+         instead of a dead-end comb of parallel aisles. -->
     <model name='sh_3f_1'><static>true</static><pose>0   1.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.22 0.32 0.45 1</ambient><diffuse>0.22 0.32 0.45 1</diffuse></material></visual></link></model>
-    <model name='sh_3f_2'><static>true</static><pose>3.5 1.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.22 0.32 0.45 1</ambient><diffuse>0.22 0.32 0.45 1</diffuse></material></visual></link></model>
     <model name='sh_3f_3'><static>true</static><pose>7.0 1.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.22 0.32 0.45 1</ambient><diffuse>0.22 0.32 0.45 1</diffuse></material></visual></link></model>
     <model name='sh_3b_1'><static>true</static><pose>0   0.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.22 0.32 0.45 1</ambient><diffuse>0.22 0.32 0.45 1</diffuse></material></visual></link></model>
-    <model name='sh_3b_2'><static>true</static><pose>3.5 0.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.22 0.32 0.45 1</ambient><diffuse>0.22 0.32 0.45 1</diffuse></material></visual></link></model>
     <model name='sh_3b_3'><static>true</static><pose>7.0 0.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.22 0.32 0.45 1</ambient><diffuse>0.22 0.32 0.45 1</diffuse></material></visual></link></model>
 
     <!-- ROW PAIR 4 — y=-3.0 / -4.0 -->
@@ -235,13 +315,14 @@
     <model name='sh_4b_2'><static>true</static><pose>3.5 -4.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.42 0.28 0.38 1</ambient><diffuse>0.42 0.28 0.38 1</diffuse></material></visual></link></model>
     <model name='sh_4b_3'><static>true</static><pose>7.0 -4.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.42 0.28 0.38 1</ambient><diffuse>0.42 0.28 0.38 1</diffuse></material></visual></link></model>
 
-    <!-- ROW PAIR 5 — y=-7.0 / -8.0 -->
-    <model name='sh_5f_1'><static>true</static><pose>0  -7.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.38 0.36 0.22 1</ambient><diffuse>0.38 0.36 0.22 1</diffuse></material></visual></link></model>
-    <model name='sh_5f_2'><static>true</static><pose>3.5 -7.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.38 0.36 0.22 1</ambient><diffuse>0.38 0.36 0.22 1</diffuse></material></visual></link></model>
-    <model name='sh_5f_3'><static>true</static><pose>7.0 -7.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.38 0.36 0.22 1</ambient><diffuse>0.38 0.36 0.22 1</diffuse></material></visual></link></model>
-    <model name='sh_5b_1'><static>true</static><pose>0  -8.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.38 0.36 0.22 1</ambient><diffuse>0.38 0.36 0.22 1</diffuse></material></visual></link></model>
-    <model name='sh_5b_2'><static>true</static><pose>3.5 -8.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.38 0.36 0.22 1</ambient><diffuse>0.38 0.36 0.22 1</diffuse></material></visual></link></model>
-    <model name='sh_5b_3'><static>true</static><pose>7.0 -8.0 0.8 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.6</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.6</size></box></geometry><material><ambient>0.38 0.36 0.22 1</ambient><diffuse>0.38 0.36 0.22 1</diffuse></material></visual></link></model>
+    <!-- ROW PAIR 5 — y=-7.0 / -8.0 — tall (1.8 m), a third distinct height
+         tier alongside row1's 2.2 m two-tier and row2's 1.1 m low shelving -->
+    <model name='sh_5f_1'><static>true</static><pose>0  -7.0 0.9 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.8</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.8</size></box></geometry><material><ambient>0.38 0.36 0.22 1</ambient><diffuse>0.38 0.36 0.22 1</diffuse></material></visual></link></model>
+    <model name='sh_5f_2'><static>true</static><pose>3.5 -7.0 0.9 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.8</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.8</size></box></geometry><material><ambient>0.38 0.36 0.22 1</ambient><diffuse>0.38 0.36 0.22 1</diffuse></material></visual></link></model>
+    <model name='sh_5f_3'><static>true</static><pose>7.0 -7.0 0.9 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.8</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.8</size></box></geometry><material><ambient>0.38 0.36 0.22 1</ambient><diffuse>0.38 0.36 0.22 1</diffuse></material></visual></link></model>
+    <model name='sh_5b_1'><static>true</static><pose>0  -8.0 0.9 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.8</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.8</size></box></geometry><material><ambient>0.38 0.36 0.22 1</ambient><diffuse>0.38 0.36 0.22 1</diffuse></material></visual></link></model>
+    <model name='sh_5b_2'><static>true</static><pose>3.5 -8.0 0.9 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.8</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.8</size></box></geometry><material><ambient>0.38 0.36 0.22 1</ambient><diffuse>0.38 0.36 0.22 1</diffuse></material></visual></link></model>
+    <model name='sh_5b_3'><static>true</static><pose>7.0 -8.0 0.9 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.8 0.5 1.8</size></box></geometry></collision><visual name='v'><geometry><box><size>2.8 0.5 1.8</size></box></geometry><material><ambient>0.38 0.36 0.22 1</ambient><diffuse>0.38 0.36 0.22 1</diffuse></material></visual></link></model>
 
     <!-- ── Charging stations (NW + SW corners of staging zone) ──────────── -->
     <model name='charger_nw'>
@@ -353,6 +434,95 @@
       <name>suitcase_1</name>
       <pose>10.5 0 0 0 0 0</pose>
     </include>
+
+    <!-- ── Safety bollards at pillars A1/B1/C1 ───────────────────────────── -->
+    <model name='bollard_A1_n'><static>true</static><pose>0.35 6 0.2 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.1</radius><length>0.4</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.1</radius><length>0.4</length></cylinder></geometry><material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material></visual></link></model>
+    <model name='bollard_A1_s'><static>true</static><pose>-0.35 6 0.2 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.1</radius><length>0.4</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.1</radius><length>0.4</length></cylinder></geometry><material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material></visual></link></model>
+    <model name='bollard_B1_n'><static>true</static><pose>4.35 6 0.2 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.1</radius><length>0.4</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.1</radius><length>0.4</length></cylinder></geometry><material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material></visual></link></model>
+    <model name='bollard_B1_s'><static>true</static><pose>3.65 6 0.2 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.1</radius><length>0.4</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.1</radius><length>0.4</length></cylinder></geometry><material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material></visual></link></model>
+    <model name='bollard_C1_n'><static>true</static><pose>8.35 6 0.2 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.1</radius><length>0.4</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.1</radius><length>0.4</length></cylinder></geometry><material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material></visual></link></model>
+    <model name='bollard_C1_s'><static>true</static><pose>7.65 6 0.2 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.1</radius><length>0.4</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.1</radius><length>0.4</length></cylinder></geometry><material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material></visual></link></model>
+
+    <!-- ══ East bay (x=12..17), through the new doorway ═══════════════════ -->
+
+    <!-- Break room (NE corner): west + south walls (north/east reuse the
+         outer walls). Door gap in the south wall at x=14.7..15.7. -->
+    <model name='brk_wall_w'><static>true</static><pose>12.5 7.5 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.15 4.4 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>0.15 4.4 2.5</size></box></geometry><material><ambient>0.75 0.72 0.68 1</ambient><diffuse>0.75 0.72 0.68 1</diffuse></material></visual></link></model>
+    <model name='brk_wall_s1'><static>true</static><pose>13.6 5.15 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>2.2 0.15 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>2.2 0.15 2.5</size></box></geometry><material><ambient>0.75 0.72 0.68 1</ambient><diffuse>0.75 0.72 0.68 1</diffuse></material></visual></link></model>
+    <model name='brk_wall_s2'><static>true</static><pose>16.25 5.15 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>1.1 0.15 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>1.1 0.15 2.5</size></box></geometry><material><ambient>0.75 0.72 0.68 1</ambient><diffuse>0.75 0.72 0.68 1</diffuse></material></visual></link></model>
+    <model name='brk_desk'><static>true</static><pose>16.3 8.8 0.4 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>1.2 0.6 0.8</size></box></geometry></collision><visual name='v'><geometry><box><size>1.2 0.6 0.8</size></box></geometry><material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material></visual></link></model>
+    <model name='brk_table'><static>true</static><pose>13.5 6.8 0.38 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.5</radius><length>0.76</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.5</radius><length>0.76</length></cylinder></geometry><material><ambient>0.6 0.5 0.4 1</ambient><diffuse>0.6 0.5 0.4 1</diffuse></material></visual></link></model>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/foldable_chair</uri>
+      <name>brk_chair_1</name>
+      <pose>13.5 6.0 0 0 0 1.5708</pose>
+    </include>
+
+    <!-- Raised loading-dock platform (0.6 m): forklift/pallet-jack access
+         only from outside — not navigable, a real 3D obstacle the 2D
+         costmap will (correctly) treat as a wall. -->
+    <model name='dock_platform'>
+      <static>true</static><pose>14.55 -6.35 0.3 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>4.5 6.7 0.6</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>4.5 6.7 0.6</size></box></geometry>
+          <material><ambient>0.55 0.55 0.58 1</ambient><diffuse>0.55 0.55 0.58 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name='dock_platform_stripe'>
+      <static>true</static><pose>14.55 -3.05 0.605 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>4.5 0.15 0.01</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>4.5 0.15 0.01</size></box></geometry>
+          <material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Overhead catwalk/mezzanine over the bay corridor (z≈2.4 m): 4 poles
+         + a railed deck. Decorative — floor beneath stays clear for nav. -->
+    <model name='catwalk_pole_1'><static>true</static><pose>12.6 -2.7 1.2 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.05</radius><length>2.4</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.05</radius><length>2.4</length></cylinder></geometry><material><ambient>0.35 0.35 0.35 1</ambient><diffuse>0.35 0.35 0.35 1</diffuse></material></visual></link></model>
+    <model name='catwalk_pole_2'><static>true</static><pose>12.6 4.7 1.2 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.05</radius><length>2.4</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.05</radius><length>2.4</length></cylinder></geometry><material><ambient>0.35 0.35 0.35 1</ambient><diffuse>0.35 0.35 0.35 1</diffuse></material></visual></link></model>
+    <model name='catwalk_pole_3'><static>true</static><pose>16.5 -2.7 1.2 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.05</radius><length>2.4</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.05</radius><length>2.4</length></cylinder></geometry><material><ambient>0.35 0.35 0.35 1</ambient><diffuse>0.35 0.35 0.35 1</diffuse></material></visual></link></model>
+    <model name='catwalk_pole_4'><static>true</static><pose>16.5 4.7 1.2 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.05</radius><length>2.4</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.05</radius><length>2.4</length></cylinder></geometry><material><ambient>0.35 0.35 0.35 1</ambient><diffuse>0.35 0.35 0.35 1</diffuse></material></visual></link></model>
+    <model name='catwalk_deck'><static>true</static><pose>14.55 1.0 2.425 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>3.9 7.4 0.05</size></box></geometry></collision><visual name='v'><geometry><box><size>3.9 7.4 0.05</size></box></geometry><material><ambient>0.4 0.4 0.42 1</ambient><diffuse>0.4 0.4 0.42 1</diffuse></material></visual></link></model>
+    <model name='catwalk_rail_w'><static>true</static><pose>12.75 1.0 2.6 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.05 7.4 0.3</size></box></geometry></collision><visual name='v'><geometry><box><size>0.05 7.4 0.3</size></box></geometry><material><ambient>0.9 0.8 0.1 1</ambient><diffuse>0.9 0.8 0.1 1</diffuse></material></visual></link></model>
+    <model name='catwalk_rail_e'><static>true</static><pose>16.35 1.0 2.6 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.05 7.4 0.3</size></box></geometry></collision><visual name='v'><geometry><box><size>0.05 7.4 0.3</size></box></geometry><material><ambient>0.9 0.8 0.1 1</ambient><diffuse>0.9 0.8 0.1 1</diffuse></material></visual></link></model>
+
+    <!-- Ceiling-height pipe run along the far wall -->
+    <model name='pipe_run'><static>true</static><pose>16.8 0 2.0 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.15 20 0.15</size></box></geometry></collision><visual name='v'><geometry><box><size>0.15 20 0.15</size></box></geometry><material><ambient>0.5 0.15 0.1 1</ambient><diffuse>0.5 0.15 0.1 1</diffuse></material></visual></link></model>
+
+    <!-- Parked forklift (primitives) under the catwalk -->
+    <model name='forklift_body'><static>true</static><pose>13.4 2.2 0.5 0 0 -0.4</pose><link name='link'><collision name='c'><geometry><box><size>1.2 0.9 1.0</size></box></geometry></collision><visual name='v'><geometry><box><size>1.2 0.9 1.0</size></box></geometry><material><ambient>0.9 0.55 0.1 1</ambient><diffuse>0.9 0.55 0.1 1</diffuse></material></visual></link></model>
+    <model name='forklift_mast'><static>true</static><pose>13.9 2.55 1.0 0 0 -0.4</pose><link name='link'><collision name='c'><geometry><box><size>0.1 0.7 2.0</size></box></geometry></collision><visual name='v'><geometry><box><size>0.1 0.7 2.0</size></box></geometry><material><ambient>0.25 0.25 0.25 1</ambient><diffuse>0.25 0.25 0.25 1</diffuse></material></visual></link></model>
+    <model name='forklift_fork_l'><static>true</static><pose>14.4 2.75 0.06 0 0 -0.4</pose><link name='link'><collision name='c'><geometry><box><size>0.9 0.1 0.06</size></box></geometry></collision><visual name='v'><geometry><box><size>0.9 0.1 0.06</size></box></geometry><material><ambient>0.2 0.2 0.2 1</ambient><diffuse>0.2 0.2 0.2 1</diffuse></material></visual></link></model>
+    <model name='forklift_fork_r'><static>true</static><pose>14.4 2.35 0.06 0 0 -0.4</pose><link name='link'><collision name='c'><geometry><box><size>0.9 0.1 0.06</size></box></geometry></collision><visual name='v'><geometry><box><size>0.9 0.1 0.06</size></box></geometry><material><ambient>0.2 0.2 0.2 1</ambient><diffuse>0.2 0.2 0.2 1</diffuse></material></visual></link></model>
+
+    <!-- Pallet jack + trash bins -->
+    <model name='pallet_jack_body'><static>true</static><pose>16.0 -1.0 0.075 0 0 0.2</pose><link name='link'><collision name='c'><geometry><box><size>1.0 0.5 0.15</size></box></geometry></collision><visual name='v'><geometry><box><size>1.0 0.5 0.15</size></box></geometry><material><ambient>0.85 0.15 0.1 1</ambient><diffuse>0.85 0.15 0.1 1</diffuse></material></visual></link></model>
+    <model name='pallet_jack_handle'><static>true</static><pose>16.55 -1.25 0.45 -0.3 0 0.2</pose><link name='link'><collision name='c'><geometry><box><size>0.06 0.06 0.9</size></box></geometry></collision><visual name='v'><geometry><box><size>0.06 0.06 0.9</size></box></geometry><material><ambient>0.2 0.2 0.2 1</ambient><diffuse>0.2 0.2 0.2 1</diffuse></material></visual></link></model>
+    <model name='trash_bin_1'><static>true</static><pose>13.0 -2.0 0.3 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.25</radius><length>0.6</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.25</radius><length>0.6</length></cylinder></geometry><material><ambient>0.15 0.4 0.2 1</ambient><diffuse>0.15 0.4 0.2 1</diffuse></material></visual></link></model>
+    <model name='trash_bin_2'><static>true</static><pose>16.0 3.2 0.3 0 0 0</pose><link name='link'><collision name='c'><geometry><cylinder><radius>0.25</radius><length>0.6</length></cylinder></geometry></collision><visual name='v'><geometry><cylinder><radius>0.25</radius><length>0.6</length></cylinder></geometry><material><ambient>0.15 0.4 0.2 1</ambient><diffuse>0.15 0.4 0.2 1</diffuse></material></visual></link></model>
+
+    <!-- Overview camera (generic placement — see hospital.world's
+         world_monitor_cam for the hand-tuned original). -->
+    <model name='world_monitor_cam'>
+      <static>true</static>
+      <pose>7.5 7.0 5.3 0 0.55 -2.356</pose>
+      <link name='link'>
+        <sensor name='monitor_camera' type='camera'>
+          <always_on>true</always_on>
+          <update_rate>10</update_rate>
+          <topic>world_monitor/image_raw</topic>
+          <camera>
+            <horizontal_fov>1.3</horizontal_fov>
+            <image><width>960</width><height>540</height><format>R8G8B8</format></image>
+            <clip><near>0.05</near><far>35.0</far></clip>
+          </camera>
+        </sensor>
+      </link>
+    </model>
 
   </world>
 </sdf>

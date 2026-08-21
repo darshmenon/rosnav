@@ -673,7 +673,7 @@ def _build_all(context, pkg_share: str):
     if os.path.isabs(world_arg) and os.path.isfile(world_arg):
         world_path = world_arg
     else:
-        world_name = world_arg or 'hospital'
+        world_name = world_arg or 'cafe'
         # Allow bare name ("maze") or filename ("maze.world")
         world_name = os.path.splitext(os.path.basename(world_name))[0]
         world_path = os.path.join(pkg_share, 'worlds', f'{world_name}.world')
@@ -1179,8 +1179,8 @@ def generate_launch_description():
     pkg_share = get_package_share_directory('rosnav_bot')
     return LaunchDescription([
         DeclareLaunchArgument(
-            'world', default_value='hospital',
-            description='World name (hospital, corridor, maze, obstacles) or full path to .world file'),
+            'world', default_value='cafe',
+            description='World name (cafe, hospital, corridor, maze, obstacles) or full path to .world file'),
         DeclareLaunchArgument(
             'map', default_value='',
             description='Pre-built map yaml path. Ignored when explore:=true'),

@@ -48,13 +48,13 @@
       <camera>
         <horizontal_fov>1.5708</horizontal_fov>
         <image>
-          <width>640</width>
-          <height>480</height>
+          <width>1280</width>
+          <height>960</height>
           <format>R8G8B8</format>
         </image>
         <clip>
           <near>0.05</near>
-          <far>8.0</far>
+          <far>15.0</far>
         </clip>
         <noise>
           <type>gaussian</type>
