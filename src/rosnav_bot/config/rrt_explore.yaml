@@ -1,0 +1,14 @@
+/**:
+  ros__parameters:
+    map_topic: /map
+    costmap_topic: /global_costmap/costmap
+    robot_base_frame: base_link
+    robot_frame_prefix: robot
+    rate: 1.0
+    robot_count: 1
+    costmap_pixel_threshold: 30.0
+    info_radius: 1.0
+    hysteresis_radius: 3.0
+    hysteresis_gain: 2.0
+    eta: 1.0
+    use_sim_time: true

@@ -1,0 +1,15 @@
+frontier_explorer:
+  ros__parameters:
+    map_topic: /map
+    costmap_topic: /global_costmap/costmap
+    local_costmap_topic: /local_costmap/costmap
+    navigate_to_pose_action_name: navigate_to_pose
+    global_frame: map
+    robot_base_frame: base_link
+    frontier_marker_topic: /explore/frontiers
+    selected_frontier_topic: /explore/selected_frontier
+    autostart: true
+    use_sim_time: true
+    mrtsp_solver: greedy
+    return_to_start_on_complete: false
+    map_processing_rate_hz: 1.0

@@ -14,6 +14,7 @@ src/rosnav_bot/maps/*.pgm
 src/rosnav_bot/maps/*.yaml
 src/rosnav_bot/maps/*.data
 src/rosnav_bot/maps/*.posegraph
+src/rosnav_bot/maps/*.db
 
 # Python
 __pycache__/
@@ -24,13 +25,47 @@ __pycache__/
 # first run wherever ros2 launch's cwd happens to be; not source, don't track.
 *.pt
 
+# Local ML training artifacts (YOLO / PPO / nerfstudio)
+runs/
+outputs/
+
 # Vendored Fuel Depot (~96 MB meshes/textures). Re-fetch without git:
 #   bash src/rosnav_bot/scripts/download_depot_model.sh
 src/rosnav_bot/models/Depot/
 
+# Textured Fuel worlds for camera / RTAB-Map (Lake House, AWS warehouse, …).
+#   bash src/rosnav_bot/scripts/download_fuel_worlds.sh
+src/rosnav_bot/models/fuel/**
+!src/rosnav_bot/models/fuel/README.md
+
+# Third-party packages symlinked from ~/rosnav_sources — no trailing slash:
+# these are symlinks (not real directories), and a directory-only ("foo/")
+# gitignore pattern does NOT match a symlink at the git level, so trailing
+# slashes here silently failed to ignore them (confirmed via `git status`
+# still listing them as untracked despite this block already being present).
+src/explore_lite
+src/explore_lite_msgs
+src/multirobot_map_merge
+src/frontier_exploration_ros2
+src/rrt_explore
+src/cslam
+src/cslam_experiments
+src/cslam_common_interfaces
+
 # OS
 .DS_Store
 *.swp
+
+# Codex CLI's own tool-local memory (like this repo's own .claude/ memory),
+# not project source
+.codex/
+
+# Ad-hoc screen captures dropped at repo root during dev sessions, not
+# committed source
+/*.mp4
+/Screenshot *.png
+/image.png
+/render.png
 
 # Resume
 resume.md

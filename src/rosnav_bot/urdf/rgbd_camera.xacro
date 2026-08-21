@@ -1,0 +1,71 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:arg name="namespace" default=""/>
+  <xacro:property name="ns" value="$(arg namespace)"/>
+
+  <!-- RGB-D camera: same mount as camera.xacro (front-top, 90° FOV, 5° tilt).
+       Gazebo rgbd_camera publishes under base topic `camera`:
+         camera/image, camera/depth_image, camera/camera_info, camera/points
+       Bridge remaps image → /camera/image_raw and depth → /camera/depth/image_raw
+       so YOLO / ArUco keep working. -->
+  <joint name="camera_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+    <origin xyz="0.45 0.0 0.15" rpy="0 0.0873 0"/>
+  </joint>
+
+  <link name="camera_link">
+    <visual>
+      <geometry><box size="0.03 0.06 0.03"/></geometry>
+      <material name="camera_material">
+        <color rgba="0.1 0.1 0.1 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry><box size="0.03 0.06 0.03"/></geometry>
+    </collision>
+    <xacro:inertial_box mass="0.01" x="0.03" y="0.06" z="0.03">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </xacro:inertial_box>
+  </link>
+
+  <joint name="camera_optical_joint" type="fixed">
+    <parent link="camera_link"/>
+    <child link="camera_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.5708 0 -1.5708"/>
+  </joint>
+  <link name="camera_optical_frame"/>
+
+  <gazebo reference="camera_link">
+    <sensor name="rgbd_camera" type="rgbd_camera">
+      <always_on>true</always_on>
+      <update_rate>15</update_rate>
+      <topic>${ns + '/camera' if ns else 'camera'}</topic>
+      <gz_frame_id>${ns + '/camera_optical_frame' if ns else 'camera_optical_frame'}</gz_frame_id>
+      <camera>
+        <horizontal_fov>1.5708</horizontal_fov>
+        <image>
+          <width>1280</width>
+          <height>960</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.05</near>
+          <far>15.0</far>
+        </clip>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.007</stddev>
+        </noise>
+      </camera>
+      <depth_camera>
+        <clip>
+          <near>0.05</near>
+          <far>10.0</far>
+        </clip>
+      </depth_camera>
+    </sensor>
+  </gazebo>
+
+</robot>

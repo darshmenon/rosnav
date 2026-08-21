@@ -44,6 +44,7 @@ import time
 import rclpy
 from rclpy.node import Node
 from rcl_interfaces.msg import SetParametersResult
+from rclpy.qos import qos_profile_sensor_data
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
@@ -89,7 +90,7 @@ class CollisionMonitor(Node):
         self._cmd_pub   = self.create_publisher(Twist,  f'{pre}/cmd_vel',                   10)
         self._state_pub = self.create_publisher(String, f'{pre}/collision_monitor/state',    10)
 
-        self.create_subscription(LaserScan, f'{pre}/scan', self._scan_cb, 10)
+        self.create_subscription(LaserScan, f'{pre}/scan', self._scan_cb, qos_profile_sensor_data)
 
         if self._relay:
             self.create_subscription(Twist, f'{pre}/cmd_vel_nav', self._relay_cb, 10)

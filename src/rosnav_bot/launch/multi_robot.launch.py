@@ -51,8 +51,20 @@ Usage
   # (needs lidar_type:=3d) — merges the same way, via /{ns}/map OccupancyGrids
   ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi lidar_type:=3d slam_algo:=3d
 
+  # Per-robot RGB-D visual SLAM (textured world; optional db prefix)
+  ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi slam_algo:=vslam \\
+    world:=cafe rtabmap_db:=src/rosnav_bot/maps/rtabmap_cafe
+
   # Swap frontier plugins without editing code
   ros2 launch rosnav_bot multi_robot.launch.py frontier_detector:=wfd frontier_scorer:=utility
+
+  # Third-party explorers (after scripts/link_third_party.sh + colcon build)
+  ros2 launch rosnav_bot multi_robot.launch.py explore:=true explorer:=explore_lite
+  ros2 launch rosnav_bot multi_robot.launch.py explore:=true explorer:=frontier
+  ros2 launch rosnav_bot multi_robot.launch.py explore:=true explorer:=rrt
+
+  # Swarm-SLAM C-SLAM on top of per-robot RTAB-Map (needs cslam built)
+  ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi lidar_type:=3d slam_algo:=cslam
 
   # Spawn more robots without editing this file
   ros2 launch rosnav_bot multi_robot.launch.py robot_count:=4 robot_layout:=grid
@@ -439,7 +451,7 @@ def _make_slam_params(template_path: str, robot_ns: str) -> dict:
     return slam_params
 
 
-def _rtabmap_node_for_robot(robot_ns: str) -> Node:
+def _rtabmap_node_for_robot(robot_ns: str, octomap: bool = False) -> Node:
     """Per-robot RTAB-Map lidar SLAM (slam_mode:=multi, lidar_type:=3d, slam_algo:=3d).
 
     Same params as slam_nav.launch.py's single-robot slam_algo:=3d path (see
@@ -484,7 +496,9 @@ def _rtabmap_node_for_robot(robot_ns: str) -> Node:
             'Reg/Strategy': '1',
             'Icp/PointToPlane': 'true',
             'Grid/Sensor': '0',
-            'Grid/3D': 'false',
+            # See slam_nav.launch.py's single-robot rtabmap node for the Grid/3D
+            # rationale — /{ns}/map projection to Nav2 is unaffected either way.
+            'Grid/3D': 'true' if octomap else 'false',
             'Grid/CellSize': '0.05',
             'Grid/RangeMax': '20.0',
             'Grid/NoiseFilteringRadius': '0.1',
@@ -607,6 +621,7 @@ def _build_all(context, pkg_share: str):
     collab_loop_closure = _truthy(LaunchConfiguration('collab_loop_closure').perform(context))
     frontier_detector = LaunchConfiguration('frontier_detector').perform(context).strip()
     frontier_scorer = LaunchConfiguration('frontier_scorer').perform(context).strip()
+    explorer_backend = _common.resolve_explorer(LaunchConfiguration('explorer').perform(context))
     explore_bt = LaunchConfiguration('explore_bt').perform(context).strip()
     distance_weight = float(LaunchConfiguration('distance_weight').perform(context).strip())
     info_gain_weight = float(LaunchConfiguration('info_gain_weight').perform(context).strip())
@@ -648,10 +663,38 @@ def _build_all(context, pkg_share: str):
         lidar_type = '2d'
     lidar3d_height = LaunchConfiguration('lidar3d_height').perform(context).strip()
     lidar3d_vfov_deg = LaunchConfiguration('lidar3d_vfov_deg').perform(context).strip()
+    octomap = _common.truthy(LaunchConfiguration('octomap').perform(context))
     if slam_mode not in ('single', 'multi'):
         raise ValueError('slam_mode must be one of: single, multi')
 
     slam_algo = LaunchConfiguration('slam_algo').perform(context).strip().lower()
+    rtabmap_db = os.path.expanduser(
+        LaunchConfiguration('rtabmap_db').perform(context).strip())
+    run_cslam = False
+    if slam_algo == 'cslam':
+        if slam_mode != 'multi':
+            print('[multi_robot] slam_algo=cslam only applies to slam_mode:=multi — ignoring')
+            slam_algo = '2d'
+        elif lidar_type != '3d':
+            print('[multi_robot] slam_algo=cslam requires lidar_type:=3d — falling back to slam_algo=2d')
+            slam_algo = '2d'
+        elif not _common.package_available('cslam'):
+            print('[multi_robot] slam_algo=cslam requested but `cslam` is not built — falling back')
+            slam_algo = '3d'
+        else:
+            run_cslam = True
+            slam_algo = '3d'
+    if slam_algo == 'vslam':
+        if slam_mode != 'multi':
+            print('[multi_robot] slam_algo=vslam only applies to slam_mode:=multi — falling back to 2d')
+            slam_algo = '2d'
+        elif not _common.package_available('rtabmap_slam'):
+            print('[multi_robot] slam_algo=vslam needs ros-humble-rtabmap-ros — falling back to 2d')
+            slam_algo = '2d'
+        elif rtabmap_db:
+            db_dir = os.path.dirname(os.path.abspath(
+                rtabmap_db if rtabmap_db.endswith('.db') else rtabmap_db + '_x.db'))
+            os.makedirs(db_dir or '.', exist_ok=True)
     if slam_algo == '3d' and lidar_type != '3d':
         print('[multi_robot] slam_algo=3d requires lidar_type:=3d — falling back to slam_algo=2d')
         slam_algo = '2d'
@@ -665,6 +708,11 @@ def _build_all(context, pkg_share: str):
             print('[multi_robot] slam_algo=3d requested but ros-humble-rtabmap-ros is not '
                   'installed (sudo apt install ros-humble-rtabmap-ros) — falling back to slam_algo=2d')
             slam_algo = '2d'
+            run_cslam = False
+
+    enable_rgbd_arg = LaunchConfiguration('enable_rgbd').perform(context).strip().lower()
+    enable_rgbd = 'true' if (
+        slam_algo == 'vslam' or _common.truthy(enable_rgbd_arg)) else 'false'
 
     slam_pkg     = get_package_share_directory('slam_toolbox')
     urdf_filename = _common.urdf_filename_for(drive_type, robot_model)
@@ -700,6 +748,8 @@ def _build_all(context, pkg_share: str):
         LogInfo(msg=f'[multi_robot] explore = {explore}'),
         LogInfo(msg=f'[multi_robot] slam_mode = {slam_mode}'
                     + (f' (slam_algo={slam_algo})' if slam_mode == 'multi' else '')),
+    ] + ([LogInfo(msg=f'[multi_robot] octomap = {octomap} (Grid/3D={"true" if octomap else "false"})')]
+         if slam_algo == '3d' else []) + [
         LogInfo(msg=f'[multi_robot] drive_type = {drive_type}, controller = {controller}, urdf = {urdf_filename}'),
         LogInfo(msg=f'[multi_robot] nav2 template = {os.path.basename(template_yaml)} '
                     f'({"hand-tuned fleet template" if "ROBOT_NS" in open(template_yaml).read() else "single-robot params, namespaced at launch"})'),
@@ -857,7 +907,8 @@ def _build_all(context, pkg_share: str):
         rsp = _common.rsp_include(
             pkg_share, os.path.join(pkg_share, 'urdf', urdf_filename),
             frame_prefix=f'{ns}/', namespace=ns, lidar_type=lidar_type,
-            lidar3d_height=lidar3d_height, lidar3d_vfov_deg=lidar3d_vfov_deg)
+            lidar3d_height=lidar3d_height, lidar3d_vfov_deg=lidar3d_vfov_deg,
+            enable_camera=enable_rgbd, enable_rgbd=enable_rgbd)
 
         # Spawn in Gazebo
         spawn = _common.spawn_robot_node(
@@ -871,18 +922,24 @@ def _build_all(context, pkg_share: str):
         bridge_args = [
             f'/{ns}/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist',
             f'/{ns}/odom@nav_msgs/msg/Odometry[gz.msgs.Odometry',
-            f'/{ns}/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
             f'/{ns}/joint_states@sensor_msgs/msg/JointState[gz.msgs.Model',
         ]
-        bridge_remaps = [(f'/{ns}/scan', f'/{ns}/scan_raw')]
+        bridge_remaps = []
         if lidar_type == '3d':
             # gz-sim's gpu_lidar publishes gz.msgs.PointCloudPacked on a nested
-            # "<topic>/points" (not the sensor's own <topic>, which carries
-            # gz.msgs.LaserScan) — bridge that nested topic, then remap down
-            # to a clean /{ns}/points on the ROS side.
+            # "<topic>/points" — bridge that, remap to /{ns}/points. No LaserScan
+            # on /scan; pointcloud_to_scan projects the cloud → scan_raw.
             bridge_args.append(
                 f'/{ns}/points/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked')
             bridge_remaps.append((f'/{ns}/points/points', f'/{ns}/points'))
+        else:
+            bridge_args.append(
+                f'/{ns}/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan')
+            bridge_remaps.append((f'/{ns}/scan', f'/{ns}/scan_raw'))
+        if enable_rgbd == 'true':
+            rgbd_args, rgbd_remaps = _common.multi_robot_rgbd_bridge_args(ns)
+            bridge_args.extend(rgbd_args)
+            bridge_remaps.extend(rgbd_remaps)
         bridge = Node(
             package='ros_gz_bridge',
             executable='parameter_bridge',
@@ -892,6 +949,8 @@ def _build_all(context, pkg_share: str):
             output='screen')
 
         laser_filter = _common.laser_filter_node(pkg_share, namespace=ns)
+        points_to_scan = (
+            _common.pointcloud_to_scan_node(namespace=ns) if lidar_type == '3d' else None)
 
         # AMCL — localises against /map (shared).
         # Skipped for robot1 in SLAM mode (SLAM provides the map→odom TF).
@@ -962,9 +1021,25 @@ def _build_all(context, pkg_share: str):
                 'namespace': ns,
             }.items())
 
-        slam_node = (
-            _rtabmap_node_for_robot(ns) if slam_algo == '3d' else
-            Node(
+        if slam_algo == 'vslam':
+            if rtabmap_db.endswith('.db'):
+                stem, ext = os.path.splitext(rtabmap_db)
+                robot_db = f'{stem}_{ns}{ext}'
+            elif rtabmap_db:
+                robot_db = f'{rtabmap_db}_{ns}.db'
+            else:
+                robot_db = ''
+            slam_node = _common.rtabmap_vslam_node(
+                namespace=ns,
+                localization=False,
+                database_path=robot_db,
+                wait_for_transform=3.0,
+                octomap=octomap,
+            )
+        elif slam_algo == '3d':
+            slam_node = _rtabmap_node_for_robot(ns, octomap)
+        else:
+            slam_node = Node(
                 package='slam_toolbox',
                 executable='async_slam_toolbox_node',
                 name='slam_toolbox',
@@ -976,7 +1051,7 @@ def _build_all(context, pkg_share: str):
                     ('tf_static', '/tf_static'),
                     ('map', f'/{ns}/map'),
                     ('/map', f'/{ns}/map'),
-                ]))
+                ])
 
         # Assemble per-robot actions
         nav2_group = nav2
@@ -989,13 +1064,21 @@ def _build_all(context, pkg_share: str):
         static_initial_pose_delay = static_amcl_delay + 3.0
         static_nav2_delay = static_amcl_delay + 6.0
 
-        per_robot = [rsp, spawn, bridge, laser_filter]
+        per_robot = [rsp, spawn, bridge]
+        if points_to_scan is not None:
+            per_robot.append(points_to_scan)
+        per_robot.append(laser_filter)
 
         if is_slam_robot:
             # SLAM handles localisation for this robot.
             slam_actions = []
             if slam_mode == 'multi':
                 slam_actions.append(TimerAction(period=6.0 + robot_stagger, actions=[slam_node]))
+                if run_cslam:
+                    slam_actions.append(TimerAction(
+                        period=8.0 + robot_stagger,
+                        actions=_common.cslam_lidar_nodes(
+                            pkg_share, robot_id=idx, max_nb_robots=len(robots), namespace=ns)))
             actions.append(LogInfo(
                 msg=f'[multi_robot] {ns}: SLAM-localized, nav2 t={robot_nav2_delay:.1f}s'))
             per_robot += [
@@ -1062,44 +1145,58 @@ def _build_all(context, pkg_share: str):
         actions.append(LogInfo(
             msg='[multi_robot] merge_scans ignored in slam_mode:=multi; using /map_merged from map_merge_known'))
 
-    # ── Centralized frontier coordinator (explore mode only) ──────────────────
+    # ── Exploration (explore mode only) ───────────────────────────────────────
     robot_ns_list = ','.join(r['name'] for r in robots)
+    robot_namespaces = [r['name'] for r in robots]
     if explore:
-        # Start after all Nav2 stacks are up (robot1 at 10s, others at 13s)
-        actions.append(TimerAction(
-            period=22.0 if slam_mode == 'multi' else (21.0 if merge_scans else 20.0),
-            actions=[Node(
-                package='rosnav_bot',
-                executable='frontier_coordinator.py',
-                name='frontier_coordinator',
-                output='screen',
-                parameters=[{
-                    'robot_namespaces': robot_ns_list,
-                    'map_save_path': map_prefix,
-                    'map_topic': frontier_map_topic,
-                    'frontier_detector': frontier_detector,
-                    'frontier_scorer': frontier_scorer,
-                    'distance_weight': distance_weight,
-                    'info_gain_weight': info_gain_weight,
-                    'potential_scale': potential_scale,
-                    'gain_scale': gain_scale,
-                    'validate_on_costmap': validate_on_costmap,
-                    'costmap_max_cost': costmap_max_cost,
-                    'goal_pullback': goal_pullback,
-                    'hysteresis_radius': hysteresis_radius,
-                    'hysteresis_gain': hysteresis_gain,
-                    'frontier_clearance_radius': frontier_clearance_radius,
-                    'failed_goal_radius': failed_goal_radius,
-                    'failed_goal_cooldown': failed_goal_cooldown,
-                    'publish_markers': publish_markers,
-                    'nav_wait_warn_sec': nav_wait_warn_sec,
-                    'tf_wait_warn_sec': tf_wait_warn_sec,
-                    'behavior_tree': explore_bt,
-                }])]))
-        actions.append(LogInfo(
-            msg=f'[multi_robot] frontier_coordinator will start at t={22.0 if slam_mode == "multi" else (21.0 if merge_scans else 20.0)}s '
-                f'for {robot_ns_list} (map_topic={frontier_map_topic}, '
-                f'detector={frontier_detector}, scorer={frontier_scorer}, bt={explore_bt})'))
+        explore_delay = 22.0 if slam_mode == 'multi' else (21.0 if merge_scans else 20.0)
+        if explorer_backend == 'builtin':
+            actions.append(TimerAction(
+                period=explore_delay,
+                actions=[Node(
+                    package='rosnav_bot',
+                    executable='frontier_coordinator.py',
+                    name='frontier_coordinator',
+                    output='screen',
+                    parameters=[{
+                        'robot_namespaces': robot_ns_list,
+                        'map_save_path': map_prefix,
+                        'map_topic': frontier_map_topic,
+                        'frontier_detector': frontier_detector,
+                        'frontier_scorer': frontier_scorer,
+                        'distance_weight': distance_weight,
+                        'info_gain_weight': info_gain_weight,
+                        'potential_scale': potential_scale,
+                        'gain_scale': gain_scale,
+                        'validate_on_costmap': validate_on_costmap,
+                        'costmap_max_cost': costmap_max_cost,
+                        'goal_pullback': goal_pullback,
+                        'hysteresis_radius': hysteresis_radius,
+                        'hysteresis_gain': hysteresis_gain,
+                        'frontier_clearance_radius': frontier_clearance_radius,
+                        'failed_goal_radius': failed_goal_radius,
+                        'failed_goal_cooldown': failed_goal_cooldown,
+                        'publish_markers': publish_markers,
+                        'nav_wait_warn_sec': nav_wait_warn_sec,
+                        'tf_wait_warn_sec': tf_wait_warn_sec,
+                        'behavior_tree': explore_bt,
+                    }])]))
+            actions.append(LogInfo(
+                msg=f'[multi_robot] frontier_coordinator will start at t={explore_delay}s '
+                    f'for {robot_ns_list} (map_topic={frontier_map_topic}, '
+                    f'detector={frontier_detector}, scorer={frontier_scorer}, bt={explore_bt})'))
+        else:
+            explore_ns = robot_namespaces if explorer_backend != 'rrt_explore' else robot_namespaces[:1]
+            actions.append(TimerAction(
+                period=explore_delay,
+                actions=_common.explorer_nodes(
+                    explorer_backend, pkg_share,
+                    map_topic=frontier_map_topic,
+                    namespaces=explore_ns,
+                    robot_count=len(robots))))
+            actions.append(LogInfo(
+                msg=f'[multi_robot] explorer={explorer_backend} will start at t={explore_delay}s '
+                    f'for {robot_ns_list} (map_topic={frontier_map_topic})'))
 
     # ── Fleet management algorithms (optional) ────────────────────────────────
     if fleet_mgmt:
@@ -1137,6 +1234,51 @@ def _build_all(context, pkg_share: str):
             ]))
         actions.append(LogInfo(
             msg=f'[multi_robot] fleet_mgmt stack will start at t=15s for {robot_ns_list}'))
+
+    # ── GS keepout costmap filter (optional, fleet-wide) ───────────────────────
+    # One shared filter_mask_server + costmap_filter_info_server for the whole
+    # fleet — filter_info_topic is an absolute /gs/costmap_filter_info topic,
+    # untouched by _common.namespace_nav2_params(), so every robotN's costmaps
+    # pick it up without a per-robot instance. See concepts.md §28.
+    gs_keepout_mask = LaunchConfiguration('gs_keepout_mask').perform(context).strip()
+    if gs_keepout_mask:
+        gs_keepout_filter_params = os.path.join(pkg_share, 'config', 'gs_keepout_filter.yaml')
+        actions.append(TimerAction(
+            period=9.0,
+            actions=[
+                LogInfo(msg=f'[multi_robot] GS keepout filter ENABLED (fleet-wide) — mask={gs_keepout_mask}'),
+                Node(
+                    package='nav2_map_server',
+                    executable='map_server',
+                    name='filter_mask_server',
+                    output='screen',
+                    parameters=[gs_keepout_filter_params, {
+                        'use_sim_time': True,
+                        'yaml_filename': gs_keepout_mask,
+                    }],
+                ),
+                Node(
+                    package='nav2_map_server',
+                    executable='costmap_filter_info_server',
+                    name='costmap_filter_info_server',
+                    output='screen',
+                    parameters=[gs_keepout_filter_params, {'use_sim_time': True}],
+                ),
+                Node(
+                    package='nav2_lifecycle_manager',
+                    executable='lifecycle_manager',
+                    name='lifecycle_manager_gs_keepout',
+                    output='screen',
+                    parameters=[{
+                        'use_sim_time': True,
+                        'autostart': True,
+                        'node_names': ['filter_mask_server', 'costmap_filter_info_server'],
+                    }],
+                ),
+            ],
+        ))
+    else:
+        actions.append(LogInfo(msg='[multi_robot] GS keepout filter disabled (gs_keepout_mask not set).'))
 
     # ── Dynamic obstacles (optional) ──────────────────────────────────────────
     dynamic_obstacles = int(LaunchConfiguration('dynamic_obstacles').perform(context).strip())
@@ -1217,6 +1359,10 @@ def generate_launch_description():
             description='Fleet-wide lidar: "2d" (default, LaserScan on /{ns}/scan) or "3d" '
                         '(PointCloud2 on /{ns}/points, gpu_lidar). Only drive_type:=diff.'),
         DeclareLaunchArgument(
+            'enable_rgbd', default_value='false',
+            description='Fleet-wide RGB-D camera (depth image + /{ns}/camera/depth/points). '
+                        'Forced true for slam_algo:=vslam.'),
+        DeclareLaunchArgument(
             'lidar3d_height', default_value='0.25',
             description='3D lidar mount height (m), lidar_type:=3d only. Needs >=0.10m '
                         'clearance above the chassis top (z=0.15) to avoid self-hits.'),
@@ -1291,12 +1437,24 @@ def generate_launch_description():
                         'known-pose merge only.'),
         DeclareLaunchArgument(
             'slam_algo', default_value='2d',
-            description='slam_mode:=multi only. "2d" (default) = per-robot slam_toolbox '
-                        '(needs lidar_type:=2d). "3d" = per-robot RTAB-Map lidar SLAM '
-                        '(needs lidar_type:=3d) — publishes the same /{ns}/map '
-                        'OccupancyGrid via Grid/3D:=false, so map_merge_known and '
-                        'collab_loop_closure work unchanged regardless of which SLAM '
-                        'backend produced it.'),
+            description='slam_mode:=multi only. "2d" = per-robot slam_toolbox; '
+                        '"3d" = per-robot RTAB-Map lidar; "vslam" = per-robot RTAB-Map '
+                        'RGB-D visual SLAM; "cslam" = RTAB occupancy plus Swarm-SLAM '
+                        '(needs lidar_type:=3d and the cslam package). OccupancyGrid '
+                        'merge is unchanged.'),
+        DeclareLaunchArgument(
+            'rtabmap_db', default_value='',
+            description='slam_algo:=vslam optional DB prefix. Empty = ephemeral (-d). '
+                        'Path or stem → per-robot files like <prefix>_robot1.db.'),
+        DeclareLaunchArgument(
+            'octomap', default_value='false',
+            description='slam_algo:=3d|vslam. true sets RTAB-Map Grid/3D:=true per robot so '
+                        'each /{ns}/octomap_binary and /{ns}/octomap_full actually populate, '
+                        'on top of the same 2D /{ns}/map Nav2 always gets.'),
+        DeclareLaunchArgument(
+            'explorer', default_value='builtin',
+            description='When explore:=true: builtin (frontier_coordinator), explore_lite, '
+                        'frontier (frontier_exploration_ros2), or rrt (rrt_explore).'),
         DeclareLaunchArgument(
             'frontier_detector', default_value='wfd',
             description='Frontier detector plugin: wfd = reachable wavefront frontiers; '
@@ -1376,5 +1534,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'dynamic_obstacle_speed', default_value='0.4',
             description='Dynamic obstacle patrol speed in m/s'),
+        DeclareLaunchArgument(
+            'gs_keepout_mask', default_value='',
+            description='Path to a Nav2 costmap-filter-mask yaml produced by '
+                        'scripts/gs_mask_from_splat.py (Gaussian-Splat-derived keepout '
+                        'zones). Empty (default) = disabled. Started once, fleet-wide — '
+                        'every robot costmap listens on the same absolute '
+                        '/gs/costmap_filter_info topic. See concepts.md §28.'),
         OpaqueFunction(function=_build_all, args=[pkg_share]),
     ])

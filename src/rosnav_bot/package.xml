@@ -30,6 +30,10 @@
   <depend>tf2_ros</depend>
   <depend>tf2_geometry_msgs</depend>
   <exec_depend>laser_filters</exec_depend>
+  <exec_depend>sensor_msgs_py</exec_depend>
+  <!-- Optional: sudo apt install ros-humble-pointcloud-to-laserscan
+       (launch falls back to scripts/pointcloud_to_scan.py) -->
+  <exec_depend>pointcloud_to_laserscan</exec_depend>
 
   <!-- Visual docking (aruco_dock.py) -->
   <exec_depend>cv_bridge</exec_depend>
@@ -54,8 +58,10 @@
   <!-- Native Nav2 docking (multi_robot.launch.py drive_type:=diff docking_server) -->
   <exec_depend>opennav_docking</exec_depend>
 
-  <!-- Real 3D SLAM (slam_nav.launch.py lidar_type:=3d slam_algo:=3d) -->
+  <!-- Real 3D / visual / multi-sensor SLAM (slam_nav.launch.py slam_algo:=…) -->
   <exec_depend>rtabmap_slam</exec_depend>
+  <!-- Optional: slam_algo:=cartographer (sudo apt install ros-$ROS_DISTRO-cartographer-ros) -->
+  <exec_depend>cartographer_ros</exec_depend>
 
   <!-- Python runtime dependencies -->
   <exec_depend>python3-yaml</exec_depend>

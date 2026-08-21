@@ -160,15 +160,95 @@ def rsp_include(pkg_share: str, urdf_path, frame_prefix='', namespace='', lidar_
     )
 
 
-def laser_filter_node(pkg_share: str, namespace: str = ''):
+def laser_filter_node(pkg_share: str, namespace: str = '', *,
+                      filtered_out: str = 'scan'):
+    """scan_raw → cleaned LaserScan on filtered_out (default /scan)."""
     return Node(
         package='laser_filters',
         executable='scan_to_scan_filter_chain',
         namespace=namespace or None,
         parameters=[os.path.join(pkg_share, 'config', 'laser_filters.yaml')],
-        remappings=[('scan', 'scan_raw'), ('scan_filtered', 'scan')],
+        remappings=[('scan', 'scan_raw'), ('scan_filtered', filtered_out)],
         output='screen',
     )
+
+
+def scan_quality_gate_node(namespace: str = '', *,
+                           mode: str = 'gate',
+                           scan_in: str = 'scan_pre',
+                           scan_out: str = 'scan'):
+    """Drop malformed LaserScans so SLAM / Nav2 never see them.
+
+    Typical chain: scan_raw → laser_filters → scan_pre → gate → scan.
+    """
+    return Node(
+        package='rosnav_bot',
+        executable='scan_quality_gate.py',
+        name='scan_quality_gate',
+        namespace=namespace or None,
+        parameters=[{
+            'use_sim_time': True,
+            'mode': mode,
+            'scan_in': scan_in,
+            'scan_out': scan_out,
+        }],
+        output='screen',
+    )
+
+
+def gz_bridge_yaml(lidar_type: str = '2d', enable_rgbd: bool = False) -> str:
+    """Pick the ros_gz_bridge config for 2D/3D lidar × RGB/RGB-D."""
+    is_3d = lidar_type == '3d'
+    if is_3d and enable_rgbd:
+        return 'gz_bridge_3d_rgbd.yaml'
+    if is_3d:
+        return 'gz_bridge_3d.yaml'
+    if enable_rgbd:
+        return 'gz_bridge_rgbd.yaml'
+    return 'gz_bridge.yaml'
+
+
+def pointcloud_to_scan_node(namespace: str = '', *, min_height=0.05, max_height=0.55,
+                            range_max=30.0):
+    """Project /points (3D lidar) → scan_raw so laser_filters + Nav2 keep /scan.
+
+    Prefers ros-humble-pointcloud-to-laserscan when installed; otherwise uses
+    rosnav_bot's pointcloud_to_scan.py.
+    """
+    remappings = [('cloud_in', 'points'), ('scan', 'scan_raw')]
+    params = {
+        'use_sim_time': True,
+        'min_height': float(min_height),
+        'max_height': float(max_height),
+        'range_min': 0.30,
+        'range_max': float(range_max),
+        'angle_min': -3.14159,
+        'angle_max': 3.14159,
+        'angle_increment': 3.14159 / 180.0,
+        'scan_time': 0.1,
+        'use_inf': True,
+    }
+    try:
+        get_package_share_directory('pointcloud_to_laserscan')
+        return Node(
+            package='pointcloud_to_laserscan',
+            executable='pointcloud_to_laserscan_node',
+            name='pointcloud_to_scan',
+            namespace=namespace or None,
+            output='screen',
+            parameters=[params],
+            remappings=remappings,
+        )
+    except Exception:
+        return Node(
+            package='rosnav_bot',
+            executable='pointcloud_to_scan.py',
+            name='pointcloud_to_scan',
+            namespace=namespace or None,
+            output='screen',
+            parameters=[params],
+            remappings=remappings,
+        )
 
 
 def spawn_robot_node(gazebo_world_name: str, topic, name, x, y, z, yaw):
@@ -309,6 +389,136 @@ def package_available(name: str) -> bool:
         return True
     except Exception:
         return False
+
+
+def prepare_cartographer_config_dir(pkg_share: str) -> str:
+    """Merge cartographer_ros lua includes with rosnav_bot's config/cartographer.
+
+    cartographer_node only accepts one -configuration_directory, but our
+    rosnav_*.lua files `include "map_builder.lua"` etc. from the upstream
+    package. Copy upstream .lua files into a writable runtime dir and overlay
+    our basename on top.
+    """
+    import shutil
+    import tempfile
+
+    our_dir = os.path.join(pkg_share, 'config', 'cartographer')
+    upstream = os.path.join(
+        get_package_share_directory('cartographer_ros'), 'configuration_files')
+    runtime = tempfile.mkdtemp(prefix='rosnav_cartographer_')
+    for name in os.listdir(upstream):
+        if name.endswith('.lua'):
+            shutil.copy2(os.path.join(upstream, name), os.path.join(runtime, name))
+    for name in os.listdir(our_dir):
+        if name.endswith('.lua'):
+            shutil.copy2(os.path.join(our_dir, name), os.path.join(runtime, name))
+    return runtime
+
+
+def cartographer_slam_nodes(pkg_share: str, *, use_imu: bool = True,
+                            resolution: float = 0.05):
+    """Google Cartographer 2D SLAM + occupancy grid publisher (/map)."""
+    cfg_dir = prepare_cartographer_config_dir(pkg_share)
+    basename = 'rosnav_2d.lua' if use_imu else 'rosnav_2d_no_imu.lua'
+    return [
+        Node(
+            package='cartographer_ros',
+            executable='cartographer_node',
+            name='cartographer_node',
+            output='screen',
+            parameters=[{'use_sim_time': True}],
+            arguments=[
+                '-configuration_directory', cfg_dir,
+                '-configuration_basename', basename,
+            ],
+            remappings=[('scan', '/scan'), ('imu', '/imu'), ('odom', '/odom')],
+        ),
+        Node(
+            package='cartographer_ros',
+            executable='cartographer_occupancy_grid_node',
+            name='cartographer_occupancy_grid_node',
+            output='screen',
+            parameters=[{'use_sim_time': True, 'resolution': float(resolution)}],
+        ),
+    ]
+
+
+def rtabmap_multisensor_node(*, namespace='', lidar_type='2d', octomap=False,
+                             database_path='', wait_for_transform=0.2):
+    """RTAB-Map fusing RGB-D + lidar (scan or point cloud) for mapping.
+
+    Wheel odom remains the sole odom→base_link publisher. ICP registration
+    uses the lidar; RGB-D adds visual loop-closure + depth occupancy.
+    """
+    ns = namespace.strip('/') if namespace else ''
+    prefix = f'/{ns}' if ns else ''
+    frame_prefix = f'{ns}/' if ns else ''
+    database_path = os.path.expanduser(database_path) if database_path else ''
+    use_cloud = lidar_type == '3d'
+
+    params = {
+        'use_sim_time': True,
+        'frame_id': f'{frame_prefix}base_link',
+        'odom_frame_id': f'{frame_prefix}odom',
+        'map_frame_id': f'{frame_prefix}map',
+        'subscribe_depth': True,
+        'subscribe_rgb': True,
+        'subscribe_scan': not use_cloud,
+        'subscribe_scan_cloud': use_cloud,
+        'approx_sync': True,
+        'wait_for_transform': float(wait_for_transform),
+        'qos_image': 1,
+        'qos_camera_info': 1,
+        'qos': 1,
+        'Rtabmap/TimeThr': '700',
+        'Reg/Strategy': '1',       # ICP (lidar); RGB for loop-closure cues
+        'Icp/PointToPlane': 'true',
+        'Grid/Sensor': '2',        # both laser/cloud and depth
+        'Grid/3D': 'true' if octomap else 'false',
+        'Grid/CellSize': '0.05',
+        'Grid/RangeMax': '12.0',
+        'Grid/RayTracing': 'true',
+        'Grid/NoiseFilteringRadius': '0.1',
+        'Grid/NoiseFilteringMinNeighbors': '5',
+        'Mem/IncrementalMemory': 'true',
+    }
+    if database_path:
+        params['database_path'] = database_path
+
+    remappings = [
+        ('odom', f'{prefix}/odom' if ns else '/odom'),
+        ('rgb/image', f'{prefix}/camera/image_raw' if ns else '/camera/image_raw'),
+        ('rgb/camera_info',
+         f'{prefix}/camera/camera_info' if ns else '/camera/camera_info'),
+        ('depth/image',
+         f'{prefix}/camera/depth/image_raw' if ns else '/camera/depth/image_raw'),
+    ]
+    if use_cloud:
+        remappings.append(
+            ('scan_cloud', f'{prefix}/points' if ns else '/points'))
+    else:
+        remappings.append(('scan', f'{prefix}/scan' if ns else '/scan'))
+    if ns:
+        remappings.extend([
+            ('tf', '/tf'),
+            ('tf_static', '/tf_static'),
+            ('map', f'/{ns}/map'),
+            ('/map', f'/{ns}/map'),
+        ])
+
+    arguments = [] if database_path else ['-d']
+    kwargs = {
+        'package': 'rtabmap_slam',
+        'executable': 'rtabmap',
+        'name': 'rtabmap',
+        'output': 'screen',
+        'parameters': [params],
+        'remappings': remappings,
+        'arguments': arguments,
+    }
+    if ns:
+        kwargs['namespace'] = ns
+    return Node(**kwargs)
 
 
 _EXPLORER_ALIASES = {
@@ -464,10 +674,12 @@ def multi_robot_rgbd_bridge_args(namespace: str):
         f'/{ns}/camera/image@sensor_msgs/msg/Image[gz.msgs.Image',
         f'/{ns}/camera/depth_image@sensor_msgs/msg/Image[gz.msgs.Image',
         f'/{ns}/camera/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo',
+        f'/{ns}/camera/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked',
     ]
     remappings = [
         (f'/{ns}/camera/image', f'/{ns}/camera/image_raw'),
         (f'/{ns}/camera/depth_image', f'/{ns}/camera/depth/image_raw'),
+        (f'/{ns}/camera/points', f'/{ns}/camera/depth/points'),
     ]
     return arguments, remappings
 
@@ -498,6 +710,11 @@ def rtabmap_vslam_node(*, namespace='', localization=False, database_path='',
         'subscribe_scan_cloud': False,
         'approx_sync': True,
         'wait_for_transform': float(wait_for_transform),
+        # ros_gz_bridge publishes camera topics RELIABLE; RTAB defaults to
+        # BEST_EFFORT and never matches — force Reliable (1).
+        'qos_image': 1,
+        'qos_camera_info': 1,
+        'qos': 1,
         # Without a time budget, RTAB-Map's per-cycle cost grows unbounded as
         # working memory grows (observed: 0.04s -> 2.2s over ~45 nodes),
         # falling behind real time and smearing the map->odom correction.

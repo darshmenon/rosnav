@@ -1,0 +1,28 @@
+# yolo_auto_label_cafe.yaml — ground-truth object list for yolo_collect.py's
+# auto_label_config param, scoped to worlds/cafe.world.
+#
+# The 5 table1..table5 instances there are separate, statically-posed
+# model://Cafe table includes (poses copied verbatim from cafe.world) — unlike
+# the rest of the cafe furniture, which is baked into one opaque model://Cafe
+# mesh with no per-object pose available, so only "table" is auto-labelable
+# this way.
+#
+# aabb_half_x/y and z_min/max come from the cached Fuel model's collision
+# boxes (models/fuel/Cafe table/model.sdf): surface 0.913x0.913 @ z=0.755,
+# base 0.56x0.56 @ z=0.02, column @ z=0.37 — combined into one bounding box.
+label: table
+aabb_half_x: 0.4565
+aabb_half_y: 0.4565
+z_min: 0.0
+z_max: 0.775
+objects:
+  - name: table1
+    pose: [0.5, -1.6, 0.0, 0.0]   # x y z yaw_rad
+  - name: table2
+    pose: [2.4, -5.5, 0.0, 0.0]
+  - name: table3
+    pose: [-1.5, -5.5, 0.0, 0.0]
+  - name: table4
+    pose: [2.4, -9.0, 0.0, 0.0]
+  - name: table5
+    pose: [-1.5, -9.0, 0.0, 0.0]

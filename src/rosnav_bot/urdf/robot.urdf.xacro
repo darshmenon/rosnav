@@ -13,9 +13,18 @@
         <xacro:include filename="lidar.xacro" />
     </xacro:unless>
 
+    <xacro:include filename="imu.xacro" />
+
     <xacro:arg name="enable_camera" default="false"/>
-    <xacro:if value="${'$(arg enable_camera)' == 'true'}">
-        <xacro:include filename="camera.xacro" />
+    <xacro:arg name="enable_rgbd" default="false"/>
+    <!-- RGBD replaces RGB so YOLO/ArUco and VSLAM share one camera_link. -->
+    <xacro:if value="${'$(arg enable_rgbd)' == 'true'}">
+        <xacro:include filename="rgbd_camera.xacro" />
     </xacro:if>
+    <xacro:unless value="${'$(arg enable_rgbd)' == 'true'}">
+        <xacro:if value="${'$(arg enable_camera)' == 'true'}">
+            <xacro:include filename="camera.xacro" />
+        </xacro:if>
+    </xacro:unless>
 
 </robot>

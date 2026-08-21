@@ -23,6 +23,7 @@ def generate_launch_description():
     lidar3d_height = LaunchConfiguration('lidar3d_height')
     lidar3d_vfov_deg = LaunchConfiguration('lidar3d_vfov_deg')
     enable_camera = LaunchConfiguration('enable_camera')
+    enable_rgbd = LaunchConfiguration('enable_rgbd')
 
     # Declare launch arguments
     declare_use_sim_time = DeclareLaunchArgument(
@@ -62,6 +63,12 @@ def generate_launch_description():
                         'yolo_detector.py). Off by default to save render cost — set '
                         'true when you need docking or YOLO object detection.')
 
+    declare_enable_rgbd = DeclareLaunchArgument(
+            name='enable_rgbd', default_value='false',
+            description='Include RGB-D camera (rgbd_camera.xacro) instead of RGB. '
+                        'Forced true for slam_algo:=vslam. Publishes depth for RTAB-Map '
+                        'and remaps color to /camera/image_raw for YOLO/ArUco.')
+
     # Create a robot state publisher
     robot_state_publisher = Node(
         package='robot_state_publisher',
@@ -75,7 +82,8 @@ def generate_launch_description():
                          ' lidar_type:=', lidar_type,
                          ' lidar3d_height:=', lidar3d_height,
                          ' lidar3d_vfov_deg:=', lidar3d_vfov_deg,
-                         ' enable_camera:=', enable_camera]),
+                         ' enable_camera:=', enable_camera,
+                         ' enable_rgbd:=', enable_rgbd]),
                 value_type=str),
             'frame_prefix': frame_prefix,
         }]
@@ -91,5 +99,6 @@ def generate_launch_description():
         declare_lidar3d_height,
         declare_lidar3d_vfov_deg,
         declare_enable_camera,
+        declare_enable_rgbd,
         robot_state_publisher
     ])
