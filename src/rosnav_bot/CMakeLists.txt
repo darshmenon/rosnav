@@ -84,6 +84,7 @@ install(
     scripts/dynamic_obstacle_driver.py
     scripts/pointcloud_to_scan.py
     scripts/scan_quality_gate.py
+    scripts/slam_accuracy_monitor.py
     scripts/benchmark.py
   DESTINATION lib/${PROJECT_NAME}
 )

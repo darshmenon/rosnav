@@ -1198,6 +1198,29 @@ After launching any launch file, open RViz and add these displays:
 
 `bot.rviz` already includes Lidar3D, DepthCloud, CloudMap, Depth, and OctomapOccupied displays.
 
+### RViz config per mode (`slam_nav.launch.py`)
+
+`slam_nav.launch.py` no longer always opens `bot.rviz` — it picks a config from
+`src/rosnav_bot/rviz/` based on the resolved mode:
+
+| Condition | Config | Notes |
+|---|---|---|
+| `slam_algo` != `2d` (cartographer/3d/vslam/multisensor/cslam) | `vslam.rviz` | Camera/Depth images + point clouds on, no SlamToolboxPlugin panel |
+| `slam:=true` (default, `slam_algo:=2d`) | `slam_explore.rviz` | SlamToolboxPlugin panel for start/stop/save-map controls, no Navigation 2 panel |
+| `slam:=false` + camera/RGB-D enabled | `cam_nav.rviz` | Navigation 2 panel + Camera/Depth images, no SlamToolboxPlugin |
+| `slam:=false`, no camera | `localization.rviz` | Navigation 2 panel, lidar-only (images/point clouds off) |
+| `robot.launch.py` (generic) / `multi_robot.launch.py` single-robot mode | `bot.rviz` / `multi_robot.rviz` | "one for all" fallback — Navigation 2 panel, everything else on |
+
+**Why split it:** rviz2's Ogre1 GL backend reliably segfaults on startup on
+this box (`RenderWindowImpl::resize` → `XFree()`, confirmed with gdb) whenever
+a config docks **both** the SlamToolboxPlugin panel and the Navigation 2 panel
+at once — the dock-layout resize storm during startup races the GL context.
+No `.rviz` file in this repo may combine them; `bot.rviz` and
+`multi_robot.rviz` had this bug and were fixed by dropping SlamToolboxPlugin.
+Also fixed: the LaserScan display's Topic QoS was `Reliability Policy:
+Reliable`, but `/scan` (and `/robotN/scan`) publish Best Effort — RViz was
+silently dropping the incompatible subscription and never drawing the scan.
+
 Set **Fixed Frame** to `map` in RViz Global Options.
 
 ---

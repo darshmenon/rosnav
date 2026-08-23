@@ -257,6 +257,10 @@ def _build_runtime_actions(context, pkg_share: str):
         pkg_share, filtered_out=('scan_pre' if scan_gate else 'scan'))
     scan_quality_gate = (
         _common.scan_quality_gate_node() if scan_gate else None)
+    # Always on, not a toggle: the gz drive plugin's own TF is routed off
+    # /tf (see gazebo_control*.xacro), so ekf_filter_node is the only thing
+    # that can publish odom->base_link — without it nothing does.
+    ekf_filter = _common.ekf_node(pkg_share)
     points_to_scan = (
         _common.pointcloud_to_scan_node() if lidar_type == '3d' else None)
 
@@ -294,8 +298,9 @@ def _build_runtime_actions(context, pkg_share: str):
         # RTAB-Map lidar SLAM: consumes the *existing* wheel /odom directly (like
         # slam_toolbox does) instead of running RTAB-Map's own icp_odometry — that
         # keeps this a drop-in swap with exactly one odom->base_link TF publisher
-        # (the gz DiffDrive plugin), avoiding a two-parent TF conflict. RTAB-Map
-        # only adds the map->odom layer on top, same as slam_toolbox/AMCL today.
+        # (ekf_filter_node, fusing wheel odom + IMU), avoiding a two-parent TF
+        # conflict. RTAB-Map only adds the map->odom layer on top, same as
+        # slam_toolbox/AMCL today.
         slam_or_localization = TimerAction(
             period=5.0,
             actions=[
@@ -529,12 +534,29 @@ def _build_runtime_actions(context, pkg_share: str):
     # client only. RViz has its own renderer and is useful precisely when
     # Gazebo's client is skipped (e.g. watching the map build without
     # paying Gazebo's rendering cost).
+    #
+    # Per-mode config instead of one do-everything file: rviz2's Ogre1 GL
+    # backend segfaults on startup on this box whenever both the
+    # SlamToolboxPlugin panel and the Navigation 2 panel are docked at once
+    # (confirmed via gdb — crash is in RenderWindowImpl::resize during the
+    # initial dock-layout resize storm), so no config may combine them.
+    if slam_algo != '2d':
+        rviz_config_name = 'vslam.rviz'
+    elif use_slam:
+        rviz_config_name = 'slam_explore.rviz'
+    elif enable_camera == 'true' or enable_rgbd == 'true':
+        rviz_config_name = 'cam_nav.rviz'
+    else:
+        rviz_config_name = 'localization.rviz'
+    print(f'[slam_nav] RViz config: {rviz_config_name} '
+          f'(slam_algo={slam_algo}, slam={use_slam}, enable_camera={enable_camera}, '
+          f'enable_rgbd={enable_rgbd})')
     rviz2 = GroupAction(
         condition=IfCondition(rviz),
         actions=[Node(
             package='rviz2',
             executable='rviz2',
-            arguments=['-d', os.path.join(pkg_share, 'rviz', 'bot.rviz')],
+            arguments=['-d', os.path.join(pkg_share, 'rviz', rviz_config_name)],
             output='screen')])
 
     # ── Safety Layer: Collision Monitor ───────────────────────────────────
@@ -698,6 +720,7 @@ def _build_runtime_actions(context, pkg_share: str):
         LogInfo(msg=f'[slam_nav.launch] octomap={octomap} (slam_algo=3d only; Grid/3D={"true" if octomap else "false"})'),
         LogInfo(msg=f'[slam_nav.launch] bridge={bridge_yaml}, lidar_type={lidar_type}, '
                     f'enable_rgbd={enable_rgbd}'),
+        LogInfo(msg='[slam_nav.launch] odom->base_link TF: ekf_filter_node (wheel odom + IMU fused)'),
         rsp,
         gazebo_server,
         gazebo_client,
@@ -705,6 +728,7 @@ def _build_runtime_actions(context, pkg_share: str):
         *([points_to_scan] if points_to_scan is not None else []),
         laser_filter,
         *([scan_quality_gate] if scan_quality_gate is not None else []),
+        ekf_filter,
         spawn_robot,
         slam_or_localization,
         cslam_group,
