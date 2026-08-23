@@ -1,15 +1,45 @@
 # yolo_auto_label_cafe.yaml — ground-truth object list for yolo_collect.py's
-# auto_label_config param, scoped to worlds/cafe.world.
+# auto_label_config param, scoped to worlds/cafe.world. Use with
+# `-p map_frame:=odom` (yolo_collect.py's default is `map` — override it for
+# this config).
 #
 # The 5 table1..table5 instances there are separate, statically-posed
-# model://Cafe table includes (poses copied verbatim from cafe.world) — unlike
-# the rest of the cafe furniture, which is baked into one opaque model://Cafe
-# mesh with no per-object pose available, so only "table" is auto-labelable
-# this way.
+# model://Cafe table includes — unlike the rest of the cafe furniture, which
+# is baked into one opaque model://Cafe mesh with no per-object pose
+# available, so only "table" is auto-labelable this way.
+#
+# IMPORTANT — these poses are in the **odom** frame, not cafe.world's raw SDF
+# frame, and deliberately NOT the "map" frame despite yolo_collect.py's
+# map_frame param defaulting there. slam_toolbox's map frame is an active
+# *estimate* it keeps re-correcting via scan matching as the robot explores —
+# confirmed empirically by solving the world->map transform from live data
+# twice, a few minutes apart, during the same run: the same rigid transform
+# implied table1 was at two different map-frame positions ~0.9m / ~23° apart.
+# A frame that drifts mid-capture can't hold a static ground-truth object
+# list. odom, by contrast, is fixed to the robot's pose at launch and only
+# accumulates wheel-odometry integration error (no active re-estimation) —
+# stable enough for this over a modest exploration run.
+#
+# These coordinates were produced by solving the *exact* rigid world->odom
+# transform from one live sample right after launch (before wheel drift could
+# accumulate): odom-frame base_link pose vs `gz topic -e -t
+# /world/cafe/pose/info` ground truth for entity "diff_drive", both reduced
+# to (x, y, yaw) via yaw = 2*atan2(qz, qw); then
+#   yaw_T = odom_yaw - world_yaw
+#   R_T   = [[cos(yaw_T), -sin(yaw_T)], [sin(yaw_T), cos(yaw_T)]]
+#   t_T   = odom_pos - R_T @ world_pos
+# applied to each table's raw cafe.world <pose>. This is specific to the
+# solved sample (yaw_T came out ~81°, not the naive ~90° you'd get by just
+# negating cafe's default spawn yaw — physical settling after spawn makes the
+# exact value worth solving empirically rather than assumed). Re-solve if the
+# spawn pose changes, or periodically re-verify against live TF since wheel
+# drift does grow (slowly) with distance traveled.
 #
 # aabb_half_x/y and z_min/max come from the cached Fuel model's collision
 # boxes (models/fuel/Cafe table/model.sdf): surface 0.913x0.913 @ z=0.755,
 # base 0.56x0.56 @ z=0.02, column @ z=0.37 — combined into one bounding box.
+# Half-extents are equal (square footprint), so table yaw doesn't affect the
+# resulting AABB corners — left at 0.0 for all.
 label: table
 aabb_half_x: 0.4565
 aabb_half_y: 0.4565
@@ -17,12 +47,12 @@ z_min: 0.0
 z_max: 0.775
 objects:
   - name: table1
-    pose: [0.5, -1.6, 0.0, 0.0]   # x y z yaw_rad
+    pose: [-0.382, 0.554, 0.0, 0.0]   # x y z yaw_rad (odom frame)
   - name: table2
-    pose: [2.4, -5.5, 0.0, 0.0]
+    pose: [3.769, 1.816, 0.0, 0.0]
   - name: table3
-    pose: [-1.5, -5.5, 0.0, 0.0]
+    pose: [3.155, -2.036, 0.0, 0.0]
   - name: table4
-    pose: [2.4, -9.0, 0.0, 0.0]
+    pose: [7.225, 1.264, 0.0, 0.0]
   - name: table5
-    pose: [-1.5, -9.0, 0.0, 0.0]
+    pose: [6.611, -2.587, 0.0, 0.0]

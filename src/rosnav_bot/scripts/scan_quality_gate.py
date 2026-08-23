@@ -25,16 +25,27 @@ Usage (gate — insert between laser_filters and SLAM):
 from __future__ import annotations
 
 import math
+import time
 from collections import Counter
 
 import rclpy
+from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
+from rclpy.time import Time
+from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
+import tf2_ros
 
 
 def _finite(x: float) -> bool:
     return math.isfinite(x)
+
+
+def _yaw_deg(q) -> float:
+    siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+    cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+    return math.degrees(math.atan2(siny_cosp, cosy_cosp))
 
 
 class ScanQualityGate(Node):
@@ -50,6 +61,14 @@ class ScanQualityGate(Node):
         self.declare_parameter('allow_beam_count_jump', 0.25)
         self.declare_parameter('require_frame_id', True)
         self.declare_parameter('stats_period_sec', 5.0)
+        self.declare_parameter('diagnose_tf', True)
+        self.declare_parameter('fixed_frame', 'map')
+        self.declare_parameter('odom_frame', 'odom')
+        self.declare_parameter('base_frame', 'base_link')
+        self.declare_parameter('warn_scan_age_sec', 0.25)
+        self.declare_parameter('diagnose_odom', True)
+        self.declare_parameter('odom_topic', 'odom')
+        self.declare_parameter('warn_odom_age_sec', 0.25)
 
         mode = str(self.get_parameter('mode').value).strip().lower()
         if mode not in ('monitor', 'gate'):
@@ -61,9 +80,23 @@ class ScanQualityGate(Node):
         self._max_nan_ratio = float(self.get_parameter('max_nan_ratio').value)
         self._beam_jump = float(self.get_parameter('allow_beam_count_jump').value)
         self._require_frame = bool(self.get_parameter('require_frame_id').value)
+        self._diagnose_tf = bool(self.get_parameter('diagnose_tf').value)
+        self._fixed_frame = str(self.get_parameter('fixed_frame').value)
+        self._odom_frame = str(self.get_parameter('odom_frame').value)
+        self._base_frame = str(self.get_parameter('base_frame').value)
+        self._warn_scan_age = float(self.get_parameter('warn_scan_age_sec').value)
+        self._diagnose_odom = bool(self.get_parameter('diagnose_odom').value)
+        self._odom_topic = str(self.get_parameter('odom_topic').value)
+        self._warn_odom_age = float(self.get_parameter('warn_odom_age_sec').value)
 
         scan_in = str(self.get_parameter('scan_in').value)
         scan_out = str(self.get_parameter('scan_out').value)
+
+        self._tf_buffer = None
+        self._tf_listener = None
+        if self._diagnose_tf:
+            self._tf_buffer = tf2_ros.Buffer(node=self)
+            self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, self)
 
         self._pub = None
         if self._gate:
@@ -72,19 +105,40 @@ class ScanQualityGate(Node):
 
         self.create_subscription(
             LaserScan, scan_in, self._on_scan, qos_profile_sensor_data)
+        if self._diagnose_odom:
+            self.create_subscription(
+                Odometry, self._odom_topic, self._on_odom, qos_profile_sensor_data)
 
         self._ok = 0
         self._bad = 0
         self._reasons: Counter[str] = Counter()
         self._last_n_beams: int | None = None
         self._last_stamp_ns: int | None = None
+        self._last_rx_monotonic: float | None = None
+        self._last_frame = ''
+        self._last_age_sec: float | None = None
+        self._last_rx_period_sec: float | None = None
+        self._last_valid_ratio: float | None = None
+        self._last_nan_ratio: float | None = None
+        self._last_angle_span_deg: float | None = None
+        self._last_odom_rx_monotonic: float | None = None
+        self._last_odom_rx_period_sec: float | None = None
+        self._last_odom_age_sec: float | None = None
+        self._last_odom_frame = ''
+        self._last_odom_child = ''
+        self._last_odom_x: float | None = None
+        self._last_odom_y: float | None = None
+        self._last_odom_yaw_deg: float | None = None
+        self._last_odom_vx: float | None = None
+        self._last_odom_wz: float | None = None
 
         period = float(self.get_parameter('stats_period_sec').value)
         self.create_timer(max(0.5, period), self._report)
 
         self.get_logger().info(
             f'scan_quality_gate mode={mode} in={scan_in}'
-            + (f' out={scan_out}' if self._gate else ' (monitor only)'))
+            + (f' out={scan_out}' if self._gate else ' (monitor only)')
+            + (f' odom={self._odom_topic}' if self._diagnose_odom else ' odom=off'))
 
     def _classify(self, msg: LaserScan) -> str | None:
         """Return reject reason, or None if the scan is usable."""
@@ -143,6 +197,7 @@ class ScanQualityGate(Node):
         return None
 
     def _on_scan(self, msg: LaserScan) -> None:
+        self._record_scan_stats(msg)
         reason = self._classify(msg)
         if reason is None:
             self._ok += 1
@@ -157,6 +212,51 @@ class ScanQualityGate(Node):
             f'frame={msg.header.frame_id!r}',
             throttle_duration_sec=2.0)
 
+    def _record_scan_stats(self, msg: LaserScan) -> None:
+        now_mono = time.monotonic()
+        if self._last_rx_monotonic is not None:
+            self._last_rx_period_sec = now_mono - self._last_rx_monotonic
+        self._last_rx_monotonic = now_mono
+
+        self._last_frame = msg.header.frame_id or ''
+        self._last_angle_span_deg = math.degrees(msg.angle_max - msg.angle_min)
+
+        stamp_ns = int(msg.header.stamp.sec) * 1_000_000_000 + int(msg.header.stamp.nanosec)
+        now_ns = self.get_clock().now().nanoseconds
+        self._last_age_sec = (now_ns - stamp_ns) / 1e9 if stamp_ns > 0 else None
+
+        n = len(msg.ranges)
+        if n <= 0:
+            self._last_valid_ratio = None
+            self._last_nan_ratio = None
+            return
+        nan_n = 0
+        valid_n = 0
+        for r in msg.ranges:
+            if not _finite(r):
+                nan_n += 1
+            elif msg.range_min <= r <= msg.range_max:
+                valid_n += 1
+        self._last_valid_ratio = valid_n / n
+        self._last_nan_ratio = nan_n / n
+
+    def _on_odom(self, msg: Odometry) -> None:
+        now_mono = time.monotonic()
+        if self._last_odom_rx_monotonic is not None:
+            self._last_odom_rx_period_sec = now_mono - self._last_odom_rx_monotonic
+        self._last_odom_rx_monotonic = now_mono
+
+        stamp_ns = int(msg.header.stamp.sec) * 1_000_000_000 + int(msg.header.stamp.nanosec)
+        now_ns = self.get_clock().now().nanoseconds
+        self._last_odom_age_sec = (now_ns - stamp_ns) / 1e9 if stamp_ns > 0 else None
+        self._last_odom_frame = msg.header.frame_id or ''
+        self._last_odom_child = msg.child_frame_id or ''
+        self._last_odom_x = msg.pose.pose.position.x
+        self._last_odom_y = msg.pose.pose.position.y
+        self._last_odom_yaw_deg = _yaw_deg(msg.pose.pose.orientation)
+        self._last_odom_vx = msg.twist.twist.linear.x
+        self._last_odom_wz = msg.twist.twist.angular.z
+
     def _report(self) -> None:
         total = self._ok + self._bad
         if total == 0:
@@ -164,8 +264,83 @@ class ScanQualityGate(Node):
             return
         top = ', '.join(f'{k}={v}' for k, v in self._reasons.most_common(5)) or '-'
         pct = 100.0 * self._bad / total
+        scan_bits = [
+            f'frame={self._last_frame!r}',
+            f'beams={self._last_n_beams if self._last_n_beams is not None else "?"}',
+        ]
+        if self._last_valid_ratio is not None:
+            scan_bits.append(f'valid={100.0 * self._last_valid_ratio:.1f}%')
+        if self._last_nan_ratio is not None:
+            scan_bits.append(f'nan={100.0 * self._last_nan_ratio:.1f}%')
+        if self._last_angle_span_deg is not None:
+            scan_bits.append(f'span={self._last_angle_span_deg:.1f}deg')
+        if self._last_age_sec is not None:
+            scan_bits.append(f'stamp_age={self._last_age_sec:.3f}s')
+        if self._last_rx_period_sec is not None:
+            scan_bits.append(f'rx_dt={self._last_rx_period_sec:.3f}s')
+        tf_bits = self._tf_summary()
+        odom_bits = self._odom_summary()
         self.get_logger().info(
-            f'scans ok={self._ok} rejected={self._bad} ({pct:.1f}%) reasons: {top}')
+            f'scans ok={self._ok} rejected={self._bad} ({pct:.1f}%) '
+            f'reasons: {top}; scan_diag: {" ".join(scan_bits)}'
+            + (f'; odom_diag: {odom_bits}' if odom_bits else '')
+            + (f'; tf_diag: {tf_bits}' if tf_bits else ''))
+
+        if self._last_age_sec is not None and self._last_age_sec > self._warn_scan_age:
+            throttle_sec = max(0.5, float(self.get_parameter('stats_period_sec').value))
+            self.get_logger().warn(
+                f'scan timestamp lag {self._last_age_sec:.3f}s exceeds '
+                f'warn_scan_age_sec={self._warn_scan_age:.3f}s',
+                throttle_duration_sec=throttle_sec)
+        if self._last_odom_age_sec is not None and self._last_odom_age_sec > self._warn_odom_age:
+            throttle_sec = max(0.5, float(self.get_parameter('stats_period_sec').value))
+            self.get_logger().warn(
+                f'odom timestamp lag {self._last_odom_age_sec:.3f}s exceeds '
+                f'warn_odom_age_sec={self._warn_odom_age:.3f}s',
+                throttle_duration_sec=throttle_sec)
+
+    def _odom_summary(self) -> str:
+        if not self._diagnose_odom:
+            return ''
+        if self._last_odom_rx_monotonic is None:
+            return f'{self._odom_topic}=no_msg'
+        parts = [
+            f'frame={self._last_odom_frame!r}',
+            f'child={self._last_odom_child!r}',
+        ]
+        if self._last_odom_age_sec is not None:
+            parts.append(f'stamp_age={self._last_odom_age_sec:.3f}s')
+        if self._last_odom_rx_period_sec is not None:
+            parts.append(f'rx_dt={self._last_odom_rx_period_sec:.3f}s')
+        if self._last_odom_x is not None and self._last_odom_y is not None:
+            parts.append(f'pose=({self._last_odom_x:.2f},{self._last_odom_y:.2f})')
+        if self._last_odom_yaw_deg is not None:
+            parts.append(f'yaw={self._last_odom_yaw_deg:.1f}deg')
+        if self._last_odom_vx is not None and self._last_odom_wz is not None:
+            parts.append(f'twist=(vx:{self._last_odom_vx:.2f},wz:{self._last_odom_wz:.2f})')
+        return ' '.join(parts)
+
+    def _tf_summary(self) -> str:
+        if self._tf_buffer is None:
+            return ''
+        pairs = (
+            ('map_odom', self._fixed_frame, self._odom_frame),
+            ('odom_base', self._odom_frame, self._base_frame),
+            ('map_base', self._fixed_frame, self._base_frame),
+        )
+        parts = []
+        for name, target, source in pairs:
+            try:
+                tf = self._tf_buffer.lookup_transform(
+                    target, source, Time(),
+                    timeout=Duration(seconds=0.02))
+            except Exception as exc:
+                parts.append(f'{name}=missing({type(exc).__name__})')
+                continue
+            tr = tf.transform.translation
+            yaw = _yaw_deg(tf.transform.rotation)
+            parts.append(f'{name}=x:{tr.x:.2f} y:{tr.y:.2f} yaw:{yaw:.1f}deg')
+        return ' '.join(parts)
 
 
 def main(args=None):

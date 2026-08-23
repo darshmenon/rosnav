@@ -97,6 +97,12 @@ def _world_to_cell(wx, wy, info):
     )
 
 
+def _yaw_deg(q) -> float:
+    siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+    cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+    return math.degrees(math.atan2(siny_cosp, cosy_cosp))
+
+
 class FrontierExplorer(Node):
     def __init__(self):
         super().__init__('frontier_explorer')
@@ -465,12 +471,25 @@ class FrontierExplorer(Node):
         occupied = data >= 50
 
         free_count = int(free.sum())
+        unknown_count = int(unknown.sum())
+        occupied_count = int(occupied.sum())
+        total_cells = max(1, width * height)
+        known_count = free_count + occupied_count
+        explored_pct = 100.0 * known_count / total_cells
         now = time.monotonic()
         if now - self._last_growth_log >= 2.0:
             delta = '' if self._last_free_cells is None else f' (Δ{free_count - self._last_free_cells:+d})'
+            robot_note = ''
+            if robot_pos is not None:
+                robot_note = f' robot=({robot_pos[0]:.2f},{robot_pos[1]:.2f})'
+            tf_note = self._localization_summary()
             self.get_logger().info(
                 f'/map free cells: {free_count}{delta} '
-                f'({width}x{height} @ {res:.3f}m)')
+                f'occupied={occupied_count} unknown={unknown_count} '
+                f'explored={explored_pct:.1f}% '
+                f'({width}x{height} @ {res:.3f}m '
+                f'origin=({ox:.2f},{oy:.2f}))'
+                f'{robot_note}{tf_note}')
             self._last_free_cells = free_count
             self._last_growth_log = now
 
@@ -1049,6 +1068,23 @@ class FrontierExplorer(Node):
             self.get_logger().debug(
                 f'Waiting for TF {self._goal_frame} -> {self._base_frame}')
             return None
+
+    def _localization_summary(self) -> str:
+        parts = []
+        for label, target, source in (
+            ('map_odom', self._goal_frame, 'odom'),
+            ('map_base', self._goal_frame, self._base_frame),
+        ):
+            try:
+                tf = self._tf_buffer.lookup_transform(
+                    target, source, rclpy.time.Time())
+            except Exception:
+                parts.append(f'{label}=missing')
+                continue
+            tr = tf.transform.translation
+            yaw = _yaw_deg(tf.transform.rotation)
+            parts.append(f'{label}=({tr.x:.2f},{tr.y:.2f},yaw={yaw:.1f}deg)')
+        return ' ' + ' '.join(parts) if parts else ''
 
     # ------------------------------------------------------------------
     # Nav2 goal

@@ -181,17 +181,42 @@ def scan_quality_gate_node(namespace: str = '', *,
 
     Typical chain: scan_raw → laser_filters → scan_pre → gate → scan.
     """
+    params = {
+        'use_sim_time': True,
+        'mode': mode,
+        'scan_in': scan_in,
+        'scan_out': scan_out,
+    }
+    if namespace:
+        # TF frame ids aren't topics — node namespacing doesn't prefix them,
+        # so do it explicitly (map stays global; odom/base_link are per-robot).
+        params['odom_frame'] = f'{namespace}/odom'
+        params['base_frame'] = f'{namespace}/base_link'
     return Node(
         package='rosnav_bot',
         executable='scan_quality_gate.py',
         name='scan_quality_gate',
         namespace=namespace or None,
-        parameters=[{
-            'use_sim_time': True,
-            'mode': mode,
-            'scan_in': scan_in,
-            'scan_out': scan_out,
-        }],
+        parameters=[params],
+        output='screen',
+    )
+
+
+def ekf_node(pkg_share: str, namespace: str = ''):
+    """robot_localization EKF fusing wheel odom + IMU; sole odom->base_link
+    TF broadcaster (the gz DiffDrive/Mecanum/Ackermann plugins are routed
+    to an unbridged tf_wheel_raw topic instead — see gazebo_control*.xacro)."""
+    params = {
+        'use_sim_time': True,
+        'odom_frame': f'{namespace}/odom' if namespace else 'odom',
+        'base_link_frame': f'{namespace}/base_link' if namespace else 'base_link',
+    }
+    return Node(
+        package='robot_localization',
+        executable='ekf_node',
+        name='ekf_filter_node',
+        namespace=namespace or None,
+        parameters=[os.path.join(pkg_share, 'config', 'ekf.yaml'), params],
         output='screen',
     )
 
@@ -447,7 +472,8 @@ def rtabmap_multisensor_node(*, namespace='', lidar_type='2d', octomap=False,
                              database_path='', wait_for_transform=0.2):
     """RTAB-Map fusing RGB-D + lidar (scan or point cloud) for mapping.
 
-    Wheel odom remains the sole odom→base_link publisher. ICP registration
+    Wheel odom (fused with IMU by ekf_filter_node) remains the sole
+    odom→base_link publisher. ICP registration
     uses the lidar; RGB-D adds visual loop-closure + depth occupancy.
     """
     ns = namespace.strip('/') if namespace else ''
@@ -688,8 +714,9 @@ def rtabmap_vslam_node(*, namespace='', localization=False, database_path='',
                        wait_for_transform=0.2, octomap=False):
     """RTAB-Map RGB-D visual SLAM / localization (slam_algo:=vslam).
 
-    Uses wheel odom TF (no visual odometry node) so Gazebo DiffDrive remains
-    the sole odom→base_link publisher — same pattern as slam_algo:=3d.
+    Uses wheel odom TF (no visual odometry node) so ekf_filter_node (fusing
+    wheel odom + IMU) remains the sole odom→base_link publisher — same
+    pattern as slam_algo:=3d.
     Occupancy grid comes from the depth camera (Grid/Sensor=1).
     """
     ns = namespace.strip('/') if namespace else ''

@@ -28,7 +28,12 @@
     <!-- frame IDs include namespace prefix so they are unique across robots -->
     <frame_id>${ns + '/odom' if ns else 'odom'}</frame_id>
     <child_frame_id>${ns + '/base_link' if ns else 'base_link'}</child_frame_id>
-    <tf_topic>/tf</tf_topic>
+    <!-- NOT /tf: the DiffDrive plugin can't be told to skip TF publishing
+         (no publish_odom_tf option in gz-sim8), so its odom->base_link
+         transform is routed to an unbridged gz-transport topic instead of
+         reaching ROS. ekf_filter_node (robot_localization) is the sole
+         odom->base_link TF broadcaster on the ROS side — see config/ekf.yaml. -->
+    <tf_topic>${ns + '/tf_wheel_raw' if ns else 'tf_wheel_raw'}</tf_topic>
 
     <!-- Add debug topics -->
     <debug>true</debug>

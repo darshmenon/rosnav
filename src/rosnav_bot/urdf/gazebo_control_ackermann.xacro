@@ -31,7 +31,8 @@
       <!-- frame IDs include namespace prefix so they are unique across robots -->
       <frame_id>${ns + '/odom' if ns else 'odom'}</frame_id>
       <child_frame_id>${ns + '/base_link' if ns else 'base_link'}</child_frame_id>
-      <tf_topic>/tf</tf_topic>
+      <!-- NOT /tf: ekf_filter_node owns odom->base_link on the ROS side, see gazebo_control.xacro -->
+      <tf_topic>${ns + '/tf_wheel_raw' if ns else 'tf_wheel_raw'}</tf_topic>
     </plugin>
 
     <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
