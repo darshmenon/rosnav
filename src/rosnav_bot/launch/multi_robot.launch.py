@@ -1068,7 +1068,7 @@ def _build_all(context, pkg_share: str):
         # Sole {ns}/odom -> {ns}/base_link TF broadcaster (wheel odom + IMU
         # fused): the drive plugin's own TF is routed off /tf (see
         # gazebo_control*.xacro), same as single-robot slam_nav.launch.py.
-        ekf_filter = _common.ekf_node(pkg_share, namespace=ns)
+        ekf_filter = _common.localization_filter_node(pkg_share, namespace=ns, filter_type='ekf')
 
         per_robot = [rsp, spawn, bridge, ekf_filter]
         if points_to_scan is not None:

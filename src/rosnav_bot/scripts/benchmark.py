@@ -26,6 +26,8 @@ report you can later diff with `mode:=report`:
                 slam_accuracy_monitor.py, wrapped as a timed benchmark run.
   report        Offline: load 2+ JSON reports and print a comparison table
                 (e.g. dwb.json vs mppi.json, or slam2d.json vs slam3d.json).
+                Also writes comparison bar/line charts (PNG, needs matplotlib)
+                and a single self-contained HTML dashboard next to them.
                 Doesn't touch ROS.
 
 Examples
@@ -50,18 +52,24 @@ Examples
       -p ground_truth_topic:=/test/ground_truth_pose -p ground_truth_type:=pose_stamped
 
   ros2 run rosnav_bot benchmark.py --ros-args -p mode:=report \\
-      -p inputs:="['~/rosnav_benchmarks/cafe_dwb.json','~/rosnav_benchmarks/cafe_mppi.json']"
+      -p inputs:="['~/rosnav_benchmarks/cafe_dwb.json','~/rosnav_benchmarks/cafe_mppi.json']" \\
+      -p out_html:=~/rosnav_benchmarks/controllers.html
 
 All modes write <out_dir>/<label>_<mode>.json (out_dir default
-~/rosnav_benchmarks). Report mode reads whatever paths you give it.
+~/rosnav_benchmarks). Report mode reads whatever paths you give it and
+writes charts + an HTML dashboard next to the first input unless
+-p out_dir:=... / -p out_html:=... override that; -p charts:=false skips
+chart/dashboard generation and only prints the table.
 """
 
+import base64
 import json
 import math
 import os
 import time
 
 import rclpy
+import rclpy.executors
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from rcl_interfaces.msg import ParameterDescriptor
@@ -246,6 +254,20 @@ class NavBenchmark(Node):
     def run(self):
         from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
 
+        # Our own executor for this node's /odom subscription, kept separate
+        # from BasicNavigator's internal spinning. rclpy.spin_once(node) with
+        # no explicit executor falls back to a process-wide *shared* global
+        # executor (rclpy.get_global_executor()) — and BasicNavigator's own
+        # methods (isTaskComplete, getFeedback, ...) already spin themselves
+        # via that same implicit global executor internally. Alternating
+        # rclpy.spin_once(nav, ...) / rclpy.spin_once(self, ...) both hit that
+        # one shared executor and never reliably drained this node's own
+        # queued /odom messages — _odom_dist/_last_odom_xy stayed frozen at
+        # their initial values, so every distance/error metric came back
+        # 0/null. A dedicated executor for `self` sidesteps that entirely.
+        own_executor = rclpy.executors.SingleThreadedExecutor()
+        own_executor.add_node(self)
+
         nav = BasicNavigator()
         if self._localizer in ('', 'none'):
             # slam_toolbox in this repo's launch isn't lifecycle-managed
@@ -294,7 +316,8 @@ class NavBenchmark(Node):
                 fb = nav.getFeedback()
                 if fb is not None:
                     num_recoveries = max(num_recoveries, getattr(fb, 'number_of_recoveries', 0))
-                rclpy.spin_once(nav, timeout_sec=0.2)
+                rclpy.spin_once(nav, timeout_sec=0.1)
+                own_executor.spin_once(timeout_sec=0.05)
             elapsed = time.time() - t0
 
             result = nav.getResult()
@@ -562,13 +585,166 @@ class AccuracyBenchmark(Node):
 
 
 # ─────────────────────────── report mode ─────────────────────────────────
-def run_report(inputs):
+def _report_table_keys(rows):
+    keys = set()
+    for r in rows:
+        keys.update(k for k, v in r.items() if not isinstance(v, (list, dict)))
+    keys.discard('generated_at')
+    return ['label', 'mode'] + sorted(k for k in keys if k not in ('label', 'mode'))
+
+
+def _print_table(rows, ordered):
+    widths = {k: max(len(k), *(len(str(r.get(k, ''))) for r in rows)) for k in ordered}
+    header = ' | '.join(k.ljust(widths[k]) for k in ordered)
+    print(header)
+    print('-' * len(header))
+    for r in rows:
+        print(' | '.join(str(r.get(k, '')).ljust(widths[k]) for k in ordered))
+
+
+def _try_import_pyplot():
+    try:
+        import matplotlib
+        matplotlib.use('Agg')  # headless — report mode never opens a display
+        import matplotlib.pyplot as plt
+        return plt
+    except ImportError:
+        return None
+
+
+def _numeric_bar_chart(plt, rows, keys, title, out_path):
+    """One grouped bar chart: one x-tick per key, one bar per report (label)."""
+    keys = [k for k in keys if any(isinstance(r.get(k), (int, float)) for r in rows)]
+    if not keys:
+        return False
+    width = 0.8 / max(len(rows), 1)
+    x = range(len(keys))
+    fig, ax = plt.subplots(figsize=(max(6, len(keys) * 1.8), 4.5))
+    for i, r in enumerate(rows):
+        vals = [r.get(k) if isinstance(r.get(k), (int, float)) else 0 for k in keys]
+        ax.bar([xi + i * width for xi in x], vals, width=width, label=r.get('label', f'run{i}'))
+    ax.set_xticks([xi + width * (len(rows) - 1) / 2 for xi in x])
+    ax.set_xticklabels(keys, rotation=20, ha='right')
+    ax.set_title(title)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=110)
+    plt.close(fig)
+    return True
+
+
+def _timeline_chart(plt, rows, title, out_path):
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    plotted = False
+    for r in rows:
+        timeline = r.get('coverage_timeline') or []
+        if not timeline:
+            continue
+        ax.plot([p['t'] for p in timeline], [p['coverage_pct'] for p in timeline],
+                 label=r.get('label', '?'))
+        plotted = True
+    if not plotted:
+        plt.close(fig)
+        return False
+    ax.set_xlabel('time (s)')
+    ax.set_ylabel('coverage %')
+    ax.set_title(title)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=110)
+    plt.close(fig)
+    return True
+
+
+def plot_reports(rows, out_dir):
+    """Bar/line comparison charts per benchmark mode present in `rows`.
+    Returns [(title, png_path), ...]; [] (with a log line) if matplotlib
+    isn't installed — charts are a soft dependency, table output still works."""
+    plt = _try_import_pyplot()
+    if plt is None:
+        print('(matplotlib not installed — skipping charts; `pip install matplotlib` to enable)')
+        return []
+
+    by_mode = {}
+    for r in rows:
+        by_mode.setdefault(r.get('mode'), []).append(r)
+
+    charts = []
+    if 'nav' in by_mode:
+        path = os.path.join(out_dir, 'compare_nav.png')
+        if _numeric_bar_chart(plt, by_mode['nav'],
+                               ['avg_speed_mps', 'avg_goal_error_m', 'success_rate', 'total_recoveries'],
+                               'Controller comparison (nav)', path):
+            charts.append(('Controller comparison', path))
+    if 'localization' in by_mode:
+        path = os.path.join(out_dir, 'compare_localization.png')
+        if _numeric_bar_chart(plt, by_mode['localization'],
+                               ['avg_cov_trace', 'max_cov_trace', 'max_pose_jump_m'],
+                               'Localization filter comparison', path):
+            charts.append(('Localization comparison', path))
+    if 'accuracy' in by_mode:
+        keys = ['final_drift_m', 'max_drift_m']
+        if any('rmse_pos_err_m' in r for r in by_mode['accuracy']):
+            keys += ['rmse_pos_err_m', 'max_pos_err_m']
+        path = os.path.join(out_dir, 'compare_accuracy.png')
+        if _numeric_bar_chart(plt, by_mode['accuracy'], keys,
+                               'Accuracy / drift comparison', path):
+            charts.append(('Accuracy comparison', path))
+    if 'slam' in by_mode:
+        bar_path = os.path.join(out_dir, 'compare_slam_final.png')
+        if _numeric_bar_chart(plt, by_mode['slam'], ['final_coverage_pct', 'time_to_converge_sec'],
+                               'SLAM method comparison (final)', bar_path):
+            charts.append(('SLAM final stats', bar_path))
+        line_path = os.path.join(out_dir, 'compare_slam_timeline.png')
+        if _timeline_chart(plt, by_mode['slam'], 'SLAM coverage over time', line_path):
+            charts.append(('SLAM coverage over time', line_path))
+    return charts
+
+
+def write_html_dashboard(rows, ordered, charts, out_path):
+    def esc(s):
+        return str(s).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+    thead = ''.join(f'<th>{esc(k)}</th>' for k in ordered)
+    tbody = ''.join(
+        '<tr>' + ''.join(f'<td>{esc(r.get(k, ""))}</td>' for k in ordered) + '</tr>'
+        for r in rows)
+
+    imgs = []
+    for title, path in charts:
+        if not os.path.isfile(path):
+            continue
+        with open(path, 'rb') as f:
+            b64 = base64.b64encode(f.read()).decode('ascii')
+        imgs.append(f'<h2>{esc(title)}</h2><img src="data:image/png;base64,{b64}">')
+
+    html = f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>rosnav_bot benchmark comparison</title>
+<style>
+body {{ font-family: sans-serif; margin: 2rem; background: #1e1e1e; color: #eee; }}
+table {{ border-collapse: collapse; margin-bottom: 2rem; }}
+th, td {{ border: 1px solid #555; padding: 4px 10px; text-align: right; font-size: 0.85rem; }}
+th:first-child, td:first-child {{ text-align: left; }}
+img {{ max-width: 100%; background: #fff; border-radius: 6px; margin-bottom: 2rem; }}
+</style></head><body>
+<h1>rosnav_bot benchmark comparison</h1>
+<table><thead><tr>{thead}</tr></thead><tbody>{tbody}</tbody></table>
+{''.join(imgs)}
+</body></html>"""
+    with open(out_path, 'w') as f:
+        f.write(html)
+    print(f'HTML dashboard written: {out_path}')
+
+
+def run_report(inputs, out_dir=None, want_charts=True, out_html=None):
     rows = []
+    first_dir = None
     for path in inputs:
         p = os.path.expanduser(path)
         if not os.path.isfile(p):
             print(f'  (missing: {p})')
             continue
+        first_dir = first_dir or os.path.dirname(p)
         with open(p) as f:
             rows.append(json.load(f))
 
@@ -580,18 +756,17 @@ def run_report(inputs):
     if len(modes) > 1:
         print(f'Warning: comparing different modes {modes} — fields may not align.\n')
 
-    keys = set()
-    for r in rows:
-        keys.update(k for k, v in r.items() if not isinstance(v, (list, dict)))
-    keys.discard('generated_at')
-    ordered = ['label', 'mode'] + sorted(k for k in keys if k not in ('label', 'mode'))
+    ordered = _report_table_keys(rows)
+    _print_table(rows, ordered)
 
-    widths = {k: max(len(k), *(len(str(r.get(k, ''))) for r in rows)) for k in ordered}
-    header = ' | '.join(k.ljust(widths[k]) for k in ordered)
-    print(header)
-    print('-' * len(header))
-    for r in rows:
-        print(' | '.join(str(r.get(k, '')).ljust(widths[k]) for k in ordered))
+    if not want_charts:
+        return
+    dest_dir = os.path.expanduser(out_dir) if out_dir else (first_dir or '.')
+    os.makedirs(dest_dir, exist_ok=True)
+    charts = plot_reports(rows, dest_dir)
+    if charts:
+        html_path = os.path.expanduser(out_html) if out_html else os.path.join(dest_dir, 'comparison.html')
+        write_html_dashboard(rows, ordered, charts, html_path)
 
 
 def main(args=None):
@@ -599,13 +774,20 @@ def main(args=None):
     probe = Node('benchmark_probe')
     probe.declare_parameter('mode', 'nav')
     probe.declare_parameter('inputs', [''])
+    probe.declare_parameter('out_dir', '')
+    probe.declare_parameter('out_html', '')
+    probe.declare_parameter('charts', True)
     mode = probe.get_parameter('mode').value
     inputs = probe.get_parameter('inputs').value
+    report_out_dir = probe.get_parameter('out_dir').value
+    report_out_html = probe.get_parameter('out_html').value
+    report_charts = probe.get_parameter('charts').value
     probe.destroy_node()
 
     if mode == 'report':
         rclpy.shutdown()
-        run_report([i for i in inputs if i])
+        run_report([i for i in inputs if i], out_dir=report_out_dir or None,
+                    want_charts=report_charts, out_html=report_out_html or None)
         return
 
     if mode in ('slam', 'localization', 'accuracy'):

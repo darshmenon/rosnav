@@ -100,13 +100,19 @@ def nav2_params_filename(controller: str, drive_type: str, ros_distro: str = Non
     ros_distro = ros_distro or ROS_DISTRO
     if drive_type == 'ackermann':
         return 'nav2_params_ackermann.yaml'
-    # Jazzy's params file already defaults to MPPI; the dwb/mppi switch only
+    # Jazzy's params file already defaults to MPPI; the controller switch only
     # applies on Humble, which defaults to DWB.
     if ros_distro == 'jazzy':
         return 'nav2_params_mecanum_jazzy.yaml' if drive_type == 'mecanum' else 'nav2_params_jazzy.yaml'
     if drive_type == 'mecanum':
         return 'nav2_params_mecanum.yaml'
-    return 'nav2_params_mppi.yaml' if controller == 'mppi' else 'nav2_params.yaml'
+    if controller == 'mppi':
+        return 'nav2_params_mppi.yaml'
+    # 'rpp'/'regulated_pure_pursuit': carrot-chasing pursuit controller, the
+    # third point of comparison alongside DWB (rollout) and MPPI (optimization).
+    if controller in ('rpp', 'regulated_pure_pursuit', 'pure_pursuit'):
+        return 'nav2_params_rpp.yaml'
+    return 'nav2_params.yaml'
 
 
 def patch_pkg_share_placeholder(raw_params_path: str, pkg_share: str) -> str:
@@ -202,10 +208,19 @@ def scan_quality_gate_node(namespace: str = '', *,
     )
 
 
-def ekf_node(pkg_share: str, namespace: str = ''):
-    """robot_localization EKF fusing wheel odom + IMU; sole odom->base_link
+def localization_filter_node(pkg_share: str, namespace: str = '', filter_type: str = 'ekf'):
+    """robot_localization EKF or UKF fusing wheel odom + IMU; sole odom->base_link
     TF broadcaster (the gz DiffDrive/Mecanum/Ackermann plugins are routed
-    to an unbridged tf_wheel_raw topic instead — see gazebo_control*.xacro)."""
+    to an unbridged tf_wheel_raw topic instead — see gazebo_control*.xacro).
+
+    ekf_node and ukf_node share the exact same fusion-config schema (odomN_config,
+    imuN_config, ...) — ukf.yaml is ekf.yaml's fusion setup plus UKF-only sigma-point
+    tuning (alpha/kappa/beta), so swapping filter_type is just executable + params file.
+    """
+    filter_type = (filter_type or 'ekf').strip().lower()
+    if filter_type not in ('ekf', 'ukf'):
+        print(f'[rosnav_bot] localization_filter={filter_type!r} not recognized — using ekf')
+        filter_type = 'ekf'
     odom_frame = f'{namespace}/odom' if namespace else 'odom'
     params = {
         'use_sim_time': True,
@@ -219,10 +234,10 @@ def ekf_node(pkg_share: str, namespace: str = ''):
     }
     return Node(
         package='robot_localization',
-        executable='ekf_node',
-        name='ekf_filter_node',
+        executable=f'{filter_type}_node',
+        name=f'{filter_type}_filter_node',
         namespace=namespace or None,
-        parameters=[os.path.join(pkg_share, 'config', 'ekf.yaml'), params],
+        parameters=[os.path.join(pkg_share, 'config', f'{filter_type}.yaml'), params],
         output='screen',
     )
 
@@ -612,11 +627,22 @@ def explorer_nodes(backend, pkg_share, *, map_topic='/map', namespaces=None,
     if backend == 'rrt_explore':
         ns0 = namespaces[0] if namespaces and namespaces[0] else ''
         costmap = f'/{ns0}/global_costmap/costmap' if ns0 else '/global_costmap/costmap'
+        # rrt_explore's C++ node parses a robot ID out of its own ROS
+        # namespace assuming a "robotN" prefix (get_ros_parameters(),
+        # rrt.cpp:517) — with no namespace at all (single-robot mode) that
+        # parse throws, get_ros_parameters() returns false, and the
+        # constructor bails before setting up any subscriptions/timers
+        # (rrt.cpp:45): the node stays alive but never explores. Every param
+        # below is already absolute-pathed (map_topic/costmap_topic start
+        # with '/', robot_base_frame is a TF frame name, not a topic), so
+        # giving it a synthetic "robot1" namespace just satisfies that parse
+        # without remapping anything else.
+        rrt_namespace = ns0 or 'robot1'
         return [Node(
             package='rrt_explore',
             executable='rrt',
             name='rrt',
-            namespace=ns0,
+            namespace=rrt_namespace,
             output='screen',
             parameters=[os.path.join(pkg_share, 'config', 'rrt_explore.yaml'), {
                 'use_sim_time': True,

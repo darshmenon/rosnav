@@ -1,0 +1,41 @@
+/**:
+  ros__parameters:
+    frequency: 30.0
+    two_d_mode: true
+    publish_tf: true
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom
+
+    # Same fusion inputs/config as ekf.yaml (see that file for the per-signal
+    # rationale) — the point of this file is an apples-to-apples UKF-vs-EKF
+    # comparison via benchmark.py mode:=accuracy, not a different sensor setup.
+    odom0: odom
+    odom0_config: [true,  true,  false,
+                   false, false, true,
+                   true,  false, false,
+                   false, false, true,
+                   false, false, false]
+    odom0_differential: false
+    odom0_relative: false
+    odom0_queue_size: 10
+
+    imu0: imu
+    imu0_config: [false, false, false,
+                  false, false, true,
+                  false, false, false,
+                  false, false, true,
+                  false, false, false]
+    imu0_differential: false
+    imu0_relative: false
+    imu0_queue_size: 10
+    imu0_remove_gravitational_acceleration: true
+
+    # UKF-only sigma-point tuning — robot_localization's documented defaults.
+    # alpha: spread of sigma points around the mean (small = tight cluster).
+    # kappa: secondary scaling, 0 is the standard choice for state-estimation UKFs.
+    # beta: prior-distribution shape; 2.0 is optimal for Gaussian state.
+    alpha: 0.001
+    kappa: 0.0
+    beta: 2.0

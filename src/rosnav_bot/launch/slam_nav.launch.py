@@ -96,6 +96,18 @@ _WORLD_SPAWN_DEFAULTS = {
     'tugbot_warehouse': {'x': '0.0', 'y': '12.0', 'z': '0.3', 'yaw': '3.14'},
     # Cafe interior, looking down the seating aisle
     'cafe': {'x': '0.0', 'y': '-2.0', 'z': '0.3', 'yaw': '-1.57'},
+    # Living room floor, clear of sofa/coffee-table/TV-stand and both hallway
+    # walls (house.world's generic-default spawn wedged the robot against
+    # the 1.2m-wide hallway wall near the bathroom doorway).
+    'house': {'x': '-2.5', 'y': '3.0', 'z': '0.3', 'yaw': '0.0'},
+    # Corridor west end — matches office.world's documented spawn zone
+    # (x=-9..-3, y=-0.5..+0.5); generic default landed the robot ~0.2m from
+    # the north corridor wall (ncw_3).
+    'office': {'x': '-6.0', 'y': '0.0', 'z': '0.3', 'yaw': '0.0'},
+    # Staging zone — matches warehouse.world's documented spawn area
+    # (x=-9..-5, y=-6..6); generic default landed the robot inside shelf
+    # sh_3f_1's collision box (x=-1.4..1.4, y=0.75..1.25).
+    'warehouse': {'x': '-7.0', 'y': '0.0', 'z': '0.3', 'yaw': '0.0'},
 }
 _GENERIC_SPAWN_DEFAULT = {'x': '1.5', 'y': '1.0', 'z': '0.3', 'yaw': '0.0'}
 
@@ -132,6 +144,9 @@ def _build_runtime_actions(context, pkg_share: str):
     octomap = _common.truthy(LaunchConfiguration('octomap').perform(context))
 
     slam_algo = LaunchConfiguration('slam_algo').perform(context).strip().lower()
+    # Defined early (not just inside the use_slam branch below) so the summary
+    # LogInfo at the bottom of this function can always reference it.
+    slam_toolbox_mode = LaunchConfiguration('slam_toolbox_mode').perform(context).strip().lower() if slam_algo == '2d' else 'n/a'
     rtabmap_db = os.path.expanduser(
         LaunchConfiguration('rtabmap_db').perform(context).strip())
     run_cslam = False
@@ -258,9 +273,10 @@ def _build_runtime_actions(context, pkg_share: str):
     scan_quality_gate = (
         _common.scan_quality_gate_node() if scan_gate else None)
     # Always on, not a toggle: the gz drive plugin's own TF is routed off
-    # /tf (see gazebo_control*.xacro), so ekf_filter_node is the only thing
-    # that can publish odom->base_link — without it nothing does.
-    ekf_filter = _common.ekf_node(pkg_share)
+    # /tf (see gazebo_control*.xacro), so the localization filter node is the
+    # only thing that can publish odom->base_link — without it nothing does.
+    localization_filter = LaunchConfiguration('localization_filter').perform(context).strip().lower()
+    ekf_filter = _common.localization_filter_node(pkg_share, filter_type=localization_filter)
     points_to_scan = (
         _common.pointcloud_to_scan_node() if lidar_type == '3d' else None)
 
@@ -270,6 +286,20 @@ def _build_runtime_actions(context, pkg_share: str):
     _params_file = _common.patch_pkg_share_placeholder(_raw_params, pkg_share)
 
     use_vslam_localize = (not use_slam) and slam_algo == 'vslam'
+
+    # Loop-closure corrections (slam_toolbox/cartographer/RTAB-Map all jump
+    # map->odom on a match) leave stale obstacle_layer marks at the
+    # pre-correction cell address until re-observed — only relevant with a
+    # live map->odom source, not nav-on-map (AMCL) mode.
+    ghost_clear = (
+        Node(
+            package='rosnav_bot',
+            executable='costmap_ghost_clear.py',
+            name='costmap_ghost_clear',
+            output='screen',
+            parameters=[{'use_sim_time': True}],
+        ) if (use_slam or use_vslam_localize) else None
+    )
 
     if use_slam and slam_algo == 'vslam':
         slam_or_localization = TimerAction(
@@ -366,24 +396,56 @@ def _build_runtime_actions(context, pkg_share: str):
             ],
         )
     elif use_slam:
-        slam_or_localization = TimerAction(
-            period=5.0,
-            actions=[
-                IncludeLaunchDescription(
-                    PythonLaunchDescriptionSource(
-                        os.path.join(
-                            get_package_share_directory('slam_toolbox'),
-                            'launch',
-                            'online_async_launch.py',
-                        )
-                    ),
-                    launch_arguments={
-                        'slam_params_file': os.path.join(pkg_share, 'config', 'mapper_params_online_async.yaml'),
-                        'use_sim_time': 'true',
-                    }.items(),
-                )
-            ],
-        )
+        _lifelong_exe = os.path.join(
+            get_package_share_directory('slam_toolbox').replace('/share/', '/lib/'),
+            'lifelong_slam_toolbox_node')
+        if slam_toolbox_mode == 'lifelong' and not os.path.isfile(_lifelong_exe):
+            print('[slam_nav] slam_toolbox_mode=lifelong requested but lifelong_slam_toolbox_node is '
+                  'not installed with this slam_toolbox build — falling back to online_async')
+            slam_toolbox_mode = 'online_async'
+        if slam_toolbox_mode not in ('online_async', 'online_sync', 'lifelong'):
+            print(f'[slam_nav] unknown slam_toolbox_mode={slam_toolbox_mode!r} — using online_async')
+            slam_toolbox_mode = 'online_async'
+
+        if slam_toolbox_mode == 'lifelong':
+            # No launch file ships lifelong_slam_toolbox_node (only async/sync do) —
+            # run the node directly, same pattern as _common.cartographer_slam_nodes.
+            slam_or_localization = TimerAction(
+                period=5.0,
+                actions=[Node(
+                    package='slam_toolbox',
+                    executable='lifelong_slam_toolbox_node',
+                    name='slam_toolbox',
+                    output='screen',
+                    parameters=[
+                        os.path.join(pkg_share, 'config', 'mapper_params_lifelong.yaml'),
+                        {'use_sim_time': True},
+                    ],
+                )],
+            )
+        else:
+            _mode_launch_file = 'online_sync_launch.py' if slam_toolbox_mode == 'online_sync' else 'online_async_launch.py'
+            _mode_params_file = (
+                'mapper_params_online_sync.yaml' if slam_toolbox_mode == 'online_sync'
+                else 'mapper_params_online_async.yaml')
+            slam_or_localization = TimerAction(
+                period=5.0,
+                actions=[
+                    IncludeLaunchDescription(
+                        PythonLaunchDescriptionSource(
+                            os.path.join(
+                                get_package_share_directory('slam_toolbox'),
+                                'launch',
+                                _mode_launch_file,
+                            )
+                        ),
+                        launch_arguments={
+                            'slam_params_file': os.path.join(pkg_share, 'config', _mode_params_file),
+                            'use_sim_time': 'true',
+                        }.items(),
+                    )
+                ],
+            )
     elif use_vslam_localize:
         slam_or_localization = TimerAction(
             period=5.0,
@@ -714,13 +776,14 @@ def _build_runtime_actions(context, pkg_share: str):
         mode += '+cslam'
     return [
         LogInfo(msg=f'[slam_nav.launch] mode={mode}, ROS_DISTRO={ROS_DISTRO}, controller={controller}, drive_type={drive_type}'),
+        LogInfo(msg=f'[slam_nav.launch] slam_algo={slam_algo}, slam_toolbox_mode={slam_toolbox_mode}, localization_filter={localization_filter}'),
         LogInfo(msg=f'[slam_nav.launch] world={world_path}'),
         LogInfo(msg=f'[slam_nav.launch] robot_name={robot_name.perform(context)}'),
         LogInfo(msg=f'[slam_nav.launch] urdf={urdf_filename}, nav2_params={nav2_params_name}'),
         LogInfo(msg=f'[slam_nav.launch] octomap={octomap} (slam_algo=3d only; Grid/3D={"true" if octomap else "false"})'),
         LogInfo(msg=f'[slam_nav.launch] bridge={bridge_yaml}, lidar_type={lidar_type}, '
                     f'enable_rgbd={enable_rgbd}'),
-        LogInfo(msg='[slam_nav.launch] odom->base_link TF: ekf_filter_node (wheel odom + IMU fused)'),
+        LogInfo(msg=f'[slam_nav.launch] odom->base_link TF: {localization_filter}_filter_node (wheel odom + IMU fused)'),
         rsp,
         gazebo_server,
         gazebo_client,
@@ -729,6 +792,7 @@ def _build_runtime_actions(context, pkg_share: str):
         laser_filter,
         *([scan_quality_gate] if scan_quality_gate is not None else []),
         ekf_filter,
+        *([ghost_clear] if ghost_clear is not None else []),
         spawn_robot,
         slam_or_localization,
         cslam_group,
@@ -812,10 +876,15 @@ def generate_launch_description():
             name='explore', default_value='false',
             description='Auto-start frontier explorer (only valid when slam:=true)'),
         DeclareLaunchArgument(
-            name='explorer', default_value='builtin',
-            description='Exploration backend when explore:=true: builtin (rosnav WFD/utility), '
-                        'explore_lite (m-explore-ros2), frontier (frontier_exploration_ros2 MRTSP), '
-                        'or rrt (rrt_explore). Falls back to builtin if the package is not built.'),
+            name='explorer', default_value='explore_lite',
+            description='Exploration backend when explore:=true: explore_lite (m-explore-ros2, '
+                        'default — the only backend that reliably finishes unattended in headless '
+                        'testing; builtin/frontier got the robot wedged on recovery-behavior '
+                        'collisions and rrt_explore does not work in single-robot/no-namespace mode '
+                        'at all, see rrt.cpp get_ros_parameters()), builtin (rosnav WFD/utility, '
+                        'covers more area per run but needs a human to catch it if it wedges), '
+                        'frontier (frontier_exploration_ros2 MRTSP), or rrt (rrt_explore, '
+                        'multi-robot only). Falls back to builtin if the package is not built.'),
         DeclareLaunchArgument(
             name='frontier_detector', default_value='wfd',
             description='Frontier detector: wfd (reachable wavefront), classic, or rrt (sampling-based)'),
@@ -870,7 +939,10 @@ def generate_launch_description():
             description='Skip Gazebo GUI and RViz (server + nav only)'),
         DeclareLaunchArgument(
             name='controller', default_value='dwb',
-            description='Local controller: "dwb" (default) or "mppi" (nav2_mppi_controller). Humble only — ignored on Jazzy, which defaults to MPPI.'),
+            description='Local controller: "dwb" (default, trajectory rollout), "mppi" '
+                        '(nav2_mppi_controller, sampling-based optimization/MPC), or "rpp" '
+                        '(nav2_regulated_pure_pursuit_controller, carrot-chasing pursuit). '
+                        'Humble only — ignored on Jazzy, which defaults to MPPI.'),
         DeclareLaunchArgument(
             name='drive_type',
             default_value='diff',
@@ -914,7 +986,21 @@ def generate_launch_description():
                         '"3d" (RTAB-Map lidar), "vslam" (RTAB-Map RGB-D), '
                         '"multisensor" (RTAB-Map RGB-D+lidar), or "cslam" (Swarm-SLAM). '
                         'cslam/3d need lidar_type:=3d; cartographer needs '
-                        'ros-humble-cartographer-ros; cslam needs link_third_party.sh --cslam.'),
+                        'ros-humble-cartographer-ros; cslam needs link_third_party.sh --cslam. '
+                        'For a same-algorithm mode comparison instead, see slam_toolbox_mode (slam_algo:=2d only).'),
+        DeclareLaunchArgument(
+            name='slam_toolbox_mode', default_value='online_async',
+            description='slam_toolbox run mode, slam_algo:=2d only: "online_async" (default, '
+                        'non-blocking, drops scans under load), "online_sync" (blocking, '
+                        'processes every scan — slower but no dropped scans), or "lifelong" '
+                        '(online_async + long-term memory/eviction for revisited areas). '
+                        'Ignored for other slam_algo values.'),
+        DeclareLaunchArgument(
+            name='localization_filter', default_value='ekf',
+            description='robot_localization filter fusing wheel odom + IMU for odom->base_link: '
+                        '"ekf" (default, EKF) or "ukf" (unscented, sigma-point) — same fusion '
+                        'config (config/ekf.yaml vs config/ukf.yaml), useful for a benchmark.py '
+                        'mode:=accuracy comparison.'),
         DeclareLaunchArgument(
             'dynamic_obstacles', default_value='0',
             description='Number of patrolling dynamic_obstacle models to spawn '

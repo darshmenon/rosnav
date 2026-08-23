@@ -78,6 +78,14 @@ ros2 run rosnav_bot scan_quality_gate.py --ros-args -p use_sim_time:=true
 
 Or let the robot explore alone: add `explore:=true` to the launch above.
 
+Exploration backend defaults to `explore_lite` (most reliable unattended — see
+`concepts.md` §9 for a full comparison). Switch it with `explorer:=`:
+
+```bash
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true explorer:=builtin
+# explorer:=builtin | explore_lite (default) | frontier | rrt
+```
+
 ### B — Save the map
 
 ```bash
@@ -248,7 +256,7 @@ Two independent launch args:
 
 | Platform | Launch knobs | Motion | Notes |
 |---|---|---|---|
-| Diff box (default) | `drive_type:=diff` | Forward + turn in place | DWB (Humble) or MPPI (`controller:=mppi`) |
+| Diff box (default) | `drive_type:=diff` | Forward + turn in place | DWB (Humble, default) · MPPI (`controller:=mppi`) · RPP (`controller:=rpp`) |
 | Mecanum | `drive_type:=mecanum` | Holonomic — can strafe (`vy`) | Nav2 unlocks `max_vel_y`; no pre-rotate |
 | Ackermann (car-like) | `drive_type:=ackermann` | Front steer, min turning radius ~0.66 m | Always MPPI; keep `safety:=true` |
 | MiR100 look | `robot_model:=mir100` (+ diff) | Same as diff | Mesh skin only |
@@ -287,8 +295,15 @@ ros2 launch rosnav_bot multi_robot.launch.py robot_model:=husky
 ### Controllers & sensors (orthogonal)
 
 ```bash
-# MPPI instead of DWB (Humble; Jazzy already defaults to MPPI). Ackermann always MPPI.
+# MPPI or RPP instead of DWB (Humble; Jazzy already defaults to MPPI). Ackermann always MPPI.
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital controller:=mppi explore:=true
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital controller:=rpp explore:=true
+
+# UKF instead of EKF for the wheel-odom+IMU fusion filter (odom->base_link TF)
+ros2 launch rosnav_bot slam_nav.launch.py localization_filter:=ukf explore:=true
+
+# slam_toolbox run mode (slam_algo:=2d only): online_async (default) | online_sync | lifelong
+ros2 launch rosnav_bot slam_nav.launch.py slam_toolbox_mode:=online_sync explore:=true
 
 # 3D lidar / RTAB-Map (diff only)
 ros2 launch rosnav_bot slam_nav.launch.py lidar_type:=3d
@@ -300,6 +315,21 @@ ros2 launch rosnav_bot slam_nav.launch.py slam_algo:=vslam world_name:=cafe expl
 ros2 launch rosnav_bot slam_nav.launch.py slam_algo:=multisensor explore:=true    # RGB-D + lidar
 ros2 launch rosnav_bot slam_nav.launch.py lidar_type:=3d slam_algo:=multisensor explore:=true
 ```
+
+In RViz (`slam_explore.rviz`): "Local Plan" shows whichever controller's selected
+path; enable "MPPI Candidate Trajectories" (off by default) when `controller:=mppi`
+to see the sampled velocity rollouts it's scoring; "SLAM Pose Graph" shows
+slam_toolbox's nodes + loop-closure constraints live; "Fused Odom (EKF/UKF)" vs
+"Wheel Odom (raw)" (off by default) lets you watch the localization filter correct
+drift, with its position-covariance ellipse on.
+
+### Controller / localization-filter / SLAM-mode benchmark
+
+`benchmark.py mode:=nav|accuracy|slam` + `mode:=report` compares any of the
+above numerically and writes PNG charts + a self-contained HTML dashboard
+(needs matplotlib; table-only otherwise) — see concepts.md §3/§6b/§7 for the
+full run/compare walkthrough (controller: dwb/mppi/rpp via `mode:=nav`;
+EKF/UKF via `mode:=accuracy`; slam_toolbox_mode via `mode:=slam`).
 
 ![3D lidar point cloud, SLAM map, and costmap in RViz](images/gs_3d_slam_view.png)
 

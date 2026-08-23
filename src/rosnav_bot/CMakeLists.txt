@@ -85,6 +85,7 @@ install(
     scripts/pointcloud_to_scan.py
     scripts/scan_quality_gate.py
     scripts/slam_accuracy_monitor.py
+    scripts/costmap_ghost_clear.py
     scripts/benchmark.py
   DESTINATION lib/${PROJECT_NAME}
 )

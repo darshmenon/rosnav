@@ -149,8 +149,15 @@ local_costmap:
       global_frame: odom
       robot_base_frame: base_link
       rolling_window: true
-      width: 3
-      height: 3
+      # Was 3x3m: with robot_radius 0.34 + inflation_radius 0.35 (~0.7m combined
+      # reach) and simulate_ahead_time 2.0s, a 1.5m half-width left little margin
+      # for the rolling window's 5Hz recenter to lag the robot's actual TF pose
+      # during a spin/backup recovery — a projected collision-check pose could
+      # land just outside the window and get rejected as "Pose Goes Off Grid"
+      # with no real obstacle there, aborting the recovery and leaving the
+      # frontier explorer stuck retrying. Widened for more margin.
+      width: 5
+      height: 5
       resolution: 0.05
       robot_radius: 0.34
       # keepout_filter is inert until a costmap_filter_info_server publishes

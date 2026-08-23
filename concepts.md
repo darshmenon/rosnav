@@ -175,7 +175,13 @@ ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi lidar_type:=3d sla
 
 `scripts/benchmark_slam.sh` runs each algo headless with the same world +
 `explore:=true` budget, then `benchmark.py` (`mode:=slam`) logs coverage % and
-time-to-converge → `/tmp/rosnav_slam_bench/<stamp>/comparison.md`.
+time-to-converge → `/tmp/rosnav_slam_bench/<stamp>/comparison.md`. This compares
+*algorithms* (`slam_algo:=2d|cartographer|...`, §3 above); to compare
+slam_toolbox's own run modes instead, use `slam_toolbox_mode:=online_async|
+online_sync|lifelong` on `slam_nav.launch.py` (`online_async`, the default, drops
+scans under load; `online_sync` blocks and processes every scan; `lifelong` adds
+long-term memory/eviction for revisited areas — falls back to `online_async` with
+a log line if `lifelong_slam_toolbox_node` isn't installed).
 
 ```bash
 ./src/rosnav_bot/scripts/benchmark_slam.sh
@@ -185,13 +191,63 @@ WORLD=maze DURATION_S=90 ALGOS="2d cartographer multisensor" ./src/rosnav_bot/sc
 ros2 run rosnav_bot benchmark.py --ros-args \
   -p mode:=slam -p label:=carto -p duration_sec:=120 -p out_dir:=~/rosnav_benchmarks
 
-# Diff two JSON reports offline
+# Diff N JSON reports offline — also writes comparison PNG charts + a single
+# self-contained HTML dashboard (comparison.html) next to the first input,
+# unless matplotlib isn't installed (table-only fallback) or -p charts:=false.
 ros2 run rosnav_bot benchmark.py --ros-args -p mode:=report \
   -p inputs:="['~/rosnav_benchmarks/2d_slam.json','~/rosnav_benchmarks/carto_slam.json']"
 ```
 
-`benchmark.py` also has `mode:=nav` (goal timing) and `mode:=localization` (AMCL
-covariance) for controllers / localizers, not only mappers.
+`benchmark.py` also has `mode:=nav` (goal timing/speed/efficiency/recoveries —
+compare `controller:=dwb|mppi|rpp`, §7 below), `mode:=localization` (AMCL
+covariance trace), and `mode:=accuracy` (drift, + RMSE/max error if a
+ground-truth topic is bridged — compare `localization_filter:=ekf|ukf`, §6),
+not only mappers (see §6b for EKF vs UKF). Typical controller comparison:
+
+```bash
+# Run once per controller (each launched separately, same world/goals)
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=maze slam:=false controller:=dwb &
+ros2 run rosnav_bot benchmark.py --ros-args -p mode:=nav -p label:=maze_dwb \
+  -p goals_file:=src/rosnav_bot/config/waypoints.yaml
+# ...repeat with controller:=mppi -> label:=maze_mppi, controller:=rpp -> label:=maze_rpp
+
+# Then compare all three
+ros2 run rosnav_bot benchmark.py --ros-args -p mode:=report \
+  -p inputs:="['~/rosnav_benchmarks/maze_dwb_nav.json','~/rosnav_benchmarks/maze_mppi_nav.json','~/rosnav_benchmarks/maze_rpp_nav.json']"
+```
+
+EKF vs UKF is the same pattern with `mode:=accuracy` and
+`localization_filter:=ekf|ukf` instead of `controller:=...`.
+
+---
+
+## 6b. Localization Filter — EKF vs UKF
+
+`slam_nav.launch.py localization_filter:=<ekf|ukf>` (default `ekf`). This is the
+`robot_localization` filter that fuses wheel odom (`/odom`) + IMU gyro (`/imu`)
+into the `odom -> base_link` TF — it's the *only* thing publishing that TF (the
+Gazebo drive plugin's own TF is routed off `/tf`, see `_common.localization_filter_node`),
+so it's always on, not a toggle. Both filters share the exact same fusion config
+(`config/ekf.yaml` / `config/ukf.yaml` — same `odom0_config`/`imu0_config`),
+so `ukf.yaml` only adds the UKF-specific sigma-point tuning (`alpha`/`kappa`/`beta`).
+
+- **EKF** — linearizes the motion/measurement model around the current estimate
+  (first-order Taylor expansion) each step. Cheaper; the standard choice, and
+  usually fine for this robot's near-linear diff-drive dynamics at low speed.
+- **UKF** — propagates a small set of deterministically-chosen "sigma points"
+  through the *actual* nonlinear model instead of linearizing it, then
+  reconstructs the mean/covariance from the transformed points. More accurate
+  through sharp turns (where the linearization error EKF accepts is largest), at
+  a small extra CPU cost from the sigma-point sampling.
+
+RViz: `slam_explore.rviz` has "Wheel Odom (raw)" (`/odom`, disabled by default)
+and "Fused Odom (EKF/UKF)" (`/odometry/filtered`, enabled, with its position
+covariance ellipse on) — toggle the raw one on to see the filter's correction
+visually, or watch the fused ellipse alone to see EKF/UKF confidence over time.
+
+Compare numerically with `benchmark.py mode:=accuracy` (drift-only, no setup
+needed; add `ground_truth_topic:=...` for absolute RMSE if a ground-truth pose
+is bridged) — see §3's Benchmarking algorithms section for the report/chart flow.
 
 ---
 
@@ -206,7 +262,7 @@ Nav2 is the ROS 2 navigation framework. It is a collection of nodes managed by *
 | **map_server** | Loads a saved map yaml and publishes it on `/map` |
 | **AMCL** | Particle-filter localisation — figures out where the robot is on the loaded map using LiDAR |
 | **planner_server** | Global path planner (NavFn/A*) — finds a route from start to goal |
-| **controller_server** | Local controller (MPPI) — follows the global path while avoiding nearby obstacles |
+| **controller_server** | Local controller (DWB/MPPI/RPP, see §7) — follows the global path while avoiding nearby obstacles |
 | **behavior_server** | Recovery behaviours — spin, backup, wait when the robot gets stuck |
 | **bt_navigator** | Behaviour Tree — orchestrates all the above components for a navigation goal |
 | **velocity_smoother** | Smooths velocity commands to prevent jerky motion |
@@ -268,12 +324,34 @@ With the default 2D lidar, VoxelLayer behaves like ObstacleLayer (single-slice m
 
 ---
 
-## 7. MPPI Controller
+## 7. Local Controllers — DWB vs MPPI vs RPP
 
-**Model Predictive Path Integral** — the local controller used in this project.
-It samples thousands of random velocity trajectories in parallel, scores them against a cost function (stay on path, avoid obstacles, prefer forward motion), and executes the lowest-cost one.
+`slam_nav.launch.py controller:=<dwb|mppi|rpp>` (Humble, diff-drive; ignored on
+Jazzy which defaults to MPPI). All three are configured under
+`controller_server → FollowPath`, in `nav2_params.yaml` / `nav2_params_mppi.yaml` /
+`nav2_params_rpp.yaml` respectively — same costmaps, same max speed (0.15 m/s),
+so a `benchmark.py mode:=nav` run across all three is apples-to-apples.
 
-Configured under `controller_server → FollowPath` in `nav2_params.yaml`.
+- **DWB** (`dwb_core::DWBLocalPlanner`, default) — trajectory rollout: samples a
+  grid of (vx, vtheta) velocity pairs, forward-simulates each for `sim_time`, and
+  scores them with a set of critics (`PathAlign`, `GoalDist`, `Oscillation`, ...).
+- **MPPI** (`nav2_mppi_controller::MPPIController`, `controller:=mppi`) — **Model
+  Predictive Path Integral**: samples thousands of random velocity trajectories in
+  parallel each control cycle, scores them against the same kind of critics, and
+  executes a cost-weighted average of the low-cost ones (not just the single best,
+  unlike DWB). `visualize: true` in `nav2_params_mppi.yaml` publishes every sampled
+  candidate rollout on `/trajectories` (MarkerArray, colored by cost) — add it as
+  a MarkerArray display in RViz to actually watch the velocity-sample generation;
+  it's wired into `slam_explore.rviz` already (disabled by default, enable when
+  `controller:=mppi`).
+- **RPP** (`nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController`,
+  `controller:=rpp`) — carrot-chasing pursuit controller: picks a lookahead point
+  on the path and steers a circular arc toward it, regulating speed down on tight
+  curvature/near obstacles. No sampling — cheapest of the three, but no explicit
+  obstacle cost in the arc choice (relies on `use_collision_detection` instead).
+
+All three publish their selected path on `/local_plan` (Path display in
+`slam_explore.rviz`, "Local Plan").
 
 ---
 
@@ -320,6 +398,36 @@ Recent reliability fixes in `frontier_explorer.py`:
 - If TF is not ready yet, the node waits instead of using a fake `(0, 0)` position.
 - Added `map_save_path` parameter so completed exploration auto-saves map via `map_saver_cli`.
 - Auto-save passes `map_saver_cli -t <map_topic>` so multi-SLAM (`/map_merged`) and scan-fusion (`/map_fused`) maps save correctly — not only `/map`.
+
+### Exploration backend choice (`explorer:=`)
+
+`slam_nav.launch.py` can run one of 4 exploration backends via `explorer:=` (`_common.py`
+`resolve_explorer`/`explorer_nodes`): `builtin` (rosnav's own `frontier_explorer.py`
+above), `explore_lite` (m-explore-ros2), `frontier` (frontier_exploration_ros2, MRTSP),
+`rrt` (rrt_explore). **Default is `explore_lite`** (changed 2026-08-23 from `builtin`).
+
+Headless single-robot comparison on `house.world` (2026-08-23, `explorer:=<backend>`,
+identical spawn point):
+
+| backend | coverage | outcome |
+|---|---|---|
+| `builtin` | 58% | robot got wedged on a recovery-behavior collision loop (`Pose Goes Off Grid` on both `backup` and `spin`); needed a manual map save + kill |
+| **`explore_lite`** | 22% (house), 36.5% (office) | **finished cleanly on its own both times, no intervention** |
+| `frontier` (MRTSP) | 29% | got stuck retrying an unreachable frontier cluster indefinitely — no blacklist/give-up logic like `builtin`'s |
+| `rrt` (rrt_explore) | 0% | **does not run at all in single-robot mode** — `rrt.cpp`'s `get_ros_parameters()` tries to parse a robot ID out of the node namespace assuming a `robotN/` prefix; with no namespace (single robot) this throws, the function returns `false`, and the constructor bails before setting up any timers/subscriptions (`rrt.cpp:45`). The node stays alive but never explores. Only usable multi-robot, namespaced. |
+
+`explore_lite` was picked as the default because it's the only backend that reliably
+finishes an unattended/headless run — it explores less per run than `builtin`, but doesn't
+require a human to notice and rescue a wedged robot. `multi_robot.launch.py`'s `explorer:=`
+default is unchanged (`builtin`) since this comparison only covered single-robot mode.
+
+**No backend wins on every world.** On `warehouse.world`, `explore_lite` hit a different
+failure mode than on house/office: it picked a frontier within `nav2_params.yaml`'s
+`xy_goal_tolerance` (0.25m) of the robot, `controller_server` declared the goal reached
+instantly with zero actual movement, and it looped on an equally-close next goal forever
+(1480+ iterations, 0% progress). `builtin` on the same world got to 46.3% before wedging near
+a shelf — clearly better there. If a new world stalls immediately under the default
+`explore_lite`, try `explorer:=builtin` before assuming the world itself is broken.
 
 ---
 
