@@ -28,6 +28,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    ExecuteProcess,
     GroupAction,
     IncludeLaunchDescription,
     LogInfo,
@@ -690,6 +691,41 @@ def _build_runtime_actions(context, pkg_share: str):
             LogInfo(msg=f'[slam_nav] Auto-exploration ENABLED ({explorer_backend}). Starting in 20s...'),
             TimerAction(period=20.0, actions=explore_nodes),
         ]
+        if explorer_backend == 'rrt_explore':
+            # rrt_explore reads map_frame_ from the first /map message
+            # (rrt.cpp:631) before it will compute any goal, and with zero
+            # initial motion /map never appeared in testing (2026-08-23:
+            # 0 publishes over 40+s, node alive but idle). Husarion's
+            # explore_lite tutorial documents the same class of bug
+            # ("All frontiers traversed" / robot never starts) with the
+            # same standard fix — spin briefly in place first — so this
+            # bootstrap spin is applied here too. CONFIRMED IT DOES NOT
+            # FULLY RESOLVE rrt_explore: even after real, verified motion
+            # (TF rotates, slam_toolbox's own GetMap service returns real
+            # internal map data), /map still never publishes on the topic
+            # for this backend specifically — a real, currently open bug
+            # not further diagnosed. Kept anyway because it fixes a
+            # separate real bug on its own merits (see the ExecuteProcess
+            # comment below) and may still help if the /map-publish issue
+            # turns out to be sim/timing-dependent in some environments.
+            actions.append(TimerAction(period=8.0, actions=[
+                LogInfo(msg='[slam_nav] rrt_explore bootstrap: spinning in place '
+                             '~4s to try to seed the first /map (see comment '
+                             'above — known not to fully fix rrt_explore yet).'),
+                # Gazebo's drive plugin holds the *last* commanded velocity
+                # indefinitely (no deadman timeout) — `--times 40` alone
+                # would leave the robot spinning forever once `ros2 topic
+                # pub` exits. Chained in one shell so the explicit zero
+                # command always follows the burst, regardless of timing.
+                ExecuteProcess(
+                    cmd=['bash', '-c',
+                         "ros2 topic pub /cmd_vel geometry_msgs/msg/Twist "
+                         "'{angular: {z: 0.6}}' --rate 10 --times 40 && "
+                         "ros2 topic pub /cmd_vel geometry_msgs/msg/Twist "
+                         "'{}' --once"],
+                    output='screen',
+                ),
+            ]))
     frontier_node = GroupAction(actions=actions) if actions else LogInfo(msg='[slam_nav] Frontier explorer disabled.')
     cslam_group = (
         GroupAction(actions=_common.cslam_lidar_nodes(pkg_share))
