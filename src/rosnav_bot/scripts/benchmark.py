@@ -16,6 +16,14 @@ report you can later diff with `mode:=report`:
   localization  AMCL pose-covariance trace over time, as an accuracy/
                 confidence proxy (no ground truth available in sim without
                 extra plumbing, so this is relative, not absolute error).
+  accuracy      SLAM drift-correction stats over time (map->odom magnitude —
+                works with zero setup). If a ground-truth pose topic is
+                bridged (e.g. Gazebo's own pose for the robot model), also
+                computes absolute position/yaw error, RMSE, and max error
+                against the SLAM estimate (map->base_link), self-aligning on
+                the first sample since ground truth and the map frame don't
+                share an origin/heading in general. Same math as
+                slam_accuracy_monitor.py, wrapped as a timed benchmark run.
   report        Offline: load 2+ JSON reports and print a comparison table
                 (e.g. dwb.json vs mppi.json, or slam2d.json vs slam3d.json).
                 Doesn't touch ROS.
@@ -31,6 +39,15 @@ Examples
 
   ros2 run rosnav_bot benchmark.py --ros-args -p mode:=localization \\
       -p label:=cafe_amcl -p duration_sec:=60
+
+  # Drift-only, no ground truth needed:
+  ros2 run rosnav_bot benchmark.py --ros-args -p mode:=accuracy \\
+      -p label:=cafe_headless -p duration_sec:=120
+
+  # With ground truth bridged as nav_msgs/Odometry or geometry_msgs/PoseStamped:
+  ros2 run rosnav_bot benchmark.py --ros-args -p mode:=accuracy \\
+      -p label:=cafe_headless -p duration_sec:=120 \\
+      -p ground_truth_topic:=/test/ground_truth_pose -p ground_truth_type:=pose_stamped
 
   ros2 run rosnav_bot benchmark.py --ros-args -p mode:=report \\
       -p inputs:="['~/rosnav_benchmarks/cafe_dwb.json','~/rosnav_benchmarks/cafe_mppi.json']"
@@ -51,6 +68,9 @@ from rcl_interfaces.msg import ParameterDescriptor
 
 from nav_msgs.msg import OccupancyGrid, Odometry
 from geometry_msgs.msg import PoseWithCovarianceStamped, PoseStamped
+import tf2_ros
+from rclpy.duration import Duration
+from rclpy.time import Time
 
 try:
     import yaml
@@ -389,6 +409,158 @@ class LocalizationBenchmark(Node):
         self.done = True
 
 
+# ─────────────────────── accuracy mode ───────────────────────────────────
+def _yaw_deg(q) -> float:
+    siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+    cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+    return math.degrees(math.atan2(siny_cosp, cosy_cosp))
+
+
+def _wrap_deg(deg: float) -> float:
+    return (deg + 180.0) % 360.0 - 180.0
+
+
+class AccuracyBenchmark(Node):
+    """SLAM drift-correction stats over time; absolute error/RMSE too if a
+    ground-truth pose topic is bridged. Same math as
+    slam_accuracy_monitor.py, wrapped as a timed benchmark run."""
+
+    def __init__(self):
+        super().__init__('accuracy_benchmark')
+        self.declare_parameter('label', 'run')
+        _declare_numeric(self, 'duration_sec', 120.0)
+        self.declare_parameter('out_dir', '~/rosnav_benchmarks')
+        self.declare_parameter('fixed_frame', 'map')
+        self.declare_parameter('odom_frame', 'odom')
+        self.declare_parameter('base_frame', 'base_link')
+        self.declare_parameter('ground_truth_topic', '')
+        self.declare_parameter('ground_truth_type', 'odometry')
+
+        self._label = self.get_parameter('label').value
+        self._duration = float(self.get_parameter('duration_sec').value)
+        self._out_dir = _out_dir(self.get_parameter('out_dir').value)
+        self._fixed_frame = self.get_parameter('fixed_frame').value
+        self._odom_frame = self.get_parameter('odom_frame').value
+        self._base_frame = self.get_parameter('base_frame').value
+
+        self._tf_buffer = tf2_ros.Buffer(node=self)
+        self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, self)
+
+        gt_topic = str(self.get_parameter('ground_truth_topic').value).strip()
+        gt_type = str(self.get_parameter('ground_truth_type').value).strip().lower()
+        self._gt_enabled = bool(gt_topic)
+        self._gt_xyz_yaw = None
+        if self._gt_enabled:
+            if gt_type not in ('odometry', 'pose_stamped'):
+                raise SystemExit(
+                    f"ground_truth_type must be odometry|pose_stamped, got {gt_type!r}")
+            if gt_type == 'odometry':
+                self.create_subscription(Odometry, gt_topic, self._on_gt_odom, 10)
+            else:
+                self.create_subscription(PoseStamped, gt_topic, self._on_gt_pose, 10)
+
+        self._aligned = False
+        self._align_dx = self._align_dy = self._align_dyaw = 0.0
+        self._acc_samples = []  # (t, pos_err, yaw_err)
+
+        self._start = time.time()
+        self._drift_samples = []  # (t, dx, dy, dyaw)
+        self.done = False
+        self.create_timer(1.0, self._tick)
+
+        self.get_logger().info(
+            f'[accuracy] label={self._label} duration={self._duration}s '
+            + (f'ground_truth={gt_topic} ({gt_type})' if self._gt_enabled
+               else 'ground_truth=off (drift-only)'))
+
+    def _on_gt_odom(self, msg: Odometry) -> None:
+        p = msg.pose.pose.position
+        self._gt_xyz_yaw = (p.x, p.y, _yaw_deg(msg.pose.pose.orientation))
+
+    def _on_gt_pose(self, msg: PoseStamped) -> None:
+        p = msg.pose.position
+        self._gt_xyz_yaw = (p.x, p.y, _yaw_deg(msg.pose.orientation))
+
+    def _lookup(self, target, source):
+        try:
+            return self._tf_buffer.lookup_transform(
+                target, source, Time(), timeout=Duration(seconds=0.05))
+        except Exception:
+            return None
+
+    def _tick(self):
+        elapsed = time.time() - self._start
+        map_odom = self._lookup(self._fixed_frame, self._odom_frame)
+        map_base = self._lookup(self._fixed_frame, self._base_frame)
+
+        if map_odom is not None:
+            tr = map_odom.transform.translation
+            yaw = _yaw_deg(map_odom.transform.rotation)
+            self._drift_samples.append((elapsed, tr.x, tr.y, yaw))
+
+        if self._gt_enabled and self._gt_xyz_yaw is not None and map_base is not None:
+            gx, gy, gyaw = self._gt_xyz_yaw
+            mb = map_base.transform.translation
+            myaw = _yaw_deg(map_base.transform.rotation)
+            if not self._aligned:
+                self._align_dyaw = myaw - gyaw
+                rad = math.radians(self._align_dyaw)
+                cos_a, sin_a = math.cos(rad), math.sin(rad)
+                self._align_dx = mb.x - (gx * cos_a - gy * sin_a)
+                self._align_dy = mb.y - (gx * sin_a + gy * cos_a)
+                self._aligned = True
+            else:
+                rad = math.radians(self._align_dyaw)
+                cos_a, sin_a = math.cos(rad), math.sin(rad)
+                ax = gx * cos_a - gy * sin_a + self._align_dx
+                ay = gx * sin_a + gy * cos_a + self._align_dy
+                ayaw = _wrap_deg(gyaw + self._align_dyaw)
+                pos_err = math.hypot(mb.x - ax, mb.y - ay)
+                yaw_err = _wrap_deg(myaw - ayaw)
+                self._acc_samples.append((elapsed, pos_err, yaw_err))
+
+        if self._drift_samples:
+            t, dx, dy, dyaw = self._drift_samples[-1]
+            msg = f'[accuracy] t={elapsed:5.1f}s drift=({dx:.2f},{dy:.2f}) yaw={dyaw:.1f}deg'
+            if self._acc_samples:
+                pos_err, yaw_err = self._acc_samples[-1][1], self._acc_samples[-1][2]
+                msg += f' pos_err={pos_err:.3f}m yaw_err={yaw_err:.1f}deg'
+            self.get_logger().info(msg)
+
+        if elapsed >= self._duration:
+            self._finish()
+
+    def _finish(self):
+        if not self._drift_samples:
+            self.get_logger().error('[accuracy] No map->odom TF available — is SLAM running?')
+            self.done = True
+            return
+        drift_mags = [math.hypot(dx, dy) for _, dx, dy, _ in self._drift_samples]
+        report = {
+            'duration_sec': self._duration,
+            'samples': len(self._drift_samples),
+            'final_drift_m': round(drift_mags[-1], 4),
+            'max_drift_m': round(max(drift_mags), 4),
+            'final_drift_yaw_deg': round(self._drift_samples[-1][3], 2),
+            'ground_truth_enabled': self._gt_enabled,
+        }
+        if self._acc_samples:
+            pos_errs = [e[1] for e in self._acc_samples]
+            yaw_errs = [e[2] for e in self._acc_samples]
+            rmse = math.sqrt(sum(e * e for e in pos_errs) / len(pos_errs))
+            report.update({
+                'final_pos_err_m': round(pos_errs[-1], 4),
+                'final_yaw_err_deg': round(yaw_errs[-1], 2),
+                'rmse_pos_err_m': round(rmse, 4),
+                'max_pos_err_m': round(max(pos_errs), 4),
+                'accuracy_samples': len(self._acc_samples),
+            })
+        elif self._gt_enabled:
+            report['note'] = 'ground_truth_topic set but no matching messages received'
+        _write_report(self._out_dir, self._label, 'accuracy', report, self.get_logger())
+        self.done = True
+
+
 # ─────────────────────────── report mode ─────────────────────────────────
 def run_report(inputs):
     rows = []
@@ -436,8 +608,9 @@ def main(args=None):
         run_report([i for i in inputs if i])
         return
 
-    if mode in ('slam', 'localization'):
-        node = SlamBenchmark() if mode == 'slam' else LocalizationBenchmark()
+    if mode in ('slam', 'localization', 'accuracy'):
+        node = {'slam': SlamBenchmark, 'localization': LocalizationBenchmark,
+                'accuracy': AccuracyBenchmark}[mode]()
         # rclpy.spin() doesn't reliably return after rclpy.shutdown() is
         # called from inside a timer callback (observed hang past report
         # write) — drive it manually and stop as soon as node.done flips.
@@ -452,7 +625,7 @@ def main(args=None):
         node.destroy_node()
         rclpy.shutdown()
     else:
-        print(f"Unknown mode {mode!r}. Use slam | nav | localization | report.")
+        print(f"Unknown mode {mode!r}. Use slam | nav | localization | accuracy | report.")
         rclpy.shutdown()
 
 
