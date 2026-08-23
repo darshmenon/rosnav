@@ -206,10 +206,16 @@ def ekf_node(pkg_share: str, namespace: str = ''):
     """robot_localization EKF fusing wheel odom + IMU; sole odom->base_link
     TF broadcaster (the gz DiffDrive/Mecanum/Ackermann plugins are routed
     to an unbridged tf_wheel_raw topic instead — see gazebo_control*.xacro)."""
+    odom_frame = f'{namespace}/odom' if namespace else 'odom'
     params = {
         'use_sim_time': True,
-        'odom_frame': f'{namespace}/odom' if namespace else 'odom',
+        'odom_frame': odom_frame,
         'base_link_frame': f'{namespace}/base_link' if namespace else 'base_link',
+        # robot_localization publishes /tf and the output Odometry's header.frame_id
+        # using world_frame, not odom_frame — they must match here (no absolute/map
+        # source is fused) or the published edge becomes an unnamespaced "odom" node
+        # that collides across robots instead of "{ns}/odom".
+        'world_frame': odom_frame,
     }
     return Node(
         package='robot_localization',

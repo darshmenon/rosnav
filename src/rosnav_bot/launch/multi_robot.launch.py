@@ -923,6 +923,7 @@ def _build_all(context, pkg_share: str):
             f'/{ns}/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist',
             f'/{ns}/odom@nav_msgs/msg/Odometry[gz.msgs.Odometry',
             f'/{ns}/joint_states@sensor_msgs/msg/JointState[gz.msgs.Model',
+            f'/{ns}/imu@sensor_msgs/msg/Imu[gz.msgs.IMU',
         ]
         bridge_remaps = []
         if lidar_type == '3d':
@@ -1064,7 +1065,12 @@ def _build_all(context, pkg_share: str):
         static_initial_pose_delay = static_amcl_delay + 3.0
         static_nav2_delay = static_amcl_delay + 6.0
 
-        per_robot = [rsp, spawn, bridge]
+        # Sole {ns}/odom -> {ns}/base_link TF broadcaster (wheel odom + IMU
+        # fused): the drive plugin's own TF is routed off /tf (see
+        # gazebo_control*.xacro), same as single-robot slam_nav.launch.py.
+        ekf_filter = _common.ekf_node(pkg_share, namespace=ns)
+
+        per_robot = [rsp, spawn, bridge, ekf_filter]
         if points_to_scan is not None:
             per_robot.append(points_to_scan)
         per_robot.append(laser_filter)
