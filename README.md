@@ -338,7 +338,24 @@ ros2 launch rosnav_bot slam_nav.launch.py slam_algo:=cartographer explore:=true 
 ros2 launch rosnav_bot slam_nav.launch.py slam_algo:=vslam world_name:=cafe explore:=true
 ros2 launch rosnav_bot slam_nav.launch.py slam_algo:=multisensor explore:=true    # RGB-D + lidar
 ros2 launch rosnav_bot slam_nav.launch.py lidar_type:=3d slam_algo:=multisensor explore:=true
+
+# ORB-SLAM3 (feature-based VSLAM — tracker runs in a separate Docker/bare-metal
+# process, see docker/orb_slam3/README.md and concepts.md §3)
+ros2 launch rosnav_bot slam_nav.launch.py slam_algo:=orbslam3 world_name:=cafe explore:=true
+docker compose up orb_slam3    # separate terminal
 ```
+
+**All SLAM backends in this repo**, at a glance (full comparison → `concepts.md` §3):
+
+| `slam_algo:=` | Package | Sensors | Native / sidecar |
+|---|---|---|---|
+| `2d` (default) | slam_toolbox | 2D lidar | Native (apt) |
+| `cartographer` | Cartographer | 2D lidar + IMU | Native (apt) |
+| `3d` | RTAB-Map | 3D lidar + RGB | Native (apt) |
+| `vslam` | RTAB-Map | RGB-D | Native (apt) |
+| `multisensor` | RTAB-Map | RGB-D + lidar | Native (apt) |
+| `cslam` | Swarm-SLAM | 3D lidar (fleet) | Native (`link_third_party.sh --cslam`) |
+| `orbslam3` | ORB-SLAM3 | RGB-D | Tracker: Docker sidecar / bare-metal (`docker/orb_slam3/`); grid: native bridge node |
 
 In RViz (`slam_explore.rviz`): "Local Plan" shows whichever controller's selected
 path; enable "MPPI Candidate Trajectories" (off by default) when `controller:=mppi`

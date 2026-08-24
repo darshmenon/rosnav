@@ -1,0 +1,38 @@
+x-common: &common
+  network_mode: host   # simplest way to share ROS 2 DDS discovery + X11 across services/host
+  ipc: host
+  environment:
+    - DISPLAY
+    - QT_X11_NO_MITSHM=1
+  volumes:
+    - /tmp/.X11-unix:/tmp/.X11-unix:rw
+
+services:
+  # Full dev stack: Gazebo + Nav2 + slam_toolbox/RTAB-Map/Cartographer.
+  # Bind-mounts src/ so host edits are picked up without rebuilding the image
+  # (colcon build --symlink-install already made the install/ tree symlink
+  # back to src/, same as the bare-metal workflow).
+  rosnav:
+    <<: *common
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rosnav_bot:humble
+    stdin_open: true
+    tty: true
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./src:/workspace/src
+    command: bash
+
+  # ORB-SLAM3 sidecar (see docker/orb_slam3/README.md). Run alongside
+  # `rosnav` (or a bare-metal sim) — network_mode: host means it discovers
+  # /camera/image_raw etc. over normal ROS 2 DDS, no explicit linking needed.
+  orb_slam3:
+    <<: *common
+    build:
+      context: .
+      dockerfile: docker/orb_slam3/Dockerfile
+    image: rosnav_orb_slam3:humble
+    stdin_open: true
+    tty: true

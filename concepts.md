@@ -90,35 +90,47 @@ Fleet equivalent: `multi_robot.launch.py` uses `explore:=true/false` and optiona
 | `vslam` | **rtabmap_slam** | **RGB-D** + `/odom` | Textured worlds; can localize from a `.db` (no AMCL) |
 | `multisensor` | **rtabmap_slam** | **RGB-D + lidar** + `/odom` | Lidar ICP + depth occupancy + visual cues |
 | `cslam` | **cslam** + RTAB | `/points` (fleet) | Swarm-SLAM; `link_third_party.sh --cslam` + `lidar_type:=3d` |
-| *(sidecar, not `slam_algo`)* | **ORB-SLAM3** | RGB-D | Feature-based VSLAM in a separate Docker container — see below |
+| `orbslam3` | **ORB-SLAM3** (sidecar) + `orb_slam3_occupancy_bridge.py` | RGB-D | Feature-based VSLAM; tracker runs in a separate Docker/bare-metal process — see below |
 
 Missing optional packages fall back to `2d` (or `3d` for `cslam`) with a launch warning.
 
-### ORB-SLAM3 (Docker sidecar, not a `slam_algo` value)
+### ORB-SLAM3 (`slam_algo:=orbslam3`)
 
-Runs as a separate container (`docker/orb_slam3/`), not a `slam_nav.launch.py`
-option — ORB-SLAM3 has no ROS distro apt package (needs a from-source
-OpenCV 4.4 + Pangolin + native build, ~30-60 min) and is GPLv3 vs.
-`rtabmap_slam`'s BSD, so it's kept out of the main colcon workspace/image.
+The ORB-SLAM3 tracker itself runs outside this launch file's process tree —
+in `docker/orb_slam3/` (Docker) or via `docker/orb_slam3/build_bare_metal.sh`
+(no Docker) — because it has no ROS distro apt package (from-source OpenCV 4.4
++ Pangolin + native build, ~30-60 min) and is GPLv3 vs. `rtabmap_slam`'s BSD.
 Recipe re-derived from
 [suchetanrs/ORB-SLAM3-ROS2-Docker](https://github.com/suchetanrs/ORB-SLAM3-ROS2-Docker)
 (a working reference build), with rosnav_bot's own camera topics, frames, and
 computed intrinsics swapped in — see `docker/orb_slam3/README.md`.
 
+`slam_algo:=orbslam3` starts `scripts/orb_slam3_occupancy_bridge.py`, which
+turns the sidecar's `map->odom` TF + the depth camera into a real
+`nav_msgs/OccupancyGrid` on `/map` (Bresenham ray-traced free space, height-
+band occupied endpoints) — ORB-SLAM3 itself only publishes a sparse
+feature-point map, not an occupancy grid, so Nav2/the frontier explorer would
+have nothing to consume without this bridge. `slam:=` is ignored for this
+backend (the sidecar owns its own mapping-vs-localizing state via
+`System.SaveAtlasToFile`/`LoadAtlasFromFile`); `/map` stays all-unknown until
+the sidecar starts publishing:
+
+```bash
+ros2 launch rosnav_bot slam_nav.launch.py slam_algo:=orbslam3 world_name:=cafe explore:=true
+docker compose up orb_slam3          # separate terminal — see docker/orb_slam3/README.md
+```
+
 **vs. `slam_algo:=vslam` (RTAB-Map RGB-D):**
 
-| | RTAB-Map (`vslam`) | ORB-SLAM3 |
+| | RTAB-Map (`vslam`) | ORB-SLAM3 (`orbslam3`) |
 |---|---|---|
 | Registration | Depth ICP + visual bag-of-words loop closure | Pure ORB feature tracking + bundle adjustment |
-| Integration | Native colcon package, apt-installable | Separate Docker image, source build |
+| Process | In-process node (`slam_nav.launch.py`) | Separate container/process + this repo's occupancy bridge |
+| Integration | Native colcon package, apt-installable | Separate Docker/bare-metal build |
 | License | BSD | GPLv3 |
-| Occupancy grid for Nav2 | Yes, built in (`Grid/Sensor=1`) | No — ORB-SLAM3 outputs a sparse feature-point map, not an occupancy grid; would need a separate projection step to feed Nav2 |
+| Occupancy grid for Nav2 | Built into RTAB-Map (`Grid/Sensor=1`) | `orb_slam3_occupancy_bridge.py`'s own ray-traced grid — simpler than RTAB-Map's, good enough for costmaps/exploration |
 | Multi-session map reuse | `rtabmap_db` (SQLite) | `System.SaveAtlasToFile`/`LoadAtlasFromFile` |
-| Best fit here | Default VSLAM choice — works with Nav2 out of the box | Comparison/benchmarking point for tracking robustness/accuracy against RTAB-Map, not a Nav2-ready drop-in |
-
-Because ORB-SLAM3 has no occupancy-grid output, it can't stand in for
-`slam_algo:=vslam` in Nav2 navigation runs as-is — it's a tracking-quality
-comparison, not a like-for-like replacement.
+| Best fit here | Default VSLAM choice — one process, native build | Tracking-robustness comparison against RTAB-Map, or when you specifically want ORB-SLAM3's tracker |
 
 ### Sensors & TF
 
@@ -407,6 +419,12 @@ Edit `WAYPOINTS` at the top of the script to change the route.
 4. Score clusters via a pluggable `frontier_scorer` (`utility` default: size/distance tradeoff, `weighted`, or `nearest`) and pick the best as the next navigation goal (uses TF robot pose).
 5. Send the goal to Nav2 via `NavigateToPose`.
 6. Repeat until no frontiers remain.
+
+Interactive step-through of this exact pipeline (naive frontier mask → WFD reachability
+filter → clustering → safe goal placement → utility scoring), computed live against a small
+illustrative grid: https://claude.ai/code/artifact/bcce2ab9-74e1-4472-9eab-50d33daacfda
+(private Claude artifact — share it from the page's share menu if this doc ever needs to be
+readable by someone without access to your account).
 
 ```bash
 # Single command — SLAM + Nav2 + frontier explorer + auto-save
@@ -1376,6 +1394,8 @@ After launching any launch file, open RViz and add these displays:
 | Pose | `/amcl_pose` | AMCL is localising the robot (only in `robot.launch.py`) |
 | Path | `/plan` | Nav2 planner computed a path |
 | Map | `/local_costmap/costmap` | Local obstacle avoidance active |
+| MarkerArray | `/explore/frontiers` | Frontier candidates (`explorer:=explore_lite`\|`frontier`, `visualize`/`frontier_marker_topic`) |
+| MarkerArray | `/exploration/frontiers` | Frontier debug markers (`explorer:=builtin`, multi-robot `frontier_coordinator` only — single-robot `frontier_explorer.py` does not publish markers) |
 
 `bot.rviz` already includes Lidar3D, DepthCloud, CloudMap, Depth, and OctomapOccupied displays.
 
@@ -1387,7 +1407,7 @@ After launching any launch file, open RViz and add these displays:
 | Condition | Config | Notes |
 |---|---|---|
 | `slam_algo` != `2d` (cartographer/3d/vslam/multisensor/cslam) | `vslam.rviz` | Camera/Depth images + point clouds on, no SlamToolboxPlugin panel |
-| `slam:=true` (default, `slam_algo:=2d`) | `slam_explore.rviz` | SlamToolboxPlugin panel for start/stop/save-map controls, no Navigation 2 panel |
+| `slam:=true` (default, `slam_algo:=2d`) | `slam_explore.rviz` | SlamToolboxPlugin panel for start/stop/save-map controls, no Navigation 2 panel (see segfault note below); LaserScan, Global+Local Costmap, footprint, Global+Local Plan, and `/explore/frontiers` markers all on by default |
 | `slam:=false` + camera/RGB-D enabled | `cam_nav.rviz` | Navigation 2 panel + Camera/Depth images, no SlamToolboxPlugin |
 | `slam:=false`, no camera | `localization.rviz` | Navigation 2 panel, lidar-only (images/point clouds off) |
 | `robot.launch.py` (generic) / `multi_robot.launch.py` single-robot mode | `bot.rviz` / `multi_robot.rviz` | "one for all" fallback — Navigation 2 panel, everything else on |

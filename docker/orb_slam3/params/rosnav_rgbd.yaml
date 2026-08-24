@@ -1,0 +1,77 @@
+%YAML:1.0
+
+#--------------------------------------------------------------------------------------------
+# Camera Parameters — computed for rosnav_bot's urdf/rgbd_camera.xacro:
+#   width=1280 height=960 horizontal_fov=1.5708 rad (exactly 90 deg)
+# Gazebo's camera sensor uses square pixels (fx == fy), so:
+#   fx = fy = (width/2) / tan(hfov/2) = 640 / tan(45 deg) = 640
+#   cx = width/2 = 640, cy = height/2 = 480
+# No lens distortion — Gazebo's simulated camera is an ideal pinhole model.
+# If you point this at a real camera instead, replace these with a real
+# calibration (e.g. from `ros2 run camera_calibration cameracalibrator`).
+#--------------------------------------------------------------------------------------------
+Camera.type: "PinHole"
+
+Camera.fx: 640.0
+Camera.fy: 640.0
+Camera.cx: 640.0
+Camera.cy: 480.0
+
+Camera.k1: 0.0
+Camera.k2: 0.0
+Camera.p1: 0.0
+Camera.p2: 0.0
+Camera.k3: 0.0
+
+Camera.width: 1280
+Camera.height: 960
+
+# rgbd_camera.xacro's <rgbd_camera> update_rate
+Camera.fps: 15.0
+
+# IR projector baseline times fx (approx.) — RGB-D has no real baseline;
+# kept at the upstream default, only affects ThDepth's close/far cutoff.
+Camera.bf: 40.0
+
+# Color order (0: BGR, 1: RGB. Ignored for grayscale images)
+Camera.RGB: 0
+
+# Close/Far threshold, in baseline units
+ThDepth: 40.0
+
+# ros_gz_bridge's depth_camera topic is already metric (float32, meters) —
+# same as the upstream repo's "1.0 for ROS_bag" case, not a scaled 16-bit
+# raw depth (that would need e.g. 1000.0 for RealSense-style mm-as-uint16).
+DepthMapFactor: 1.0
+
+#--------------------------------------------------------------------------------------------
+# ORB Parameters
+#--------------------------------------------------------------------------------------------
+ORBextractor.nFeatures: 1200
+ORBextractor.scaleFactor: 1.2
+ORBextractor.nLevels: 8
+ORBextractor.iniThFAST: 20
+ORBextractor.minThFAST: 7
+
+#--------------------------------------------------------------------------------------------
+# Viewer Parameters
+#--------------------------------------------------------------------------------------------
+Viewer.KeyFrameSize: 0.05
+Viewer.KeyFrameLineWidth: 1
+Viewer.GraphLineWidth: 0.9
+Viewer.PointSize: 2
+Viewer.CameraSize: 0.08
+Viewer.CameraLineWidth: 3
+Viewer.ViewpointX: 0
+Viewer.ViewpointY: -0.7
+Viewer.ViewpointZ: -1.8
+Viewer.ViewpointF: 500
+
+#--------------------------------------------------------------------------------------------
+# System Parameters
+#--------------------------------------------------------------------------------------------
+# Fresh map every run by default, matching this repo's other SLAM backends
+# (rtabmap_vslam_node uses `-d` the same way). Uncomment to persist/reload —
+# see docker/orb_slam3/README.md "Localization / save-reload" section.
+# System.SaveAtlasToFile: ./atlas
+# System.LoadAtlasFromFile: ./atlas

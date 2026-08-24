@@ -1,0 +1,38 @@
+# ROS-side params for orb_slam3_ros2_wrapper's rgbd node, pointed at
+# rosnav_bot's own topics/frames instead of the upstream repo's Gazebo demo
+# robot ("rgb_camera"/"depth_camera", base_footprint).
+#
+# Leading "/" on the topic names avoids ROS namespacing them under
+# `robot_namespace` (see rgbd.launch.py) — same convention the upstream
+# repo's own gazebo-rgbd-ros-params.yaml uses.
+ORB_SLAM3_RGBD_ROS2:
+  ros__parameters:
+    robot_base_frame: base_link
+    global_frame: map
+    odom_frame: odom
+    rgb_image_topic_name: /camera/image_raw
+    depth_image_topic_name: /camera/depth/image_raw
+
+    # base_link -> camera_link, from urdf/rgbd_camera.xacro's camera_joint
+    # (xyz="0.45 0.0 0.15" rpy="0 0.0873 0"). Quaternion for a 0.0873 rad
+    # (~5 deg) pitch about Y: qy=sin(0.0873/2), qw=cos(0.0873/2).
+    robot_x: 0.45
+    robot_y: 0.0
+    robot_z: 0.15
+    robot_qx: 0.0
+    robot_qy: 0.043636
+    robot_qz: 0.0
+    robot_qw: 0.999047
+
+    visualization: true
+    # true = trust the odom_frame -> robot_base_frame TF that already exists
+    # (ekf_filter_node, fusing wheel odom + IMU — see concepts.md §6b) and
+    # only publish map -> odom on top of it. Same "one odom->base_link
+    # publisher" rule this repo's other SLAM backends follow
+    # (_common.rtabmap_vslam_node docstring) — false would have ORB-SLAM3
+    # publish map -> odom -> base_link itself, fighting ekf_filter_node for
+    # the same TF edge.
+    odometry_mode: true
+    publish_tf: true
+    map_data_publish_frequency: 1000
+    do_loop_closing: true

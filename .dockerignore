@@ -1,0 +1,45 @@
+# colcon build artifacts — rebuilt fresh in-image
+build/
+install/
+log/
+
+# Vendored/fetched-on-demand assets — pulled by scripts/download_*.sh inside
+# the running container, not baked into the image (same as bare-metal)
+src/rosnav_bot/models/Depot/
+src/rosnav_bot/models/fuel/
+src/rosnav_bot/maps/*.pgm
+src/rosnav_bot/maps/*.yaml
+src/rosnav_bot/maps/*.data
+src/rosnav_bot/maps/*.posegraph
+src/rosnav_bot/maps/*.db
+
+# Third-party symlinks (link_third_party.sh) — not real dirs, break COPY
+src/explore_lite
+src/explore_lite_msgs
+src/multirobot_map_merge
+src/frontier_exploration_ros2
+src/rrt_explore
+src/cslam
+src/cslam_experiments
+src/cslam_common_interfaces
+
+# Local ML / training artifacts, not source
+runs/
+outputs/
+*.pt
+
+# Repo-root scratch files (screenshots, videos, docs) not needed in the image
+*.mp4
+*.png
+*.md
+!README.md
+
+# Python / VCS / editor
+__pycache__/
+*.py[cod]
+.git/
+.gitignore
+.DS_Store
+*.swp
+.claude/
+.codex/

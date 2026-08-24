@@ -19,6 +19,11 @@ Nav-on-map mode (pre-built OccupancyGrid, AMCL localization):
 
 When slam:=false and slam_algo is not vslam, the launch uses
 map_<world_name>.yaml from the maps/ directory with AMCL.
+
+ORB-SLAM3 (feature-based VSLAM, separate sidecar container — see
+docker/orb_slam3/README.md for why it can't run in-process here):
+  ros2 launch rosnav_bot slam_nav.launch.py slam_algo:=orbslam3 world_name:=cafe explore:=true
+  docker compose up orb_slam3    # run alongside, in another terminal
 """
 
 import os
@@ -245,7 +250,7 @@ def _build_runtime_actions(context, pkg_share: str):
     # slam_algo=vslam|multisensor forces RGB-D; enable_rgbd:=true does the same for
     # depth-aware costmaps without switching SLAM.
     enable_rgbd = 'true' if (
-        slam_algo in ('vslam', 'multisensor') or _common.truthy(enable_rgbd_arg)) else 'false'
+        slam_algo in ('vslam', 'multisensor', 'orbslam3') or _common.truthy(enable_rgbd_arg)) else 'false'
     enable_camera = 'true' if (
         _common.truthy(enable_camera_arg) or _common.truthy(enable_yolo_arg)
         or slam_algo in ('3d', 'multisensor') or enable_rgbd == 'true') else 'false'
@@ -298,6 +303,14 @@ def _build_runtime_actions(context, pkg_share: str):
     _params_file = _common.patch_pkg_share_placeholder(_raw_params, pkg_share)
 
     use_vslam_localize = (not use_slam) and slam_algo == 'vslam'
+    # ORB-SLAM3 (docker/orb_slam3/) runs as a separate sidecar container, not
+    # a node this launch file can start in-process (GPL/build isolation, see
+    # that dir's README) — this only starts orb_slam3_occupancy_bridge.py,
+    # which turns its map->odom TF + the depth camera into a real /map
+    # OccupancyGrid. Unlike every other slam_algo, this ignores `slam:=`
+    # (mapping vs localizing is the sidecar's own concern, via its
+    # SaveAtlasToFile/LoadAtlasFromFile — see docker/orb_slam3/README.md).
+    use_orbslam3 = (slam_algo == 'orbslam3')
 
     # Loop-closure corrections (slam_toolbox/cartographer/RTAB-Map all jump
     # map->odom on a match) leave stale obstacle_layer marks at the
@@ -310,7 +323,7 @@ def _build_runtime_actions(context, pkg_share: str):
             name='costmap_ghost_clear',
             output='screen',
             parameters=[{'use_sim_time': True}],
-        ) if (use_slam or use_vslam_localize) else None
+        ) if (use_slam or use_vslam_localize or use_orbslam3) else None
     )
 
     if use_slam and slam_algo == 'vslam':
@@ -407,6 +420,31 @@ def _build_runtime_actions(context, pkg_share: str):
                 )
             ],
         )
+    elif use_orbslam3:
+        # Not gated by use_slam (unlike every branch above/below) — the ORB-SLAM3
+        # sidecar owns its own mapping-vs-localizing state (SaveAtlasToFile /
+        # LoadAtlasFromFile, see docker/orb_slam3/README.md), so slam:= doesn't
+        # apply here the way it does to the native backends. Must come before the
+        # bare `elif use_slam:` fallback below, or slam:=true (the default) would
+        # silently fall through to slam_toolbox instead.
+        slam_or_localization = TimerAction(
+            period=5.0,
+            actions=[
+                LogInfo(msg='[slam_nav] slam_algo=orbslam3: starting the occupancy-grid bridge '
+                            'only — the ORB-SLAM3 tracker itself runs in a separate container '
+                            'and must be started yourself: `docker compose up orb_slam3` (see '
+                            'docker/orb_slam3/README.md) or '
+                            '`docker/orb_slam3/build_bare_metal.sh` for a no-Docker build. '
+                            '/map stays all-unknown until it publishes map->odom TF.'),
+                Node(
+                    package='rosnav_bot',
+                    executable='orb_slam3_occupancy_bridge.py',
+                    name='orb_slam3_occupancy_bridge',
+                    output='screen',
+                    parameters=[{'use_sim_time': True}],
+                ),
+            ],
+        )
     elif use_slam:
         _lifelong_exe = os.path.join(
             get_package_share_directory('slam_toolbox').replace('/share/', '/lib/'),
@@ -473,7 +511,7 @@ def _build_runtime_actions(context, pkg_share: str):
     else:
         slam_or_localization = LogInfo(msg=f'[slam_nav] SLAM disabled — loading map: {map_yaml}')
 
-    if use_slam or use_vslam_localize:
+    if use_slam or use_vslam_localize or use_orbslam3:
         # Nav2 navigation only — /map (+ map→odom) comes from SLAM or VSLAM localize.
         nav2 = TimerAction(
             period=8.0,
@@ -678,7 +716,7 @@ def _build_runtime_actions(context, pkg_share: str):
     # ── Frontier Explorer (SLAM mode only) ───────────────────────────────
     explorer_backend = _common.resolve_explorer(LaunchConfiguration('explorer').perform(context))
     actions = []
-    if use_slam and explore.perform(context).lower() in ('true', '1', 'yes'):
+    if (use_slam or use_orbslam3) and explore.perform(context).lower() in ('true', '1', 'yes'):
         if explorer_backend == 'builtin':
             explore_nodes = _common.explorer_nodes(
                 'builtin', pkg_share, map_topic='/map',
@@ -830,7 +868,12 @@ def _build_runtime_actions(context, pkg_share: str):
                     actions=[_common.dynamic_obstacle_driver_node(do_name, do_axis, do_amplitude, do_speed)]),
             ]
 
-    mode = 'SLAM+frontier' if (use_slam and actions) else ('SLAM' if use_slam else f'nav-on-map ({os.path.basename(map_yaml)})')
+    if use_orbslam3:
+        mode = 'ORB-SLAM3+frontier' if actions else 'ORB-SLAM3'
+    elif use_slam:
+        mode = 'SLAM+frontier' if actions else 'SLAM'
+    else:
+        mode = f'nav-on-map ({os.path.basename(map_yaml)})'
     if run_cslam:
         mode += '+cslam'
     return [
@@ -1066,7 +1109,11 @@ def generate_launch_description():
             name='slam_algo', default_value='2d',
             description='"2d" (slam_toolbox), "cartographer" (Cartographer 2D+IMU), '
                         '"3d" (RTAB-Map lidar), "vslam" (RTAB-Map RGB-D), '
-                        '"multisensor" (RTAB-Map RGB-D+lidar), or "cslam" (Swarm-SLAM). '
+                        '"multisensor" (RTAB-Map RGB-D+lidar), "cslam" (Swarm-SLAM), or '
+                        '"orbslam3" (feature-based VSLAM — starts only this repo\'s '
+                        'orb_slam3_occupancy_bridge.py; the ORB-SLAM3 tracker itself is a '
+                        'separate container you start yourself, `docker compose up orb_slam3` '
+                        'or docker/orb_slam3/build_bare_metal.sh — see docker/orb_slam3/README.md). '
                         'cslam/3d need lidar_type:=3d; cartographer needs '
                         'ros-humble-cartographer-ros; cslam needs link_third_party.sh --cslam. '
                         'For a same-algorithm mode comparison instead, see slam_toolbox_mode (slam_algo:=2d only).'),
