@@ -51,6 +51,20 @@ cd ~/rosnav && colcon build --symlink-install
 source /opt/ros/humble/setup.bash && source install/setup.bash
 ```
 
+### Docker (alternative to the install above)
+
+```bash
+xhost +local:root   # allow container GUI (Gazebo/RViz) to reach the host X server
+docker compose up --build rosnav
+# inside the container:
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
+```
+
+`docker-compose.yml` bind-mounts `src/` so host edits are picked up without a
+full image rebuild (just re-`colcon build` inside the container). See
+[`docker/orb_slam3/README.md`](docker/orb_slam3/README.md) for the separate
+ORB-SLAM3 visual-SLAM sidecar (§3 below has more on comparing SLAM backends).
+
 ---
 
 ## 2. Map · save · navigate
@@ -85,6 +99,11 @@ Exploration backend defaults to `explore_lite` (most reliable unattended — see
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true explorer:=builtin
 # explorer:=builtin | explore_lite (default) | frontier | rrt
 ```
+
+`explorer:=builtin` extras (`concepts.md` §9 for details):
+- `exploration_boundary:="x1,y1,x2,y2,..."` — confine frontiers to a map-frame polygon
+- `resume_session:=true` — continue from the last visited-frontier checkpoint
+  (`<map_prefix>_session.json`, written automatically every 10 goals) instead of starting fresh
 
 ### B — Save the map
 

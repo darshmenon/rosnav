@@ -35,6 +35,7 @@ Run alongside slam.launch.py (mapping mode):
   ros2 run rosnav_bot frontier_explorer.py
 """
 
+import json
 import math
 import os
 import subprocess
@@ -155,6 +156,21 @@ class FrontierExplorer(Node):
         # Must be >= global inflation_radius (0.5) or goals sit in inflated cells.
         self.declare_parameter('goal_pullback', 0.55)
         self.declare_parameter('goal_search_radius', 1.25)
+        # Flat [x1, y1, x2, y2, ...] polygon (map frame); < 3 points (incl.
+        # the [0.0, 0.0] default) = unbounded. Frontier goals outside it are
+        # rejected before scoring — keeps exploration inside a survey area
+        # on a map that extends further.
+        # NOTE: rclpy can't type-infer an *empty* double-array default or
+        # override (both collapse to BYTE_ARRAY and raise
+        # InvalidParameterTypeException) — the default must be non-empty to
+        # lock in DOUBLE_ARRAY, so "disabled" is spelled [0.0, 0.0], not [].
+        self.declare_parameter('exploration_boundary', [0.0, 0.0])
+        # Checkpoint of visited frontiers, written periodically + on finish.
+        # Empty path = disabled. resume_session=true loads it at startup so
+        # a restarted explorer doesn't immediately re-walk already-covered
+        # ground.
+        self.declare_parameter('session_state_path', '')
+        self.declare_parameter('resume_session', False)
 
         self._min_size = self.get_parameter('min_frontier_size').value
         self._revisit_r = self.get_parameter('revisit_radius').value
@@ -209,6 +225,10 @@ class FrontierExplorer(Node):
         self._allow_unknown_costmap = self.get_parameter('allow_unknown_costmap').value
         self._goal_pullback = float(self.get_parameter('goal_pullback').value)
         self._goal_search_radius = float(self.get_parameter('goal_search_radius').value)
+        self._boundary = self._parse_boundary(
+            list(self.get_parameter('exploration_boundary').value))
+        self._session_path = self.get_parameter('session_state_path').value.strip()
+        self._resume_session = bool(self.get_parameter('resume_session').value)
         map_topic = self._map_topic
         action_name = self.get_parameter('action_name').value
         poll_period = self.get_parameter('poll_period').value
@@ -259,6 +279,9 @@ class FrontierExplorer(Node):
         self._logged_costmap = False
         self._last_status_log = 0.0
 
+        if self._resume_session:
+            self._load_session()
+
         # ------------------------------------------------------------------
         # ROS interfaces
         # ------------------------------------------------------------------
@@ -276,6 +299,9 @@ class FrontierExplorer(Node):
         cm_note = self._costmap_topic if self._validate_costmap else 'off'
         rrt_note = (f' rrt_iters={self._rrt_iterations} rrt_step={self._rrt_step:.2f}m'
                     if self._detector == 'rrt' else '')
+        boundary_note = (f' boundary={len(self._boundary)}pts' if self._boundary else '')
+        session_note = (f' session={self._session_path}'
+                        f'(resume={self._resume_session})' if self._session_path else '')
         self.get_logger().info(
             f'Ready | detector={self._detector} scorer={self._scorer} '
             f'bt={bt_note} costmap={cm_note} '
@@ -285,7 +311,8 @@ class FrontierExplorer(Node):
             f'suspect_hard={self._suspect_hard_ratio:.2f} '
             f'costmap_max={self._costmap_max_cost} pullback={self._goal_pullback:.2f}m '
             f'clearance={self._frontier_clearance:.2f}m '
-            f'min_size={self._min_size} revisit_r={self._revisit_r:.2f}m{rrt_note}')
+            f'min_size={self._min_size} revisit_r={self._revisit_r:.2f}m{rrt_note}'
+            f'{boundary_note}{session_note}')
         self.get_logger().info('Waiting for map...')
 
         self.create_timer(poll_period, self._explore)
@@ -396,6 +423,8 @@ class FrontierExplorer(Node):
                  '-t', self._map_topic, '-f', self._map_save_path],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
+        if self._session_path and self._iteration % 10 == 0:
+            self._save_session_checkpoint()
 
         self.get_logger().info(
             f'#{self._iteration} → ({goal[0]:.2f}, {goal[1]:.2f}) '
@@ -451,6 +480,10 @@ class FrontierExplorer(Node):
                 self.get_logger().error(f'Failed to save map: {e}')
         else:
             self.get_logger().info('No map_save_path provided. Skipping auto-save.')
+
+        if self._session_path:
+            self.get_logger().info(f'Final session checkpoint to {self._session_path} ...')
+            self._save_session_checkpoint()
 
         self.get_logger().info('Shutting down explorer.')
         raise SystemExit(0)
@@ -562,8 +595,11 @@ class FrontierExplorer(Node):
             if goal_cell is None:
                 continue
             cy, cx = goal_cell
+            point = (ox + (cx + 0.5) * res, oy + (cy + 0.5) * res)
+            if not self._in_boundary(*point):
+                continue
             centroids.append({
-                'point': (ox + (cx + 0.5) * res, oy + (cy + 0.5) * res),
+                'point': point,
                 'goal_cell': (int(cy), int(cx)),
                 'size': len(cluster),
                 'size_m': len(cluster) * res,
@@ -800,6 +836,65 @@ class FrontierExplorer(Node):
                     if 0 <= ny < h and 0 <= nx < w and unknown[ny, nx]:
                         cells.add((ny, nx))
         return len(cells) * resolution * resolution
+
+    # ------------------------------------------------------------------
+    # Exploration boundary (optional survey-area polygon, map frame)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _parse_boundary(flat: list) -> list:
+        if not flat:
+            return []
+        if len(flat) % 2 != 0:
+            flat = flat[:-1]
+        pts = [(float(flat[i]), float(flat[i + 1])) for i in range(0, len(flat), 2)]
+        return pts if len(pts) >= 3 else []
+
+    def _in_boundary(self, x: float, y: float) -> bool:
+        """Ray-casting point-in-polygon test; True (unbounded) if no boundary set."""
+        if not self._boundary:
+            return True
+        inside = False
+        n = len(self._boundary)
+        x1, y1 = self._boundary[-1]
+        for x2, y2 in self._boundary:
+            if (y1 > y) != (y2 > y):
+                x_cross = (x2 - x1) * (y - y1) / (y2 - y1) + x1
+                if x < x_cross:
+                    inside = not inside
+            x1, y1 = x2, y2
+        return inside
+
+    # ------------------------------------------------------------------
+    # Session checkpoint (visited-frontier list — save/resume)
+    # ------------------------------------------------------------------
+    def _load_session(self):
+        if not self._session_path or not os.path.isfile(self._session_path):
+            if self._session_path:
+                self.get_logger().info(
+                    f'resume_session=true but no checkpoint at {self._session_path} '
+                    '— starting fresh.')
+            return
+        try:
+            with open(self._session_path) as f:
+                data = json.load(f)
+            self._visited = [(float(x), float(y)) for x, y in data.get('visited', [])]
+            self.get_logger().info(
+                f'Resumed session from {self._session_path}: '
+                f'{len(self._visited)} previously-visited frontier(s) loaded.')
+        except Exception as exc:
+            self.get_logger().warn(f'Failed to load session checkpoint: {exc}')
+
+    def _save_session_checkpoint(self):
+        if not self._session_path:
+            return
+        save_dir = os.path.dirname(os.path.expanduser(self._session_path))
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+        try:
+            with open(os.path.expanduser(self._session_path), 'w') as f:
+                json.dump({'visited': self._visited}, f)
+        except Exception as exc:
+            self.get_logger().warn(f'Failed to write session checkpoint: {exc}')
 
     # ------------------------------------------------------------------
     # Pick frontier (nearest | weighted | utility)

@@ -215,6 +215,17 @@ def _build_runtime_actions(context, pkg_share: str):
     )
     map_prefix = _resolve_map_prefix(
         LaunchConfiguration('map_prefix').perform(context).strip(), world_name, pkg_share)
+    exploration_boundary_raw = LaunchConfiguration('exploration_boundary').perform(context).strip()
+    try:
+        exploration_boundary = [float(v) for v in exploration_boundary_raw.split(',') if v.strip()] \
+            if exploration_boundary_raw else []
+    except ValueError:
+        print(f'[slam_nav] exploration_boundary={exploration_boundary_raw!r} is not a valid '
+              'comma-separated float list — ignoring (unbounded exploration).')
+        exploration_boundary = []
+    resume_session = LaunchConfiguration('resume_session').perform(context).strip().lower() \
+        in ('true', '1', 'yes')
+    session_state_path = f'{map_prefix}_session.json' if map_prefix else ''
     map_override = LaunchConfiguration('map_override').perform(context).strip()
     # A gs_mask_from_splat.py KeepoutFilter mask is already a plain Nav2 map
     # (trinary 0=occupied/254=free PGM+YAML) — same format map_server/
@@ -684,6 +695,15 @@ def _build_runtime_actions(context, pkg_share: str):
                     'costmap_max_cost': LaunchConfiguration('costmap_max_cost'),
                     'goal_pullback': LaunchConfiguration('goal_pullback'),
                     'frontier_clearance_radius': LaunchConfiguration('frontier_clearance_radius'),
+                    'resume_session': resume_session,
+                    'session_state_path': session_state_path,
+                    # rclpy can't type-infer an *empty* double-array
+                    # override (raises InvalidParameterTypeException) — only
+                    # pass this key when a real boundary was configured, so
+                    # the node's own non-empty [0.0, 0.0] "disabled" default
+                    # is used otherwise.
+                    **({'exploration_boundary': exploration_boundary}
+                       if exploration_boundary else {}),
                 })
         else:
             explore_nodes = _common.explorer_nodes(explorer_backend, pkg_share, map_topic='/map')
@@ -953,6 +973,17 @@ def generate_launch_description():
         DeclareLaunchArgument(
             name='frontier_clearance_radius', default_value='0.55',
             description='Min clearance from occupied cells for frontier goals (m)'),
+        DeclareLaunchArgument(
+            name='exploration_boundary', default_value='',
+            description='Comma-separated "x1,y1,x2,y2,..." polygon (map frame) bounding '
+                        'where builtin explorer frontiers are allowed. Empty = unbounded. '
+                        '(builtin explorer only)'),
+        DeclareLaunchArgument(
+            name='resume_session', default_value='false',
+            description='Resume the builtin explorer\'s visited-frontier checkpoint from '
+                        '<map_prefix>_session.json instead of starting fresh. The checkpoint '
+                        'is written automatically whenever map_prefix/map_save_path is set. '
+                        '(builtin explorer only)'),
         DeclareLaunchArgument(
             name='safety', default_value='true',
             description='Launch collision monitor safety layer'),

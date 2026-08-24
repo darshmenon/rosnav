@@ -90,8 +90,35 @@ Fleet equivalent: `multi_robot.launch.py` uses `explore:=true/false` and optiona
 | `vslam` | **rtabmap_slam** | **RGB-D** + `/odom` | Textured worlds; can localize from a `.db` (no AMCL) |
 | `multisensor` | **rtabmap_slam** | **RGB-D + lidar** + `/odom` | Lidar ICP + depth occupancy + visual cues |
 | `cslam` | **cslam** + RTAB | `/points` (fleet) | Swarm-SLAM; `link_third_party.sh --cslam` + `lidar_type:=3d` |
+| *(sidecar, not `slam_algo`)* | **ORB-SLAM3** | RGB-D | Feature-based VSLAM in a separate Docker container — see below |
 
 Missing optional packages fall back to `2d` (or `3d` for `cslam`) with a launch warning.
+
+### ORB-SLAM3 (Docker sidecar, not a `slam_algo` value)
+
+Runs as a separate container (`docker/orb_slam3/`), not a `slam_nav.launch.py`
+option — ORB-SLAM3 has no ROS distro apt package (needs a from-source
+OpenCV 4.4 + Pangolin + native build, ~30-60 min) and is GPLv3 vs.
+`rtabmap_slam`'s BSD, so it's kept out of the main colcon workspace/image.
+Recipe re-derived from
+[suchetanrs/ORB-SLAM3-ROS2-Docker](https://github.com/suchetanrs/ORB-SLAM3-ROS2-Docker)
+(a working reference build), with rosnav_bot's own camera topics, frames, and
+computed intrinsics swapped in — see `docker/orb_slam3/README.md`.
+
+**vs. `slam_algo:=vslam` (RTAB-Map RGB-D):**
+
+| | RTAB-Map (`vslam`) | ORB-SLAM3 |
+|---|---|---|
+| Registration | Depth ICP + visual bag-of-words loop closure | Pure ORB feature tracking + bundle adjustment |
+| Integration | Native colcon package, apt-installable | Separate Docker image, source build |
+| License | BSD | GPLv3 |
+| Occupancy grid for Nav2 | Yes, built in (`Grid/Sensor=1`) | No — ORB-SLAM3 outputs a sparse feature-point map, not an occupancy grid; would need a separate projection step to feed Nav2 |
+| Multi-session map reuse | `rtabmap_db` (SQLite) | `System.SaveAtlasToFile`/`LoadAtlasFromFile` |
+| Best fit here | Default VSLAM choice — works with Nav2 out of the box | Comparison/benchmarking point for tracking robustness/accuracy against RTAB-Map, not a Nav2-ready drop-in |
+
+Because ORB-SLAM3 has no occupancy-grid output, it can't stand in for
+`slam_algo:=vslam` in Nav2 navigation runs as-is — it's a tracking-quality
+comparison, not a like-for-like replacement.
 
 ### Sensors & TF
 
@@ -398,6 +425,30 @@ Recent reliability fixes in `frontier_explorer.py`:
 - If TF is not ready yet, the node waits instead of using a fake `(0, 0)` position.
 - Added `map_save_path` parameter so completed exploration auto-saves map via `map_saver_cli`.
 - Auto-save passes `map_saver_cli -t <map_topic>` so multi-SLAM (`/map_merged`) and scan-fusion (`/map_fused`) maps save correctly — not only `/map`.
+
+**Exploration boundary + session resume (2026-08-24)** — added after surveying
+`suchetanrs/roadmap-explorer` for ideas (concepts only, no code copied; see
+`~/inspiration/roadmap-explorer` and the `project_exploration_inspiration` memory):
+- `exploration_boundary` param: flat `"x1,y1,x2,y2,..."` polygon (map frame) via
+  `slam_nav.launch.py`'s `exploration_boundary:=` arg. Frontier goals outside the polygon
+  are rejected before scoring (ray-casting point-in-polygon test, `_in_boundary()`). Empty
+  (default) = unbounded, unchanged behavior. **rclpy gotcha hit while wiring this up**: an
+  *empty* `double_array` parameter — as either the node's own declared default or a launch
+  override — can't be type-inferred and raises `InvalidParameterTypeException` (collapses to
+  `BYTE_ARRAY` instead). Fixed by declaring a non-empty `[0.0, 0.0]` default (which
+  `_parse_boundary()` already treats as "disabled", needing ≥3 points) and only including the
+  `exploration_boundary` key in the launch `parameters=[...]` dict when a real boundary was
+  configured, otherwise omitting it entirely so the node's own default applies.
+- Session checkpoint (`_save_session_checkpoint`/`_load_session`): the visited-frontier list
+  is written as JSON to `<map_prefix>_session.json` every 10 goals and on finish (same cadence
+  as the existing progressive map autosave — this file is written by default whenever
+  `map_prefix` resolves, same as the map itself already was). `resume_session:=true` loads it
+  at startup instead of starting fresh — useful for continuing exploration after a restart
+  without re-walking already-covered ground. Doesn't persist `_failed_frontiers` (time-based
+  cooldown state isn't meaningful across a restart).
+- Both features + `_parse_boundary`/`_in_boundary`/session save-load are covered by
+  `test/test_frontier_explorer.py` (pytest, wired via `ament_add_pytest_test` — `colcon test
+  --packages-select rosnav_bot`). First real Python test coverage in this package.
 
 ### Exploration backend choice (`explorer:=`)
 
@@ -1240,7 +1291,7 @@ Gazebo after the fix.
 | `navigation.py` | Custom obstacle-avoidance FSM (no Nav2 needed) | `goal_x`, `goal_y`, `base_speed`, `obstacle_threshold` |
 | `path_planning.py` | Standalone A* path planner (from `/map`, hardcoded fallback) | `map_topic`, `grid_size_x/y`, `resolution`, `safety_margin`, `start_x/y`, `goal_x/y` |
 | `waypoint_nav.py` | Navigate through a sequence of waypoints via Nav2 | `waypoints_file`, `frame_id` |
-| `frontier_explorer.py` | Autonomous map exploration via frontier detection + optional auto-save | `frontier_detector` (`wfd`\|`classic`\|`rrt`), `frontier_scorer`, `min_frontier_size`, `revisit_radius`, `poll_period`, `map_save_path` |
+| `frontier_explorer.py` | Autonomous map exploration via frontier detection + optional auto-save | `frontier_detector` (`wfd`\|`classic`\|`rrt`), `frontier_scorer`, `min_frontier_size`, `revisit_radius`, `poll_period`, `map_save_path`, `exploration_boundary`, `resume_session`, `session_state_path` |
 | `benchmark.py` | SLAM coverage / Nav2 goal / AMCL covariance benchmarks + offline `mode:=report` | `mode`, `label`, `duration_sec`, `out_dir`, `goals_file`, `inputs` |
 | `benchmark_slam.sh` | Headless matrix over `slam_algo` values; wraps `benchmark.py` | env: `WORLD`, `DURATION_S`, `ALGOS`, `OUT_DIR` |
 | `check_odometry.py` | Debug odometry data | — |
