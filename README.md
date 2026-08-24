@@ -100,6 +100,9 @@ ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true exp
 # explorer:=builtin | explore_lite (default) | frontier | rrt
 ```
 
+![Coverage comparison across the 4 explorer:= backends, house.world and warehouse.world](images/explorer_backend_coverage.png)
+![SLAM drift/yaw/convergence, builtin vs explore_lite](images/explorer_backend_accuracy.png)
+
 `explorer:=builtin` extras (`concepts.md` §9 for details):
 - `exploration_boundary:="x1,y1,x2,y2,..."` — confine frontiers to a map-frame polygon
 - `resume_session:=true` — continue from the last visited-frontier checkpoint
