@@ -104,6 +104,8 @@ ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true exp
 - `exploration_boundary:="x1,y1,x2,y2,..."` — confine frontiers to a map-frame polygon
 - `resume_session:=true` — continue from the last visited-frontier checkpoint
   (`<map_prefix>_session.json`, written automatically every 10 goals) instead of starting fresh
+- `info_gain_mode:=fov` (with `frontier_scorer:=weighted`) — sensor-cone info gain instead of
+  the default fixed-radius `ring`; tune with `info_gain_fov`/`info_gain_max_depth`
 
 ### B — Save the map
 

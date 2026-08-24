@@ -171,6 +171,19 @@ class FrontierExplorer(Node):
         # ground.
         self.declare_parameter('session_state_path', '')
         self.declare_parameter('resume_session', False)
+        # 'ring' (default, unchanged): fixed-radius unknown-cell count around
+        # the whole cluster, independent of vantage point/heading — cheap,
+        # but overcounts cells the sensor wouldn't actually see from the
+        # chosen goal. 'fov': cast a depth/angle-limited sensor cone from the
+        # goal cell along the robot's approach heading, stopping at the
+        # first occupied cell per ray (occlusion) — a more physically
+        # grounded gain estimate. Opt-in: changing the default would shift
+        # utility-scorer behavior and invalidate the explorer-backend
+        # coverage numbers already recorded for 'ring'.
+        self.declare_parameter('info_gain_mode', 'ring')
+        self.declare_parameter('info_gain_fov', 1.04)
+        self.declare_parameter('info_gain_max_depth', 2.0)
+        self.declare_parameter('info_gain_angular_res', 0.10)
 
         self._min_size = self.get_parameter('min_frontier_size').value
         self._revisit_r = self.get_parameter('revisit_radius').value
@@ -229,6 +242,10 @@ class FrontierExplorer(Node):
             list(self.get_parameter('exploration_boundary').value))
         self._session_path = self.get_parameter('session_state_path').value.strip()
         self._resume_session = bool(self.get_parameter('resume_session').value)
+        self._info_gain_mode = self.get_parameter('info_gain_mode').value.strip().lower()
+        self._info_gain_fov = float(self.get_parameter('info_gain_fov').value)
+        self._info_gain_max_depth = float(self.get_parameter('info_gain_max_depth').value)
+        self._info_gain_angular_res = float(self.get_parameter('info_gain_angular_res').value)
         map_topic = self._map_topic
         action_name = self.get_parameter('action_name').value
         poll_period = self.get_parameter('poll_period').value
@@ -241,6 +258,10 @@ class FrontierExplorer(Node):
             self.get_logger().warn(
                 f'Unknown frontier_scorer={self._scorer!r}; using utility.')
             self._scorer = 'utility'
+        if self._info_gain_mode not in ('ring', 'fov'):
+            self.get_logger().warn(
+                f'Unknown info_gain_mode={self._info_gain_mode!r}; using ring.')
+            self._info_gain_mode = 'ring'
         if self._bt_xml and not os.path.isfile(self._bt_xml):
             self.get_logger().warn(
                 f'behavior_tree not found at {self._bt_xml!r}; '
@@ -598,12 +619,18 @@ class FrontierExplorer(Node):
             point = (ox + (cx + 0.5) * res, oy + (cy + 0.5) * res)
             if not self._in_boundary(*point):
                 continue
+            if self._info_gain_mode == 'fov' and robot_pos is not None:
+                heading = math.atan2(point[1] - robot_pos[1], point[0] - robot_pos[0])
+                info_gain = self._info_gain_fov_cast(
+                    (int(cy), int(cx)), heading, unknown, occupied, res)
+            else:
+                info_gain = self._info_gain(cluster, unknown, res)
             centroids.append({
                 'point': point,
                 'goal_cell': (int(cy), int(cx)),
                 'size': len(cluster),
                 'size_m': len(cluster) * res,
-                'info_gain': self._info_gain(cluster, unknown, res),
+                'info_gain': info_gain,
                 'clearance': clearance,
                 'suspicious_ratio': self._suspicious_frontier_ratio(len(cluster) * res, clearance),
             })
@@ -836,6 +863,35 @@ class FrontierExplorer(Node):
                     if 0 <= ny < h and 0 <= nx < w and unknown[ny, nx]:
                         cells.add((ny, nx))
         return len(cells) * resolution * resolution
+
+    def _info_gain_fov_cast(self, goal_cell, heading_rad, unknown, occupied, resolution):
+        """info_gain_mode='fov': count unknown cells actually visible from
+        goal_cell — a sensor cone of info_gain_fov width, out to
+        info_gain_max_depth, centered on heading_rad (the approach direction
+        robot_pos -> goal). Each ray stops at the first occupied cell
+        (occlusion), so a frontier behind a wall from this vantage point
+        doesn't inflate the score the way the fixed omnidirectional 'ring'
+        mode can.
+        """
+        h, w = unknown.shape
+        gy, gx = goal_cell
+        depth_cells = max(1, math.ceil(self._info_gain_max_depth / resolution))
+        n_rays = max(3, int(self._info_gain_fov / max(self._info_gain_angular_res, 1e-3)) + 1)
+        half_fov = self._info_gain_fov / 2.0
+        seen = set()
+        for i in range(n_rays):
+            theta = heading_rad - half_fov + (self._info_gain_fov * i / (n_rays - 1))
+            dy, dx = math.sin(theta), math.cos(theta)
+            for r in range(1, depth_cells + 1):
+                cy = int(round(gy + dy * r))
+                cx = int(round(gx + dx * r))
+                if not (0 <= cy < h and 0 <= cx < w):
+                    break
+                if occupied[cy, cx]:
+                    break
+                if unknown[cy, cx]:
+                    seen.add((cy, cx))
+        return len(seen) * resolution * resolution
 
     # ------------------------------------------------------------------
     # Exploration boundary (optional survey-area polygon, map frame)

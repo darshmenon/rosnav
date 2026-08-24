@@ -449,6 +449,28 @@ Recent reliability fixes in `frontier_explorer.py`:
 - Both features + `_parse_boundary`/`_in_boundary`/session save-load are covered by
   `test/test_frontier_explorer.py` (pytest, wired via `ament_add_pytest_test` — `colcon test
   --packages-select rosnav_bot`). First real Python test coverage in this package.
+- **`_save_session_checkpoint()` bug**: it was defined but never actually called from
+  `_explore()`/`_finish_exploration()` on first pass — the unit test only exercised the method
+  directly, so it passed despite the dead wiring. Caught by a live headless run deliberately
+  run long enough to cross the `iteration % 10 == 0` threshold (checkpoint file only appears
+  every 10 goals or on finish). Fixed by adding the missing call sites. Both save and resume
+  verified live afterward (`resume_session:=true` logged `Resumed session from ...: N
+  previously-visited frontier(s) loaded.`).
+
+**FOV-aware information gain (2026-08-24, `info_gain_mode:=fov`)** — a second idea adapted
+from roadmap-explorer's `CountBasedGain` plugin (own implementation, not copied). Default
+stays `info_gain_mode:=ring` (unchanged fixed-radius unknown-cell count around the whole
+cluster) so the recorded `explorer:=` backend comparison numbers in this section stay valid.
+`fov` mode (`_info_gain_fov_cast()`) instead casts a depth/angle-limited sensor cone
+(`info_gain_fov` radians wide, default ~60°; `info_gain_max_depth` meters, default 2.0) from
+the candidate goal cell along the heading the robot would actually approach from (robot→goal),
+stopping each ray at the first occupied cell (occlusion) — a more physically grounded estimate
+of what a camera/lidar would reveal from that vantage point than an omnidirectional ring,
+particularly useful with `frontier_scorer:=weighted` (the only scorer that uses `info_gain`
+directly in its score formula). Verified live (`house.world`, `frontier_scorer:=weighted
+info_gain_mode:=fov`): non-zero `info=0.85m²`/`info=0.59m²` values correctly feeding the
+weighted score, no crashes, normal exploration progress. Covered by 4 pytest cases (forward
+cell counted, behind-heading cell excluded, occlusion blocks a ray, heading direction respected).
 
 ### Exploration backend choice (`explorer:=`)
 
@@ -1291,7 +1313,7 @@ Gazebo after the fix.
 | `navigation.py` | Custom obstacle-avoidance FSM (no Nav2 needed) | `goal_x`, `goal_y`, `base_speed`, `obstacle_threshold` |
 | `path_planning.py` | Standalone A* path planner (from `/map`, hardcoded fallback) | `map_topic`, `grid_size_x/y`, `resolution`, `safety_margin`, `start_x/y`, `goal_x/y` |
 | `waypoint_nav.py` | Navigate through a sequence of waypoints via Nav2 | `waypoints_file`, `frame_id` |
-| `frontier_explorer.py` | Autonomous map exploration via frontier detection + optional auto-save | `frontier_detector` (`wfd`\|`classic`\|`rrt`), `frontier_scorer`, `min_frontier_size`, `revisit_radius`, `poll_period`, `map_save_path`, `exploration_boundary`, `resume_session`, `session_state_path` |
+| `frontier_explorer.py` | Autonomous map exploration via frontier detection + optional auto-save | `frontier_detector` (`wfd`\|`classic`\|`rrt`), `frontier_scorer`, `min_frontier_size`, `revisit_radius`, `poll_period`, `map_save_path`, `exploration_boundary`, `resume_session`, `session_state_path`, `info_gain_mode` (`ring`\|`fov`), `info_gain_fov`, `info_gain_max_depth` |
 | `benchmark.py` | SLAM coverage / Nav2 goal / AMCL covariance benchmarks + offline `mode:=report` | `mode`, `label`, `duration_sec`, `out_dir`, `goals_file`, `inputs` |
 | `benchmark_slam.sh` | Headless matrix over `slam_algo` values; wraps `benchmark.py` | env: `WORLD`, `DURATION_S`, `ALGOS`, `OUT_DIR` |
 | `check_odometry.py` | Debug odometry data | — |

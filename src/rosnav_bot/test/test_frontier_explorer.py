@@ -10,6 +10,7 @@ and checkable without Gazebo/Nav2 running.
 """
 import importlib.util
 import json
+import math
 import os
 
 import numpy as np
@@ -116,6 +117,58 @@ def test_cell_clearance_no_hit_returns_radius_plus_one():
     mask = np.zeros((5, 5), dtype=bool)
     dist = FrontierExplorer._cell_clearance(2, 2, mask, radius_cells=2, resolution=0.1)
     assert dist == pytest.approx(0.3)  # (2 + 1) * 0.1
+
+
+# ----------------------------------------------------------------------
+# FOV-cast information gain (info_gain_mode='fov')
+# ----------------------------------------------------------------------
+def _fov_explorer(**overrides):
+    attrs = dict(
+        _info_gain_fov=math.radians(60), _info_gain_max_depth=0.5,
+        _info_gain_angular_res=math.radians(5))
+    attrs.update(overrides)
+    return make_bare(**attrs)
+
+
+def test_info_gain_fov_counts_cell_ahead_in_cone():
+    unknown = np.zeros((21, 21), dtype=bool)
+    occupied = np.zeros((21, 21), dtype=bool)
+    unknown[10, 12] = True  # 2 cells "ahead" (heading=0 -> +x/+col)
+    explorer = _fov_explorer()
+    gain = explorer._info_gain_fov_cast((10, 10), 0.0, unknown, occupied, resolution=0.1)
+    assert gain == pytest.approx(0.01)  # exactly 1 cell * 0.1^2
+
+
+def test_info_gain_fov_excludes_cell_behind_heading():
+    unknown = np.zeros((21, 21), dtype=bool)
+    occupied = np.zeros((21, 21), dtype=bool)
+    unknown[10, 7] = True  # 3 cells "behind" heading=0 (a 60deg-wide forward cone misses it)
+    explorer = _fov_explorer()
+    gain = explorer._info_gain_fov_cast((10, 10), 0.0, unknown, occupied, resolution=0.1)
+    assert gain == pytest.approx(0.0)
+
+
+def test_info_gain_fov_stops_at_occlusion():
+    unknown = np.zeros((21, 21), dtype=bool)
+    occupied = np.zeros((21, 21), dtype=bool)
+    occupied[10, 11] = True  # wall 1 cell ahead
+    unknown[10, 13] = True   # unknown cell 3 cells ahead, behind the wall
+    explorer = _fov_explorer(_info_gain_max_depth=0.5)
+    gain = explorer._info_gain_fov_cast((10, 10), 0.0, unknown, occupied, resolution=0.1)
+    assert gain == pytest.approx(0.0)  # occluded — never seen
+
+
+def test_info_gain_fov_respects_heading_direction():
+    unknown = np.zeros((21, 21), dtype=bool)
+    occupied = np.zeros((21, 21), dtype=bool)
+    unknown[10, 8] = True  # 2 cells to the left
+    explorer = _fov_explorer()
+    facing_left = explorer._info_gain_fov_cast(
+        (10, 10), math.pi, unknown, occupied, resolution=0.1)
+    facing_right = explorer._info_gain_fov_cast(
+        (10, 10), 0.0, unknown, occupied, resolution=0.1)
+    assert facing_left == pytest.approx(0.01)
+    assert facing_right == pytest.approx(0.0)
 
 
 # ----------------------------------------------------------------------

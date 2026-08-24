@@ -697,6 +697,9 @@ def _build_runtime_actions(context, pkg_share: str):
                     'frontier_clearance_radius': LaunchConfiguration('frontier_clearance_radius'),
                     'resume_session': resume_session,
                     'session_state_path': session_state_path,
+                    'info_gain_mode': LaunchConfiguration('info_gain_mode'),
+                    'info_gain_fov': LaunchConfiguration('info_gain_fov'),
+                    'info_gain_max_depth': LaunchConfiguration('info_gain_max_depth'),
                     # rclpy can't type-infer an *empty* double-array
                     # override (raises InvalidParameterTypeException) — only
                     # pass this key when a real boundary was configured, so
@@ -984,6 +987,18 @@ def generate_launch_description():
                         '<map_prefix>_session.json instead of starting fresh. The checkpoint '
                         'is written automatically whenever map_prefix/map_save_path is set. '
                         '(builtin explorer only)'),
+        DeclareLaunchArgument(
+            name='info_gain_mode', default_value='ring',
+            description='weighted/utility scorer info-gain estimate: "ring" (default, '
+                        'unchanged) fixed-radius unknown-cell count around the whole cluster, '
+                        'or "fov" a depth/angle-limited sensor cone cast from the goal cell '
+                        'along the approach heading, stopping at occlusions. (builtin explorer only)'),
+        DeclareLaunchArgument(
+            name='info_gain_fov', default_value='1.04',
+            description='info_gain_mode:=fov sensor cone width (radians, default ~60deg)'),
+        DeclareLaunchArgument(
+            name='info_gain_max_depth', default_value='2.0',
+            description='info_gain_mode:=fov sensor cone depth (m)'),
         DeclareLaunchArgument(
             name='safety', default_value='true',
             description='Launch collision monitor safety layer'),
