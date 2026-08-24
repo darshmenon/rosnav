@@ -103,6 +103,9 @@ ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true exp
 ![Coverage comparison across the 4 explorer:= backends, house.world and warehouse.world](images/explorer_backend_coverage.png)
 ![SLAM drift/yaw/convergence, builtin vs explore_lite](images/explorer_backend_accuracy.png)
 
+How `explorer:=builtin` actually picks a goal, step by step: https://claude.ai/code/artifact/bcce2ab9-74e1-4472-9eab-50d33daacfda
+(private Claude artifact — share it from the page's share menu if this needs to be readable without your account)
+
 `explorer:=builtin` extras (`concepts.md` §9 for details):
 - `exploration_boundary:="x1,y1,x2,y2,..."` — confine frontiers to a map-frame polygon
 - `resume_session:=true` — continue from the last visited-frontier checkpoint
