@@ -282,13 +282,13 @@ Visualization Manager:
       Color: 0; 200; 255
       Color Transformer: AxisColor
       Decay Time: 0
-      Enabled: true
+      Enabled: false
       Invert Rainbow: false
       Max Color: 255; 255; 255
       Max Intensity: 0
       Min Color: 0; 0; 0
       Min Intensity: 0
-      Name: DepthCloud
+      Name: DepthCloud (disabled - see concepts.md ORB-SLAM3 section, bug 6)
       Position Transformer: XYZ
       Selectable: true
       Size (Pixels): 2
@@ -303,7 +303,7 @@ Visualization Manager:
         Value: /camera/depth/points
       Use Fixed Frame: true
       Use rainbow: true
-      Value: true
+      Value: false
     - Alpha: 0.8
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:

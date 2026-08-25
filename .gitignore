@@ -61,10 +61,12 @@ src/cslam_common_interfaces
 .codex/
 
 # Ad-hoc screen captures dropped at repo root during dev sessions, not
-# committed source
+# committed source — anything worth keeping gets moved into images/ with a
+# real name (see e.g. images/orbslam3_*.png) instead of staying here.
 /*.mp4
 /Screenshot *.png
 /image.png
+/image copy*.png
 /render.png
 
 # Resume
