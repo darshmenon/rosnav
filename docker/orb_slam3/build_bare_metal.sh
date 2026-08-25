@@ -98,14 +98,28 @@ else
 fi
 
 # ORB-SLAM3 core (suchetanrs' fork — see docker/orb_slam3/Dockerfile comment
-# on why this fork, not upstream UZ-SLAMLab/ORB_SLAM3). build.sh installs its
-# own Thirdparty libs (DBoW2/g2o/Sophus) under its own tree, not $PREFIX.
+# on why this fork, not upstream UZ-SLAMLab/ORB_SLAM3). build.sh's own
+# `make install` for Thirdparty/Sophus targets the default /usr/local — fine
+# in the reference Docker image (root user, and /usr/local/include is on
+# GCC's default search path so the header "just works" with no find_package
+# plumbing needed), but silently fails here as a non-root user (no `set -e`
+# in their build.sh to catch it), leaving sophus/se3.hpp uninstalled anywhere
+# — confirmed this is exactly what broke the ROS2 wrapper's colcon build
+# (fatal error: sophus/se3.hpp: No such file or directory) the first time
+# this ran. Explicitly install it to $PREFIX ourselves below, after build.sh.
 mkdir -p "$HOME/orb_slam3_src"
 if [[ ! -d "$HOME/orb_slam3_src/ORB_SLAM3" ]]; then
   git clone --depth 1 https://github.com/suchetanrs/ORB_SLAM3.git "$HOME/orb_slam3_src/ORB_SLAM3"
 fi
 ( set +u; source /opt/ros/humble/setup.bash; set -u
   cd "$HOME/orb_slam3_src/ORB_SLAM3" && chmod +x build.sh && ./build.sh )
+
+# See the comment above build.sh's invocation — its own `make install` for
+# Sophus targets /usr/local and fails silently as a non-root user. Re-install
+# from the already-built tree (no rebuild) to our user-writable prefix, where
+# colcon's -DCMAKE_PREFIX_PATH="$PREFIX" (below) will actually find it via
+# find_package(Sophus).
+cmake --install "$HOME/orb_slam3_src/ORB_SLAM3/Thirdparty/Sophus/build" --prefix "$PREFIX"
 
 # ROS2 wrapper (orb_slam3_ros2_wrapper, slam_msgs, orb_slam3_map_generator) —
 # plain subdirectories of suchetanrs/ORB-SLAM3-ROS2-Docker, not standalone
@@ -129,6 +143,18 @@ done
 sed -i "s#/home/orb/ORB_SLAM3#$HOME/orb_slam3_src/ORB_SLAM3#" \
   "$HOME/orb_slam3_src/ORB-SLAM3-ROS2-Docker/orb_slam3_ros2_wrapper/CMakeModules/FindORB_SLAM3.cmake"
 
+# Every sensor-mode launch file (rgbd/rgbd_imu/mono/mono_imu/stereo/stereo_imu)
+# and unirobot.launch.py's CPU/RAM monitor hardcode the same two Docker-image
+# paths for the vocabulary file, param YAML, and monitor script — confirmed
+# this breaks `ros2 launch orb_slam3_ros2_wrapper unirobot.launch.py
+# sensor_config:=rgbd` here with "Failed to open settings file at:
+# /root/colcon_ws/...". Patch our local clone the same way as
+# FindORB_SLAM3.cmake above.
+sed -i \
+  -e "s#/home/orb/ORB_SLAM3#$HOME/orb_slam3_src/ORB_SLAM3#g" \
+  -e "s#/root/colcon_ws#$WS#g" \
+  "$HOME/orb_slam3_src/ORB-SLAM3-ROS2-Docker/orb_slam3_ros2_wrapper/launch/"*.py
+
 # Swap in rosnav_bot's own camera topics/frames/intrinsics — same two files
 # the Docker image overwrites, see docker/orb_slam3/README.md.
 cp "$REPO_ROOT/docker/orb_slam3/params/rosnav_rgbd.yaml" \
@@ -137,6 +163,12 @@ cp "$REPO_ROOT/docker/orb_slam3/params/rosnav_rgbd_ros_params.yaml" \
    "$WS/src/orb_slam3_ros2_wrapper/params/ros_params/gazebo-rgbd-ros-params.yaml"
 
 ( set +u; source /opt/ros/humble/setup.bash; set -u
+  # MAKEFLAGS, not just --parallel-workers: colcon's own --parallel-workers
+  # only controls how many *packages* build at once (already 1 here, small
+  # workspace) — the actual `make -jN` inside each package's build ignores
+  # BUILD_JOBS entirely unless told via MAKEFLAGS (confirmed: without this,
+  # the wrapper's colcon build silently ran `make -j22` regardless).
+  export MAKEFLAGS="-j${BUILD_JOBS}"
   cd "$WS" && colcon build --symlink-install --cmake-args \
     -DCMAKE_PREFIX_PATH="$PREFIX" )
 

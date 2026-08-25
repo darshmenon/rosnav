@@ -24,7 +24,21 @@ ORB_SLAM3_RGBD_ROS2:
     robot_qz: 0.0
     robot_qw: 0.999047
 
-    visualization: true
+    # false by default: ORB_SLAM3::Viewer::Run() (gated by this exact flag,
+    # System.cc's bUseViewer) bundles the Pangolin 3D map view together with
+    # a plain OpenCV cv::namedWindow/imshow "Current Frame" debug window —
+    # the latter needs GTK-enabled OpenCV.
+    #   - Docker (docker/orb_slam3/Dockerfile): DOES install libgtk-3-dev
+    #     before building OpenCV, matching the upstream reference image — set
+    #     this true there any time, no rebuild needed.
+    #   - Bare-metal (build_bare_metal.sh): deliberately skips GTK/GStreamer
+    #     dev headers (ORB-SLAM3 doesn't need OpenCV's own video I/O), so
+    #     leaving this true crashes on startup with "OpenCV... Rebuild the
+    #     library with ... GTK+ ... support" (confirmed) — only flip it if
+    #     you rebuild OpenCV yourself with libgtk-3-dev present first.
+    # Kept false here since this one file is shared between both paths and
+    # false is the setting that works everywhere with no extra steps.
+    visualization: false
     # true = trust the odom_frame -> robot_base_frame TF that already exists
     # (ekf_filter_node, fusing wheel odom + IMU — see concepts.md §6b) and
     # only publish map -> odom on top of it. Same "one odom->base_link

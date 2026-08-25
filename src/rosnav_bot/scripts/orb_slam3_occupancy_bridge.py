@@ -175,7 +175,7 @@ class OrbSlam3OccupancyBridge(Node):
 
         try:
             tf_map_cam = self._tf_buffer.lookup_transform(
-                self._map_frame, msg.header.frame_id, Time(msg=msg.header.stamp),
+                self._map_frame, msg.header.frame_id, Time.from_msg(msg.header.stamp),
                 timeout=self._tf_timeout)
         except (tf2_ros.LookupException, tf2_ros.ConnectivityException,
                 tf2_ros.ExtrapolationException):

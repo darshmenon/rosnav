@@ -132,6 +132,70 @@ docker compose up orb_slam3          # separate terminal — see docker/orb_slam
 | Multi-session map reuse | `rtabmap_db` (SQLite) | `System.SaveAtlasToFile`/`LoadAtlasFromFile` |
 | Best fit here | Default VSLAM choice — one process, native build | Tracking-robustness comparison against RTAB-Map, or when you specifically want ORB-SLAM3's tracker |
 
+**Verified working end-to-end** (2026-08-25, bare-metal build): with
+`slam_algo:=orbslam3` running and the ORB-SLAM3 sidecar tracking against the
+sim's camera, `/map` filled in with real occupied/free cells (not just
+unknown) and Nav2's `global_costmap` matched it exactly — confirming the
+whole chain (tracker → `map->odom` TF → `orb_slam3_occupancy_bridge.py` →
+`/map` → Nav2) actually works, not just that the pieces start without
+crashing.
+
+**Bugs found and fixed getting there** — none of these are hypothetical,
+each one broke a real run:
+
+1. **Sophus header missing at colcon-build time.** ORB_SLAM3's own
+   `build.sh` runs `make install` for its vendored Sophus with no
+   `CMAKE_INSTALL_PREFIX`, defaulting to `/usr/local`. In the reference
+   Docker image (root user) this silently succeeds, and `/usr/local/include`
+   is on GCC's default search path anyway — so it "just works" there with no
+   `find_package` plumbing. As a non-root bare-metal user it fails
+   permission-denied, *silently* (no `set -e` in their `build.sh`), leaving
+   `sophus/se3.hpp` uninstalled anywhere → `orb_slam3_ros2_wrapper`'s colcon
+   build fails with `fatal error: sophus/se3.hpp: No such file or
+   directory`. Fix (`build_bare_metal.sh`): explicitly
+   `cmake --install Thirdparty/Sophus/build --prefix "$PREFIX"` after
+   `build.sh` runs — no rebuild needed, just installs from the
+   already-built tree.
+2. **Hardcoded Docker paths in CMake and every sensor-mode launch file.**
+   `orb_slam3_ros2_wrapper/CMakeModules/FindORB_SLAM3.cmake` hardcodes
+   `set(ORB_SLAM3_ROOT_DIR "/home/orb/ORB_SLAM3")` — a plain `set()`, not an
+   environment-variable read, despite its own comment claiming otherwise.
+   `rgbd.launch.py` (and `rgbd_imu`/`mono`/`mono_imu`/`stereo`/`stereo_imu`)
+   separately hardcode `/home/orb/ORB_SLAM3/Vocabulary/ORBvoc.txt` and
+   `/root/colcon_ws/src/orb_slam3_ros2_wrapper/params/...` for the vocabulary
+   and settings-file arguments passed to the node. Both match the Docker
+   image's fixed layout exactly, so nothing breaks there — but bare-metal
+   clones to `$HOME/orb_slam3_src`/`$HOME/orb_slam3_ws`, so the node dies
+   immediately with `Failed to open settings file at: /root/colcon_ws/...`.
+   Fix: `build_bare_metal.sh` `sed`-patches both the CMake file and every
+   launch file's hardcoded strings in the local clone after cloning (not
+   upstream).
+3. **`visualization: true` crashes on startup.** ORB_SLAM3's `Viewer::Run()`
+   (started when `System`'s `bUseViewer` — this repo's `visualization` ROS
+   param — is true) bundles the Pangolin 3D map view together with a plain
+   `cv::namedWindow`/`imshow` "Current Frame" debug window in the same
+   function. The latter needs GTK-enabled OpenCV; this repo's OpenCV 4.4
+   build deliberately skips GTK/GStreamer dev headers (ORB-SLAM3 doesn't use
+   OpenCV's own video I/O) → `terminate called after throwing... OpenCV...
+   Rebuild the library with ... GTK+ ... support`. Since the flag bundles
+   both windows together, keeping the Pangolin view without rebuilding
+   OpenCV isn't possible without patching `Viewer.cc` — not done here. Fix:
+   `docker/orb_slam3/params/rosnav_rgbd_ros_params.yaml` defaults
+   `visualization: false`; flip it only after rebuilding OpenCV with
+   `libgtk-3-dev` present before the cmake configure step.
+4. **`colcon build` ignored `BUILD_JOBS`.** `cmake --build ... -j"$BUILD_JOBS"`
+   controls the manual OpenCV/Pangolin build steps, but colcon's own
+   `make` invocation for the ROS packages runs at full `nproc` regardless —
+   confirmed via `ps aux` showing `-j22` even with `BUILD_JOBS=1` requested.
+   Fix: `export MAKEFLAGS="-j${BUILD_JOBS}"` before the `colcon build` call,
+   which `make` (the underlying build tool for `ament_cmake` packages)
+   reads directly.
+5. **`orb_slam3_occupancy_bridge.py`'s own bug**: `Time(msg=msg.header.stamp)`
+   isn't valid rclpy API (`TypeError: Time.__init__() got an unexpected
+   keyword argument 'msg'`) — crashed the bridge node on the very first
+   depth frame, so `/map` never appeared even though everything upstream
+   was healthy. Fix: `Time.from_msg(msg.header.stamp)`.
+
 ### Sensors & TF
 
 ```

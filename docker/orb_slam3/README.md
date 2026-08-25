@@ -75,10 +75,16 @@ CPU/RAM.
    `network_mode: host` means it discovers `/camera/image_raw`,
    `/camera/depth/image_raw`, `/tf` etc. over normal ROS 2 DDS — no explicit
    container linking needed, same as running a second terminal on the host.
-3. A Pangolin viewer window should pop up (tracked ORB features, keyframe
-   trajectory) — if it doesn't, check `xhost +local:root` was run on the host
-   first (X11 access). Once ORB-SLAM3 starts publishing `map->odom`, `/map`
-   fills in and Nav2/the frontier explorer pick it up like any other backend.
+3. `visualization` defaults to `false` (see Known caveats) — no viewer
+   window pops up. Confirm it's actually tracking via the logs instead:
+   ```bash
+   # "Current ORB-SLAM3 tracking frequency: ..." once a second means it's alive
+   ros2 topic echo /map --once --field info    # width/height fill in once map->odom exists
+   ```
+   Once ORB-SLAM3 starts publishing `map->odom`, `/map` fills in and
+   Nav2/the frontier explorer pick it up like any other backend — verified
+   end-to-end (see concepts.md §3's ORB-SLAM3 section for the full bug list
+   this took to get working).
 
 Textured worlds (`cafe`, `hospital`, Fuel worlds via
 `scripts/download_fuel_worlds.sh`) track much better than flat/untextured
@@ -114,3 +120,11 @@ Same two-phase flow as `slam_algo:=vslam`'s `rtabmap_db`:
 - `costmap_ghost_clear.py` already runs for `slam_algo:=orbslam3` (clears
   Nav2's costmap on a `map->odom` jump, same as every other backend) —
   `slam_accuracy_monitor.py` doesn't know about this backend yet.
+- `visualization: false` is the default — ORB_SLAM3's `Viewer::Run()`
+  bundles the Pangolin 3D view together with a GTK-based `cv::imshow` debug
+  window under the same flag. The Docker image *does* build OpenCV with GTK
+  support (matching upstream) — flip this to `true` there any time, no
+  rebuild needed. The bare-metal build deliberately skips GTK/GStreamer dev
+  headers, so it needs an OpenCV rebuild with `libgtk-3-dev` present first
+  (see `params/rosnav_rgbd_ros_params.yaml`'s comment) or it crashes on
+  startup (`Rebuild the library with ... GTK+ ... support`).
