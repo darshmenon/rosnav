@@ -10,8 +10,20 @@
     4. Clear global costmap  — force full replan on new map state
     5. Wait                  — pause before retry (sensor data settles)
 
-  Outer RecoveryNode retries the whole navigate+recover loop up to 6 times.
+  Outer RecoveryNode retries the whole navigate+recover loop up to 3 times.
   If the goal is updated mid-flight, recovery exits immediately (GoalUpdated).
+
+  Why only 3 (was 6, 2026-08-25 warehouse sweep): when a goal is genuinely
+  physically unreachable (robot wedged against shelving), BackUp/Spin keep
+  commanding wheel motion that doesn't translate the robot — each attempt
+  logged "Pose Goes Off Grid" in behavior_server. That grinding corrupts
+  wheel odometry, which slam_toolbox then has to correct with large loop
+  closures (observed jumps up to 1.3m/21deg, `costmap_ghost_clear.py`
+  logged 37 of them in one run) — and those jumps smear the /map occupancy
+  grid into a diagonal starburst instead of clean walls, since scans
+  inserted during the corrupted-odometry window don't get retroactively
+  redrawn. Fewer retries means a stuck goal fails and gets blacklisted by
+  the explorer sooner, before odometry drifts far enough to matter.
 
   Nav2 BT node reference (Humble):
     https://navigation.ros.org/behavior_trees/trees/nav2_bt_navigator_navigate_to_pose.html
@@ -23,7 +35,7 @@
       Outer retry wrapper: up to 6 full navigate+recover cycles.
       If all 6 fail → NavigateToPose action returns FAILED.
     -->
-    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+    <RecoveryNode number_of_retries="3" name="NavigateRecovery">
 
       <!-- ── Navigation pipeline ────────────────────────────────────────── -->
       <PipelineSequence name="NavigateWithReplanning">

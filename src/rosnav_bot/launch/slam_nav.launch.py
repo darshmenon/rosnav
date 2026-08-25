@@ -82,6 +82,18 @@ def _resolve_map_yaml(world_name: str, pkg_share: str) -> str:
     return candidates[0]
 
 
+def _resolve_slam_params_file(raw_value: str, pkg_share: str) -> str:
+    """Resolve an optional slam_toolbox params override."""
+    value = raw_value.strip()
+    if not value:
+        return ''
+    if os.path.isabs(value) or os.path.sep in value:
+        return os.path.expanduser(value)
+    if not value.endswith(('.yaml', '.yml')):
+        value = f'{value}.yaml'
+    return os.path.join(pkg_share, 'config', value)
+
+
 # Per-world spawn points verified live to avoid known SLAM failure modes at
 # the generic default (1.5, 1.0): 'outdoor's flat bowl-center default is out
 # of lidar range of any terrain (map stays 0x0 forever); 'multi_terrain's
@@ -114,6 +126,11 @@ _WORLD_SPAWN_DEFAULTS = {
     # (x=-9..-5, y=-6..6); generic default landed the robot inside shelf
     # sh_3f_1's collision box (x=-1.4..1.4, y=0.75..1.25).
     'warehouse': {'x': '-7.0', 'y': '0.0', 'z': '0.3', 'yaw': '0.0'},
+    # South-central floor of bench_room_cluttered's spawn-side half — clear
+    # of the divider wall and every crate by >=0.8m. The generic default
+    # (1.5, 1.0) sits ~0.46m from cb_box_3, inside the collision monitor's
+    # 0.55m stop radius, latching STOP before the robot ever moves.
+    'bench_room_cluttered': {'x': '-0.6', 'y': '-1.6', 'z': '0.3', 'yaw': '0.0'},
 }
 _GENERIC_SPAWN_DEFAULT = {'x': '1.5', 'y': '1.0', 'z': '0.3', 'yaw': '0.0'}
 
@@ -153,6 +170,10 @@ def _build_runtime_actions(context, pkg_share: str):
     # Defined early (not just inside the use_slam branch below) so the summary
     # LogInfo at the bottom of this function can always reference it.
     slam_toolbox_mode = LaunchConfiguration('slam_toolbox_mode').perform(context).strip().lower() if slam_algo == '2d' else 'n/a'
+    slam_params_file_override = _resolve_slam_params_file(
+        LaunchConfiguration('slam_params_file').perform(context),
+        pkg_share,
+    )
     rtabmap_db = os.path.expanduser(
         LaunchConfiguration('rtabmap_db').perform(context).strip())
     run_cslam = False
@@ -460,6 +481,10 @@ def _build_runtime_actions(context, pkg_share: str):
         if slam_toolbox_mode == 'lifelong':
             # No launch file ships lifelong_slam_toolbox_node (only async/sync do) —
             # run the node directly, same pattern as _common.cartographer_slam_nodes.
+            _lifelong_params_file = (
+                slam_params_file_override
+                or os.path.join(pkg_share, 'config', 'mapper_params_lifelong.yaml')
+            )
             slam_or_localization = TimerAction(
                 period=5.0,
                 actions=[Node(
@@ -468,7 +493,7 @@ def _build_runtime_actions(context, pkg_share: str):
                     name='slam_toolbox',
                     output='screen',
                     parameters=[
-                        os.path.join(pkg_share, 'config', 'mapper_params_lifelong.yaml'),
+                        _lifelong_params_file,
                         {'use_sim_time': True},
                     ],
                 )],
@@ -478,6 +503,10 @@ def _build_runtime_actions(context, pkg_share: str):
             _mode_params_file = (
                 'mapper_params_online_sync.yaml' if slam_toolbox_mode == 'online_sync'
                 else 'mapper_params_online_async.yaml')
+            _slam_params_file = (
+                slam_params_file_override
+                or os.path.join(pkg_share, 'config', _mode_params_file)
+            )
             slam_or_localization = TimerAction(
                 period=5.0,
                 actions=[
@@ -490,7 +519,7 @@ def _build_runtime_actions(context, pkg_share: str):
                             )
                         ),
                         launch_arguments={
-                            'slam_params_file': os.path.join(pkg_share, 'config', _mode_params_file),
+                            'slam_params_file': _slam_params_file,
                             'use_sim_time': 'true',
                         }.items(),
                     )
@@ -760,19 +789,10 @@ def _build_runtime_actions(context, pkg_share: str):
             # explore_lite tutorial documents the same class of bug
             # ("All frontiers traversed" / robot never starts) with the
             # same standard fix — spin briefly in place first — so this
-            # bootstrap spin is applied here too. CONFIRMED IT DOES NOT
-            # FULLY RESOLVE rrt_explore: even after real, verified motion
-            # (TF rotates, slam_toolbox's own GetMap service returns real
-            # internal map data), /map still never publishes on the topic
-            # for this backend specifically — a real, currently open bug
-            # not further diagnosed. Kept anyway because it fixes a
-            # separate real bug on its own merits (see the ExecuteProcess
-            # comment below) and may still help if the /map-publish issue
-            # turns out to be sim/timing-dependent in some environments.
+            # bootstrap spin is applied here too.
             actions.append(TimerAction(period=8.0, actions=[
                 LogInfo(msg='[slam_nav] rrt_explore bootstrap: spinning in place '
-                             '~4s to try to seed the first /map (see comment '
-                             'above — known not to fully fix rrt_explore yet).'),
+                             '~4s to seed early /map growth before rrt subscribes.'),
                 # Gazebo's drive plugin holds the *last* commanded velocity
                 # indefinitely (no deadman timeout) — `--times 40` alone
                 # would leave the robot spinning forever once `ros2 topic
@@ -784,6 +804,36 @@ def _build_runtime_actions(context, pkg_share: str):
                          "'{angular: {z: 0.6}}' --rate 10 --times 40 && "
                          "ros2 topic pub /cmd_vel geometry_msgs/msg/Twist "
                          "'{}' --once"],
+                    output='screen',
+                ),
+            ]))
+            # ROOT CAUSE FOUND (2026-08-26), the bootstrap spin above never
+            # addressed it: rrt.cpp's explore() — the ONLY place that sets
+            # map_frame_ (via map_data_available(), rrt.cpp:630-631) — is
+            # never called at all until rrt_explore's own timer_main_ is
+            # created, which only happens inside enable_exploration_callback
+            # (rrt.cpp:576) upon receiving a std_msgs/Bool{data:true} on
+            # this node's own "<node_name>/enable" topic (rrt.cpp:61) — i.e.
+            # "<namespace>/rrt/enable" here. Nothing in this repo ever
+            # published that message, so rrt_explore sat fully idle forever
+            # regardless of whether /map had data (confirmed live: /map WAS
+            # publishing at 1Hz the whole time, yet map_frame_ stayed empty
+            # — "base_link to  transform is not available" with an empty
+            # target_frame is the direct symptom). Fix: publish the enable
+            # trigger once, shortly after the rrt node itself starts (it
+            # launches at the period=20.0 TimerAction above).
+            # slam_nav.launch.py calls _common.explorer_nodes() with no
+            # `namespaces` kwarg, which resolves to the same synthetic
+            # 'robot1' namespace as the rrt_explore Node itself
+            # (_common.py's rrt_namespace = ns0 or 'robot1').
+            actions.append(TimerAction(period=23.0, actions=[
+                LogInfo(msg='[slam_nav] rrt_explore: publishing the required '
+                             '/robot1/rrt/enable trigger (see comment above — '
+                             'explore() never ran without this).'),
+                ExecuteProcess(
+                    cmd=['ros2', 'topic', 'pub',
+                         '/robot1/rrt/enable', 'std_msgs/msg/Bool',
+                         '{data: true}', '--once'],
                     output='screen',
                 ),
             ]))
@@ -1124,6 +1174,12 @@ def generate_launch_description():
                         'processes every scan — slower but no dropped scans), or "lifelong" '
                         '(online_async + long-term memory/eviction for revisited areas). '
                         'Ignored for other slam_algo values.'),
+        DeclareLaunchArgument(
+            name='slam_params_file', default_value='',
+            description='Optional slam_toolbox params override. Accepts an absolute/relative '
+                        'path, a config filename, or a bare config stem such as '
+                        'mapper_params_online_async_warehouse_stable. Empty uses the '
+                        'slam_toolbox_mode default params.'),
         DeclareLaunchArgument(
             name='localization_filter', default_value='ekf',
             description='robot_localization filter fusing wheel odom + IMU for odom->base_link: '

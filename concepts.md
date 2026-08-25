@@ -562,27 +562,80 @@ above), `explore_lite` (m-explore-ros2), `frontier` (frontier_exploration_ros2, 
 `rrt` (rrt_explore). **Default is `explore_lite`** (changed 2026-08-23 from `builtin`).
 
 Headless single-robot comparison on `house.world` (2026-08-23, `explorer:=<backend>`,
-identical spawn point):
+identical spawn point) — **note: `frontier` and `rrt`'s rows below are historical; both had
+real bugs found and fixed on 2026-08-25/26, see the writeup further down this section**:
 
 | backend | coverage | outcome |
 |---|---|---|
 | `builtin` | 58% | robot got wedged on a recovery-behavior collision loop (`Pose Goes Off Grid` on both `backup` and `spin`); needed a manual map save + kill |
 | **`explore_lite`** | 22% (house), 36.5% (office) | **finished cleanly on its own both times, no intervention** |
-| `frontier` (MRTSP) | 29% | got stuck retrying an unreachable frontier cluster indefinitely — no blacklist/give-up logic like `builtin`'s |
-| `rrt` (rrt_explore) | 0% | **does not run at all in single-robot mode** — `rrt.cpp`'s `get_ros_parameters()` tries to parse a robot ID out of the node namespace assuming a `robotN/` prefix; with no namespace (single robot) this throws, the function returns `false`, and the constructor bails before setting up any timers/subscriptions (`rrt.cpp:45`). The node stays alive but never explores. Only usable multi-robot, namespaced. |
+| `frontier` (MRTSP) | 29% | got stuck retrying an unreachable frontier cluster indefinitely — **fixed 2026-08-26** by enabling upstream's frontier suppression (was off by default) |
+| `rrt` (rrt_explore) | 0% | **did not run at all in single-robot mode** at the time — **two real bugs found and fixed 2026-08-26** (missing enable-trigger, wrong action-client namespace); now completes real navigation goals |
 
 `explore_lite` was picked as the default because it's the only backend that reliably
 finishes an unattended/headless run — it explores less per run than `builtin`, but doesn't
 require a human to notice and rescue a wedged robot. `multi_robot.launch.py`'s `explorer:=`
 default is unchanged (`builtin`) since this comparison only covered single-robot mode.
 
-**No backend wins on every world.** On `warehouse.world`, `explore_lite` hit a different
-failure mode than on house/office: it picked a frontier within `nav2_params.yaml`'s
+**No backend wins on every world.** On `warehouse.world`, `explore_lite` used to hit a
+different failure mode than on house/office: it picked a frontier within `nav2_params.yaml`'s
 `xy_goal_tolerance` (0.25m) of the robot, `controller_server` declared the goal reached
 instantly with zero actual movement, and it looped on an equally-close next goal forever
 (1480+ iterations, 0% progress). `builtin` on the same world got to 46.3% before wedging near
-a shelf — clearly better there. If a new world stalls immediately under the default
+a shelf — better there at the time. If a new world stalls immediately under the default
 `explore_lite`, try `explorer:=builtin` before assuming the world itself is broken.
+
+**`explore_lite` warehouse.world 0% bug FIXED (2026-08-25/26).** Root cause: `explore.cpp`
+(vendored locally at `src/explore_lite/`, not apt-installed — patchable) picked the
+lowest-cost frontier's *centroid* with no floor on distance from the robot; at cold start the
+only frontier in a tight aisle mouth can have a centroid inside `xy_goal_tolerance`. Fix:
+when the centroid is too close, retarget to the nearest point *on that same frontier's own
+observed boundary* that clears a new `min_goal_distance` param (0.4m,
+`config/explore_lite.yaml`) — not the farthest point (an earlier attempt at this fix, which
+regressed `house.world` by sometimes targeting an unreachable far point across a wall; see
+`EXPLORATION_TESTING_NOTES.md`, repo-local, not pushed, for the full story). Verified live:
+`warehouse.world` coverage 0% → 45.3% (real, sustained exploration, no intervention needed);
+`house.world` 120s `benchmark.py mode:=accuracy`+`mode:=slam` re-run vs `builtin`: final drift
+0.712m (regressed) → **0.216m** (fixed, vs builtin's 0.335m), yaw drift 115.6° → **21.2°** (vs
+builtin's 98.2°) — `explore_lite` is the lower-drift backend again, matching the original
+2026-08-23 relationship. `builtin` also improved this session: a local-minimum watchdog
+(`frontier_explorer.py`, `local_minimum_*` params) cancels a goal that's making no
+translation/map-growth progress well before the old 60s hard timeout, cutting its house.world
+drift from 1.098m → 0.335m.
+
+**`frontier` (MRTSP) warehouse stall FIXED (2026-08-26).** Root cause matched the earlier
+theory exactly: `frontier_suppression_enabled` defaults to `false` upstream, so a genuinely
+unreachable goal gets retried forever (`controller_server`: `Failed to make progress` on the
+identical goal, position frozen). Fix: enabled suppression in
+`config/frontier_exploration.yaml` with upstream's own suggested thresholds
+(`frontier_suppression_attempt_threshold: 3`, `frontier_suppression_no_progress_timeout_s:
+20.0`, `frontier_suppression_timeout_s: 90.0`). Verified live: 36.7% (stalled, unsuppressed)
+→ 39.5% (sustained, zero stall repeats, suppressed) on `warehouse.world`. This is now the
+live default config, not an opt-in flag.
+
+**`rrt` (rrt_explore) went from 0%-forever to actually working (2026-08-26)** — two real bugs
+found and fixed, on top of the pre-existing synthetic-namespace workaround:
+1. Nothing ever published the `std_msgs/Bool{data:true}` trigger `rrt.cpp`'s
+   `enable_exploration_callback()` requires before it will even start its exploration timer
+   — the node was alive but permanently idle regardless of `/map` availability (which, contra
+   the old theory, actually was publishing fine at 1Hz the whole time). Fixed with a one-shot
+   `ros2 topic pub /robot1/rrt/enable ...` in `slam_nav.launch.py`, ~3s after the rrt node
+   starts.
+2. Even once enabled, no goal ever reached Nav2: `rrt.cpp` hardcoded its `NavigateToPose`
+   action client to the bare name `"navigate_to_pose"`, which resolves relative to the node's
+   own (synthetic `robot1`) namespace — `bt_navigator` in single-robot mode only serves the
+   unnamespaced `/navigate_to_pose`. A launch-level `remappings=[...]` was tried first and
+   confirmed **not** to work for this action name (verified via `ros2 action info` even with
+   the remap correctly applied at the CLI level) — fixed properly by patching `rrt.cpp`
+   (vendored at `~/rosnav_sources/rrt-explore/`) to read the action name from a new
+   `nav_to_pose_action_name` parameter instead of a hardcoded string.
+   Verified end-to-end: `bt_navigator: Begin navigating...` → `controller_server: Received a
+   goal` → `Reached the goal!` / `Goal succeeded` — the first fully-successful navigation
+   cycle ever recorded for this backend here. Coverage reached 28.9% on `warehouse.world`.
+
+Still not production-ready: an intermittent SIGSEGV was observed once (not reproduced on a
+retry, not root-caused), and it stopped picking new goals after its first success in one run
+(not diagnosed). Full writeup: `EXPLORATION_TESTING_NOTES.md` (repo-local, not pushed).
 
 ---
 

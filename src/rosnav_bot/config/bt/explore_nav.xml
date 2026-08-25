@@ -5,17 +5,28 @@
 
   Differences vs navigate_w_recovery:
     - Replans at 2 Hz (map grows while exploring; stale paths go bad fast)
-    - Up to 8 outer recoveries (frontier goals are noisier than fixed waypoints)
+    - Up to 4 outer recoveries (frontier goals are noisier than fixed waypoints)
     - Same RoundRobin recoveries: backup → spin → clear costmaps → wait
 
   Passed explicitly by frontier_explorer / frontier_coordinator via
   NavigateToPose.behavior_tree so exploration always gets this tree even
   if the navigator default BT is different.
+
+  number_of_retries was 8 until 2026-08-25: a live warehouse.world run showed
+  repeated failed BackUp/Spin cycles on one bad goal (each aborting early
+  with "Pose Goes Off Grid" from behavior_server, i.e. jerky/incomplete
+  motion) correlating with the SLAM map_odom yaw correction climbing
+  continuously (146.1deg -> 166.1deg over ~15s) instead of settling -- a
+  sign the repeated oscillating recovery motion was degrading scan-matching
+  confidence. Fewer retries means a genuinely bad goal fails and gets
+  blacklisted sooner, instead of grinding through more oscillation cycles
+  that risk compounding localization drift. See EXPLORATION_TESTING_NOTES.md
+  "Open bug: SLAM map_odom drift after repeated failed recovery".
 -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
 
-    <RecoveryNode number_of_retries="8" name="ExploreNavigateRecovery">
+    <RecoveryNode number_of_retries="4" name="ExploreNavigateRecovery">
 
       <PipelineSequence name="ExploreWithReplanning">
 

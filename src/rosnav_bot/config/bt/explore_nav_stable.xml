@@ -1,0 +1,51 @@
+<!--
+  Conservative exploration BT for mapping-sensitive worlds.
+
+  Warehouse shelf rows can make slam_toolbox accept wrong scan matches after
+  repeated recovery rotations. This tree still replans quickly for growing maps
+  but blacklists a bad frontier sooner and avoids full spin recovery loops.
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+
+    <RecoveryNode number_of_retries="2" name="ExploreNavigateRecoveryStable">
+
+      <PipelineSequence name="ExploreWithReplanningStable">
+
+        <RateController hz="2.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathRecovery">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            <ClearEntireCostmap
+              name="ClearGlobalCostmap-Replanning"
+              service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+
+        <RecoveryNode number_of_retries="1" name="FollowPathRecovery">
+          <FollowPath path="{path}" controller_id="FollowPath"/>
+          <ClearEntireCostmap
+            name="ClearLocalCostmap-Following"
+            service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+
+      </PipelineSequence>
+
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+        <RoundRobin name="RecoveryActions">
+          <Sequence name="ClearBothCostmaps">
+            <ClearEntireCostmap
+              name="ClearLocal"
+              service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap
+              name="ClearGlobal"
+              service_name="global_costmap/clear_entirely_global_costmap"/>
+          </Sequence>
+          <BackUp backup_dist="0.15" backup_speed="0.04"/>
+          <Wait wait_duration="1"/>
+        </RoundRobin>
+      </ReactiveFallback>
+
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

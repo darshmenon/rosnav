@@ -135,16 +135,12 @@ ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true exp
 # explorer:=builtin | explore_lite (default) | frontier | rrt
 ```
 
-<table align="center">
-  <tr>
-    <td align="center"><b>Coverage, house.world and warehouse.world</b></td>
-    <td align="center"><b>Drift/yaw/convergence, builtin vs explore_lite</b></td>
-  </tr>
-  <tr>
-    <td><img src="images/explorer_backend_coverage.png" alt="Coverage comparison across the 4 explorer:= backends, house.world and warehouse.world" width="420"/></td>
-    <td><img src="images/explorer_backend_accuracy.png" alt="SLAM drift/yaw/convergence, builtin vs explore_lite" width="420"/></td>
-  </tr>
-</table>
+`explore_lite` had a permanent 0%-coverage bug on `warehouse.world` (a frontier goal landing
+inside Nav2's `xy_goal_tolerance` "succeeded" instantly with zero real motion, forever) —
+fixed 2026-08-25/26 by retargeting to the nearest point on the same frontier that clears a
+minimum goal distance. Verified live: warehouse.world coverage 0% → 45.3%, and on house.world
+(120s `benchmark.py` run) final drift 0.335m → 0.216m / yaw drift 98.2° → 21.2° vs `builtin`.
+Full writeup: `EXPLORATION_TESTING_NOTES.md` (repo-local, not pushed).
 
 How `explorer:=builtin` actually picks a goal, step by step: https://claude.ai/code/artifact/bcce2ab9-74e1-4472-9eab-50d33daacfda
 (private Claude artifact — share it from the page's share menu if this needs to be readable without your account)

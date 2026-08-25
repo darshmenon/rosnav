@@ -144,6 +144,10 @@ class FrontierExplorer(Node):
         self.declare_parameter('failed_frontier_max_radius', 3.0)
         self.declare_parameter('failed_frontier_radius_scale', 0.35)
         self.declare_parameter('failed_frontier_cooldown', 120.0)
+        self.declare_parameter('local_minimum_timeout', 20.0)
+        self.declare_parameter('local_minimum_min_time', 15.0)
+        self.declare_parameter('local_minimum_min_translation', 0.20)
+        self.declare_parameter('local_minimum_min_free_cell_growth', 20)
         self.declare_parameter('behavior_tree', 'explore_nav')
         self.declare_parameter('costmap_topic', 'global_costmap/costmap')
         self.declare_parameter('validate_on_costmap', True)
@@ -230,6 +234,14 @@ class FrontierExplorer(Node):
             self.get_parameter('failed_frontier_radius_scale').value)
         self._failed_frontier_cooldown = float(
             self.get_parameter('failed_frontier_cooldown').value)
+        self._local_min_timeout = float(
+            self.get_parameter('local_minimum_timeout').value)
+        self._local_min_min_time = float(
+            self.get_parameter('local_minimum_min_time').value)
+        self._local_min_translation = float(
+            self.get_parameter('local_minimum_min_translation').value)
+        self._local_min_free_growth = int(
+            self.get_parameter('local_minimum_min_free_cell_growth').value)
         self._bt_xml = _resolve_bt(self.get_parameter('behavior_tree').value)
         self._costmap_topic = self.get_parameter('costmap_topic').value.strip()
         self._validate_costmap = self.get_parameter('validate_on_costmap').value
@@ -296,6 +308,10 @@ class FrontierExplorer(Node):
         self._visited_relax_streak = 0
         self._failed_frontiers: list[dict] = []
         self._last_free_cells = None
+        self._map_free_cells = None
+        self._nav_progress_time: float = 0.0
+        self._nav_progress_pose: tuple[float, float] | None = None
+        self._nav_progress_free_cells: int | None = None
         self._last_growth_log = 0.0
         self._logged_costmap = False
         self._last_status_log = 0.0
@@ -332,6 +348,7 @@ class FrontierExplorer(Node):
             f'suspect_hard={self._suspect_hard_ratio:.2f} '
             f'costmap_max={self._costmap_max_cost} pullback={self._goal_pullback:.2f}m '
             f'clearance={self._frontier_clearance:.2f}m '
+            f'local_min_timeout={self._local_min_timeout:.1f}s '
             f'min_size={self._min_size} revisit_r={self._revisit_r:.2f}m{rrt_note}'
             f'{boundary_note}{session_note}')
         self.get_logger().info('Waiting for map...')
@@ -344,6 +361,7 @@ class FrontierExplorer(Node):
     def _map_callback(self, msg: OccupancyGrid):
         self._map = msg
         self._last_map_update = time.monotonic()
+        self._map_free_cells = int(np.count_nonzero(np.asarray(msg.data, dtype=np.int8) == 0))
 
     def _costmap_callback(self, msg: OccupancyGrid):
         first = self._costmap is None
@@ -367,9 +385,19 @@ class FrontierExplorer(Node):
                 and not self._costmap_allows(
                     *self._current_goal, max_cost=self._costmap_abort_cost)
             )
-            if timed_out or invalidated:
-                reason = (f'exceeded {self._goal_timeout:.0f}s timeout' if timed_out
-                          else 'costmap now lethal/inscribed at goal')
+            local_minimum = (
+                not timed_out and not invalidated
+                and self._navigation_in_local_minimum(elapsed)
+            )
+            if timed_out or invalidated or local_minimum:
+                if timed_out:
+                    reason = f'exceeded {self._goal_timeout:.0f}s timeout'
+                elif invalidated:
+                    reason = 'costmap now lethal/inscribed at goal'
+                else:
+                    reason = (
+                        f'made no map-growth/translation progress for '
+                        f'{self._local_min_timeout:.0f}s')
                 self.get_logger().warn(
                     f'Goal to ({self._current_goal[0]:.2f}, {self._current_goal[1]:.2f}) '
                     f'{reason} — cancelling and blacklisting as stuck.')
@@ -1242,6 +1270,7 @@ class FrontierExplorer(Node):
     # ------------------------------------------------------------------
     def _send_goal(self, x: float, y: float):
         self._navigating = True
+        self._reset_navigation_progress()
         goal_msg = NavigateToPose.Goal()
         goal_msg.pose = PoseStamped()
         goal_msg.pose.header.frame_id = self._goal_frame
@@ -1255,6 +1284,44 @@ class FrontierExplorer(Node):
         self._goal_sent_time = time.monotonic()
         future = self._nav_client.send_goal_async(goal_msg)
         future.add_done_callback(self._goal_response_cb)
+
+    def _reset_navigation_progress(self):
+        now = time.monotonic()
+        self._nav_progress_time = now
+        self._nav_progress_pose = self._robot_position()
+        self._nav_progress_free_cells = self._map_free_cells
+
+    def _navigation_in_local_minimum(self, elapsed: float) -> bool:
+        if self._local_min_timeout <= 0.0 or elapsed < self._local_min_min_time:
+            return False
+
+        now = time.monotonic()
+        pos = self._robot_position()
+        free_cells = self._map_free_cells
+        progressed = self._navigation_made_progress(pos, free_cells)
+        if progressed:
+            self._nav_progress_time = now
+            self._nav_progress_pose = pos
+            self._nav_progress_free_cells = free_cells
+            return False
+
+        return now - self._nav_progress_time >= self._local_min_timeout
+
+    def _navigation_made_progress(self, pos, free_cells) -> bool:
+        if pos is not None and self._nav_progress_pose is not None:
+            px, py = self._nav_progress_pose
+            if math.hypot(pos[0] - px, pos[1] - py) >= self._local_min_translation:
+                return True
+        elif pos is not None and self._nav_progress_pose is None:
+            return True
+
+        if free_cells is not None and self._nav_progress_free_cells is not None:
+            if free_cells - self._nav_progress_free_cells >= self._local_min_free_growth:
+                return True
+        elif free_cells is not None and self._nav_progress_free_cells is None:
+            return True
+
+        return False
 
     def _save_map_once(self):
         if self._map_saved or not self._map_save_path:

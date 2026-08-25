@@ -13,3 +13,11 @@ frontier_explorer:
     mrtsp_solver: greedy
     return_to_start_on_complete: false
     map_processing_rate_hz: 1.0
+    # Suppression is off by default upstream — confirmed live (2026-08-25/26,
+    # warehouse.world) this makes MRTSP retry the same unreachable frontier
+    # forever (repeated "Failed to make progress" on the identical goal, zero
+    # position change). Enabling with upstream's own suggested defaults.
+    frontier_suppression_enabled: true
+    frontier_suppression_attempt_threshold: 3
+    frontier_suppression_no_progress_timeout_s: 20.0
+    frontier_suppression_timeout_s: 90.0

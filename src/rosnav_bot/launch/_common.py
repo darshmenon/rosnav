@@ -638,6 +638,29 @@ def explorer_nodes(backend, pkg_share, *, map_topic='/map', namespaces=None,
         # giving it a synthetic "robot1" namespace just satisfies that parse
         # without remapping anything else.
         rrt_namespace = ns0 or 'robot1'
+        # rrt.cpp used to hardcode its NavigateToPose action client to the
+        # plain name "navigate_to_pose", so ROS2 resolved it relative to the
+        # node's own namespace — "/robot1/navigate_to_pose" here. That's
+        # correct in real multi-robot mode (ns0 set, each robot's own
+        # namespaced bt_navigator actually serves that action there). But
+        # when ns0 is empty (single-robot; 'robot1' above is purely synthetic
+        # to satisfy rrt.cpp's namespace parse), bt_navigator itself is NOT
+        # namespaced — it only serves the global "/navigate_to_pose" — so
+        # rrt's action client silently talked to a server that doesn't exist
+        # and async_send_goal() never completed (confirmed live 2026-08-26:
+        # "Goal: x, y" logs, then nothing — no goal ever reaches
+        # bt_navigator/controller_server, no motion).
+        #
+        # A launch-level `remappings=[('navigate_to_pose', '/navigate_to_pose')]`
+        # was tried first and does NOT work for this action name — confirmed
+        # live: `ros2 action info` still showed this node as a client of the
+        # namespaced action even with that remap applied via the process's
+        # own `-r navigate_to_pose:=/navigate_to_pose` CLI arg. Fixed
+        # properly instead by patching rrt.cpp (vendored at
+        # ~/rosnav_sources/rrt-explore, not apt-installed) to read the
+        # action name from a new `nav_to_pose_action_name` parameter instead
+        # of a hardcoded string, and passing the real absolute name here.
+        nav_to_pose_action_name = ns0 and f'/{ns0}/navigate_to_pose' or '/navigate_to_pose'
         return [Node(
             package='rrt_explore',
             executable='rrt',
@@ -651,6 +674,7 @@ def explorer_nodes(backend, pkg_share, *, map_topic='/map', namespaces=None,
                 'robot_base_frame': 'base_link',
                 'robot_frame_prefix': 'robot',
                 'robot_count': int(robot_count),
+                'nav_to_pose_action_name': nav_to_pose_action_name,
             }],
         )]
 

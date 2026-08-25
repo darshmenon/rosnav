@@ -207,6 +207,49 @@ def test_score_frontier_hysteresis_bonus_near_current_goal():
 
 
 # ----------------------------------------------------------------------
+# Failure memory / local-minimum progress checks
+# ----------------------------------------------------------------------
+def test_recently_failed_blocks_points_inside_adaptive_radius():
+    explorer = make_bare(
+        _failed_frontiers=[],
+        _failed_frontier_cooldown=120.0,
+        _failed_frontier_min_radius=0.75,
+        _failed_frontier_max_radius=3.0,
+        _failed_frontier_radius_scale=0.35,
+        _suspect_ratio=3.0,
+    )
+    meta = {'size_m': 4.0, 'suspicious_ratio': 3.0}
+    explorer._remember_failed_frontier((1.0, 2.0), meta)
+
+    assert explorer._recently_failed(1.7, 2.0) is True
+    assert explorer._recently_failed(2.6, 2.0) is False
+
+
+def test_navigation_progress_detects_translation():
+    explorer = make_bare(
+        _nav_progress_pose=(0.0, 0.0),
+        _nav_progress_free_cells=100,
+        _local_min_translation=0.20,
+        _local_min_free_growth=20,
+    )
+
+    assert explorer._navigation_made_progress((0.25, 0.0), 100) is True
+    assert explorer._navigation_made_progress((0.10, 0.0), 100) is False
+
+
+def test_navigation_progress_detects_map_growth():
+    explorer = make_bare(
+        _nav_progress_pose=(0.0, 0.0),
+        _nav_progress_free_cells=100,
+        _local_min_translation=0.20,
+        _local_min_free_growth=20,
+    )
+
+    assert explorer._navigation_made_progress((0.0, 0.0), 125) is True
+    assert explorer._navigation_made_progress((0.0, 0.0), 119) is False
+
+
+# ----------------------------------------------------------------------
 # Session checkpoint (save / resume)
 # ----------------------------------------------------------------------
 def test_session_checkpoint_roundtrip(tmp_path):

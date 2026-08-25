@@ -12,4 +12,9 @@
     gain_scale: 1.0
     transform_tolerance: 0.3
     min_frontier_size: 0.75
+    # Skip frontier centroids closer than this to the robot before picking a
+    # goal — Nav2's xy_goal_tolerance (0.25m) makes a too-close goal "succeed"
+    # instantly with zero real motion, which re-triggers planning in a tight
+    # zero-progress loop on a cold-started map. Keep above xy_goal_tolerance.
+    min_goal_distance: 0.4
     use_sim_time: true
