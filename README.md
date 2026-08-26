@@ -131,8 +131,8 @@ ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true exp
 # explorer:=builtin | explore_lite (default) | frontier | rrt
 ```
 
-How `explorer:=builtin` actually picks a goal, step by step: https://claude.ai/code/artifact/bcce2ab9-74e1-4472-9eab-50d33daacfda
-(private Claude artifact — share it from the page's share menu if this needs to be readable without your account)
+How `explorer:=builtin` picks a goal, step by step: [frontier exploration pipeline](concepts.md#9-frontier-exploration)
+(frontier mask → reachability filter → clustering → safe goal placement → utility scoring).
 
 `explorer:=builtin` extras (`concepts.md` §9 for details):
 - `exploration_boundary:="x1,y1,x2,y2,..."` — confine frontiers to a map-frame polygon
