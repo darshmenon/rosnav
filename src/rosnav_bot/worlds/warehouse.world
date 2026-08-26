@@ -60,6 +60,8 @@
     </plugin>
     <plugin filename="ignition-gazebo-contact-system"
             name="ignition::gazebo::systems::Contact"/>
+    <plugin filename="ignition-gazebo-imu-system"
+            name="ignition::gazebo::systems::Imu"/>
 
     <!-- Overhead lighting -->
     <light name='sun' type='directional'>

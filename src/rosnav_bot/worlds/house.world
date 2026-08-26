@@ -56,6 +56,8 @@
     </plugin>
     <plugin filename="ignition-gazebo-contact-system"
             name="ignition::gazebo::systems::Contact"/>
+    <plugin filename="ignition-gazebo-imu-system"
+            name="ignition::gazebo::systems::Imu"/>
 
     <light name='sun' type='directional'>
       <pose>0 0 12 0 0 0</pose>

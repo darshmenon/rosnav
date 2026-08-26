@@ -24,9 +24,13 @@
         name="ignition::gazebo::systems::Sensors">
         <render_engine>ogre2</render_engine>
     </plugin>
-    <plugin 
+    <plugin
         filename="ignition-gazebo-contact-system"
         name="ignition::gazebo::systems::Contact">
+    </plugin>
+    <plugin
+        filename="ignition-gazebo-imu-system"
+        name="ignition::gazebo::systems::Imu">
     </plugin>
     
     <model name='ground_plane'>

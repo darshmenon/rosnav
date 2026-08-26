@@ -45,7 +45,17 @@ if [[ -z "${ROS_DOMAIN_ID:-}" && "$FORCE_ALL" -ne 1 ]]; then
   exit 1
 fi
 
-PATTERN='rosnav_bot'
+# 2026-08-26 finding: a baked-world `gz sim` process's cmdline is
+# `gz sim -r -s -v1 /tmp/rosnav_baked_world_XXXX/baked_<world>.world` — it
+# does NOT contain the literal substring "rosnav_bot" anywhere (the tmp dir
+# is "rosnav_baked_world", not "rosnav_bot"), so a plain 'rosnav_bot' pattern
+# never matched it. Confirmed live: an unattended batch sweep left every
+# previous world's gz sim running while starting the next, stacking up to 9
+# concurrent instances on one ROS_DOMAIN_ID and corrupting results (frozen
+# odom/scan timestamps, "stamp_went_backwards", launch connect failures).
+# Broadened to also match the baked-robot/baked-world/cartographer runtime
+# tmp dirs created by launch/_common.py.
+PATTERN='rosnav_bot|rosnav_baked_world|rosnav_baked_robot|rosnav_cartographer'
 
 domain_of() {
   local pid="$1"
@@ -59,7 +69,7 @@ mapfile -t CANDIDATES < <(
     # Exclude this script's own process tree (its path also contains
     # "rosnav_bot" and would otherwise self-match).
     [[ "$cmd" == *"kill_rosnav_sim.sh"* ]] && continue
-    [[ "$cmd" == *"$PATTERN"* ]] && echo "$pid"
+    [[ "$cmd" =~ $PATTERN ]] && echo "$pid"
   done
 )
 
