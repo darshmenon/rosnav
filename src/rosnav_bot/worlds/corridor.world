@@ -39,6 +39,8 @@
     </plugin>
     <plugin filename="ignition-gazebo-contact-system"
             name="ignition::gazebo::systems::Contact"/>
+    <plugin filename="ignition-gazebo-imu-system"
+            name="ignition::gazebo::systems::Imu"/>
 
     <light name='sun' type='directional'>
       <pose>0 0 15 0 0 0</pose>
@@ -83,15 +85,41 @@
       <visual name='v'><geometry><box><size>0.2 18 2</size></box></geometry>
         <material><ambient>0.5 0.5 0.6 1</ambient><diffuse>0.5 0.5 0.6 1</diffuse></material></visual></link></model>
 
-    <!-- ── Main horizontal corridor walls (y = ±1) ───────────── -->
-    <model name='corr_N'><static>true</static><pose>0 1 1 0 0 0</pose>
-      <link name='l'><collision name='c'><geometry><box><size>20 0.2 2</size></box></geometry></collision>
-      <visual name='v'><geometry><box><size>20 0.2 2</size></box></geometry>
+    <!-- ── Main horizontal corridor walls (y = ±1) ───────────────────
+         Segmented (not one continuous 20m wall, unlike the original) so
+         each room actually has a doorway into the corridor: a 1.2m gap
+         centered on x=-5 (rooms A/C) and x=5 (rooms B/D). The original
+         single-piece walls here fully sealed the corridor off from every
+         room despite each room's own inner wall already having a doorway
+         gap (see roomA_W1 etc. below) — confirmed live (2026-08-26):
+         explore_lite mapped the corridor exhaustively (0% growth for
+         multiple minutes, "All frontiers traversed") while every room
+         stayed fully unknown, capping real coverage at 18% of the total
+         world footprint even though exploration itself was complete. ── -->
+    <model name='corr_N_1'><static>true</static><pose>-7.8 1 1 0 0 0</pose>
+      <link name='l'><collision name='c'><geometry><box><size>4.4 0.2 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>4.4 0.2 2</size></box></geometry>
+        <material><ambient>0.8 0.8 0.7 1</ambient><diffuse>0.8 0.8 0.7 1</diffuse></material></visual></link></model>
+    <model name='corr_N_2'><static>true</static><pose>0 1 1 0 0 0</pose>
+      <link name='l'><collision name='c'><geometry><box><size>8.8 0.2 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>8.8 0.2 2</size></box></geometry>
+        <material><ambient>0.8 0.8 0.7 1</ambient><diffuse>0.8 0.8 0.7 1</diffuse></material></visual></link></model>
+    <model name='corr_N_3'><static>true</static><pose>7.8 1 1 0 0 0</pose>
+      <link name='l'><collision name='c'><geometry><box><size>4.4 0.2 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>4.4 0.2 2</size></box></geometry>
         <material><ambient>0.8 0.8 0.7 1</ambient><diffuse>0.8 0.8 0.7 1</diffuse></material></visual></link></model>
 
-    <model name='corr_S'><static>true</static><pose>0 -1 1 0 0 0</pose>
-      <link name='l'><collision name='c'><geometry><box><size>20 0.2 2</size></box></geometry></collision>
-      <visual name='v'><geometry><box><size>20 0.2 2</size></box></geometry>
+    <model name='corr_S_1'><static>true</static><pose>-7.8 -1 1 0 0 0</pose>
+      <link name='l'><collision name='c'><geometry><box><size>4.4 0.2 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>4.4 0.2 2</size></box></geometry>
+        <material><ambient>0.8 0.8 0.7 1</ambient><diffuse>0.8 0.8 0.7 1</diffuse></material></visual></link></model>
+    <model name='corr_S_2'><static>true</static><pose>0 -1 1 0 0 0</pose>
+      <link name='l'><collision name='c'><geometry><box><size>8.8 0.2 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>8.8 0.2 2</size></box></geometry>
+        <material><ambient>0.8 0.8 0.7 1</ambient><diffuse>0.8 0.8 0.7 1</diffuse></material></visual></link></model>
+    <model name='corr_S_3'><static>true</static><pose>7.8 -1 1 0 0 0</pose>
+      <link name='l'><collision name='c'><geometry><box><size>4.4 0.2 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>4.4 0.2 2</size></box></geometry>
         <material><ambient>0.8 0.8 0.7 1</ambient><diffuse>0.8 0.8 0.7 1</diffuse></material></visual></link></model>
 
     <!-- ── Room A — top-left (x: -8 to -2, y: 1 to 8) ────────── -->

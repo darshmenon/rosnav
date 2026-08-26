@@ -218,6 +218,19 @@ Default. Params: `config/mapper_params_online_async.yaml` (and multi-robot varia
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
 ```
 
+**Scan-matching instability fix (2026-08-26):** feature-poor/symmetric geometry
+(empty rooms, warehouse shelf rows) gives correlative scan matching many
+near-equally-good but wrong orientations — confirmed live in `empty_room.world`:
+`map`→`odom` yaw wandered continuously in a ~26-86° band, never settling, for
+the entire run. Tightened `mapper_params_online_async.yaml`'s local/loop-match
+response thresholds and narrowed `correlation_search_space_dimension`
+(1.5→1.0) / `loop_search_space_dimension` (8.0→4.0); disabled
+`use_response_expansion`. Verified: same run now converges to one correction
+and holds flat. This tuning was previously warehouse-only (a separate
+`mapper_params_online_async_warehouse_stable.yaml` override) but the failure
+mode isn't warehouse-specific, so it's now the default — that override file
+was removed.
+
 ### Cartographer (`slam_algo:=cartographer`)
 
 Google Cartographer 2D submaps + pose-graph. Launch starts `cartographer_node` +

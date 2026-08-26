@@ -1,0 +1,126 @@
+<?xml version="1.0" ?>
+<sdf version='1.8'>
+  <world name='empty_room'>
+
+    <physics name='4ms' type='ignored'>
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system"
+            name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system"
+            name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system"
+            name="ignition::gazebo::systems::SceneBroadcaster"/>
+    <plugin filename="ignition-gazebo-sensors-system"
+            name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="ignition-gazebo-contact-system"
+            name="ignition::gazebo::systems::Contact"/>
+    <plugin filename="ignition-gazebo-imu-system"
+            name="ignition::gazebo::systems::Imu"/>
+
+    <light name='sun' type='directional'>
+      <pose>0 0 10 0 0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>-0.5 0.1 -0.9</direction>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+    </light>
+
+    <!-- Ground plane -->
+    <model name='ground_plane'>
+      <static>true</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+        </collision>
+        <visual name='visual'>
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+            <diffuse>0.7 0.7 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ===== SINGLE FULLY-ENCLOSED SQUARE ROOM, 12x12m interior, ZERO
+         obstacles — designed specifically as a control/isolation test: if
+         explore_lite still can't reach ~100% coverage here (no shelves, no
+         narrow doorways, no corridors, nothing to plan around), that's real
+         evidence the ceiling seen on warehouse/maze/corridor worlds
+         (2026-08-26, ~45-49%) is a SLAM/odometry problem, not a navigation
+         one. If it DOES reach ~100% here, that confirms the opposite:
+         explore_lite's frontier-selection/blacklist logic is the actual
+         limiting factor on complex worlds, not the underlying SLAM stack. ===== -->
+
+    <!-- North wall -->
+    <model name='er_wall_north'><static>true</static><link name='link'>
+      <pose>0 5 1 0 0 0</pose>
+      <collision name='c'><geometry><box><size>16.2 0.2 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>16.2 0.2 2</size></box></geometry>
+        <material><ambient>0.4 0.4 0.6 1</ambient><diffuse>0.4 0.4 0.6 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- South wall -->
+    <model name='er_wall_south'><static>true</static><link name='link'>
+      <pose>0 -5 1 0 0 0</pose>
+      <collision name='c'><geometry><box><size>16.2 0.2 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>16.2 0.2 2</size></box></geometry>
+        <material><ambient>0.4 0.4 0.6 1</ambient><diffuse>0.4 0.4 0.6 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- East wall -->
+    <model name='er_wall_east'><static>true</static><link name='link'>
+      <pose>8 0 1 0 0 0</pose>
+      <collision name='c'><geometry><box><size>0.2 10 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.2 10 2</size></box></geometry>
+        <material><ambient>0.4 0.4 0.6 1</ambient><diffuse>0.4 0.4 0.6 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- West wall -->
+    <model name='er_wall_west'><static>true</static><link name='link'>
+      <pose>-8 0 1 0 0 0</pose>
+      <collision name='c'><geometry><box><size>0.2 10 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.2 10 2</size></box></geometry>
+        <material><ambient>0.4 0.4 0.6 1</ambient><diffuse>0.4 0.4 0.6 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- Small asymmetric marker near one corner (0.4m cube) — breaks the
+         room's 4-fold rotational symmetry so a scan matcher can't confuse
+         a 90°-rotated (mis-)alignment for the true one. Added 2026-08-26
+         after the perfectly-square 12x12 variant showed map_odom yaw
+         oscillating continuously between ~26-86° for an entire run despite
+         the robot barely moving and zero collisions — classic symmetric-
+         environment scan-matching aliasing, not a navigation problem. -->
+    <model name='er_corner_marker'><static>true</static><link name='link'>
+      <pose>6.5 3.5 0.2 0 0 0</pose>
+      <collision name='c'><geometry><box><size>0.4 0.4 0.4</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.4 0.4 0.4</size></box></geometry>
+        <material><ambient>0.8 0.5 0.2 1</ambient><diffuse>0.8 0.5 0.2 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- Overview camera -->
+    <model name='world_monitor_cam'>
+      <static>true</static>
+      <pose>0 0 9 0 1.5708 0</pose>
+      <link name='link'>
+        <sensor name='monitor_camera' type='camera'>
+          <always_on>true</always_on>
+          <update_rate>10</update_rate>
+          <topic>world_monitor/image_raw</topic>
+          <camera>
+            <horizontal_fov>1.6</horizontal_fov>
+            <image><width>960</width><height>540</height><format>R8G8B8</format></image>
+            <clip><near>0.05</near><far>20.0</far></clip>
+          </camera>
+        </sensor>
+      </link>
+    </model>
+
+  </world>
+</sdf>

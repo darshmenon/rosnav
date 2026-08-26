@@ -15,6 +15,9 @@ place. Installed alongside the other launch files (see CMakeLists.txt's
 
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import xml.etree.ElementTree as ET
 
 from ament_index_python.packages import get_package_share_directory
@@ -136,6 +139,97 @@ def gazebo_server_action(world_path: str, pkg_share: str = None):
         }.items(),
     )
     return with_gz_model_path(gz, pkg_share)
+
+
+def _indent_xml(elem, level=0):
+    """Small ElementTree indentation helper for generated runtime SDF files."""
+    i = '\n' + level * '  '
+    if len(elem):
+        if not elem.text or not elem.text.strip():
+            elem.text = i + '  '
+        for child in elem:
+            _indent_xml(child, level + 1)
+        if not child.tail or not child.tail.strip():
+            child.tail = i
+    if level and (not elem.tail or not elem.tail.strip()):
+        elem.tail = i
+
+
+def robot_sdf_from_xacro(pkg_share: str, urdf_path: str, *, namespace='',
+                         lidar_type='2d', lidar3d_height='0.25',
+                         lidar3d_vfov_deg='10', enable_camera='false',
+                         enable_rgbd='false', runtime_dir=None) -> ET.Element:
+    """Render the selected robot xacro and convert it to an SDF <model>.
+
+    Gazebo Sim has a long-standing issue where sensors on dynamically spawned
+    entities can be missed by sensor systems. Baking the robot model into the
+    world before gz sim starts avoids that path for single-robot launches.
+    """
+    runtime_dir = runtime_dir or tempfile.mkdtemp(prefix='rosnav_baked_robot_')
+    os.makedirs(runtime_dir, exist_ok=True)
+    urdf_out = os.path.join(runtime_dir, 'robot.urdf')
+
+    xacro_cmd = [
+        'xacro',
+        urdf_path,
+        f'namespace:={namespace}',
+        f'lidar_type:={lidar_type}',
+        f'lidar3d_height:={lidar3d_height}',
+        f'lidar3d_vfov_deg:={lidar3d_vfov_deg}',
+        f'enable_camera:={enable_camera}',
+        f'enable_rgbd:={enable_rgbd}',
+    ]
+    urdf_text = subprocess.check_output(xacro_cmd, text=True)
+    with open(urdf_out, 'w') as f:
+        f.write(urdf_text)
+
+    sdf_text = subprocess.check_output(['gz', 'sdf', '-p', urdf_out], text=True)
+    sdf_root = ET.fromstring(sdf_text)
+    model = sdf_root.find('model') if sdf_root.tag == 'sdf' else None
+    if model is None:
+        raise RuntimeError(f'gz sdf conversion did not produce an SDF model for {urdf_path}')
+    return model
+
+
+def baked_robot_world(world_path: str, pkg_share: str, robot_name: str, x, y, z, yaw,
+                      *, urdf_path: str, namespace='', lidar_type='2d',
+                      lidar3d_height='0.25', lidar3d_vfov_deg='10',
+                      enable_camera='false', enable_rgbd='false') -> str:
+    """Return a temp world path with the robot model inserted before startup."""
+    runtime_dir = tempfile.mkdtemp(prefix='rosnav_baked_world_')
+    world_src = os.path.expanduser(world_path)
+    tree = ET.parse(world_src)
+    root = tree.getroot()
+    world = root if root.tag == 'world' else root.find('world')
+    if world is None:
+        raise RuntimeError(f'No <world> element found in {world_src}')
+
+    model = robot_sdf_from_xacro(
+        pkg_share,
+        urdf_path,
+        namespace=namespace,
+        lidar_type=lidar_type,
+        lidar3d_height=lidar3d_height,
+        lidar3d_vfov_deg=lidar3d_vfov_deg,
+        enable_camera=enable_camera,
+        enable_rgbd=enable_rgbd,
+        runtime_dir=runtime_dir,
+    )
+    model.set('name', robot_name)
+    pose = model.find('pose')
+    if pose is None:
+        pose = ET.Element('pose')
+        model.insert(0, pose)
+    pose.text = f'{x} {y} {z} 0 0 {yaw}'
+    world.append(model)
+
+    # Some world files rely on relative model paths; keep the generated file
+    # near a copy of the original as a conservative fallback for those paths.
+    shutil.copy2(world_src, os.path.join(runtime_dir, os.path.basename(world_src)))
+    out_path = os.path.join(runtime_dir, f'baked_{os.path.basename(world_src)}')
+    _indent_xml(root)
+    tree.write(out_path, encoding='utf-8', xml_declaration=True)
+    return out_path
 
 
 def gazebo_client_action(pkg_share: str = None):

@@ -25,6 +25,25 @@
 set -u
 AUTO_YES=0
 [[ "${1:-}" == "-y" || "${1:-}" == "--yes" ]] && AUTO_YES=1
+FORCE_ALL=0
+[[ "${1:-}" == "--force-all-domains" || "${2:-}" == "--force-all-domains" ]] && FORCE_ALL=1
+
+# Refuse to run domain-blind by default (2026-08-26 finding): a caller that
+# forgets to export ROS_DOMAIN_ID before invoking this script — e.g. running
+# it as a standalone tool call instead of inside the shell that already has
+# it set — silently loses the whole domain cross-check below and kills
+# rosnav_bot processes on ANY domain, including another concurrent session's.
+# Confirmed this actually happened live: killed another Claude session's
+# empty_room.world run on domain 161 while this shell had no ROS_DOMAIN_ID
+# set at all. Opt out explicitly with --force-all-domains if you really do
+# want to sweep every domain (e.g. final cleanup before ending a session).
+if [[ -z "${ROS_DOMAIN_ID:-}" && "$FORCE_ALL" -ne 1 ]]; then
+  echo "ROS_DOMAIN_ID is not set in this shell — refusing to run domain-blind."
+  echo "Export the ROS_DOMAIN_ID this session is using first, e.g.:"
+  echo "  ROS_DOMAIN_ID=151 bash $0"
+  echo "Or pass --force-all-domains if you deliberately want to sweep every domain."
+  exit 1
+fi
 
 PATTERN='rosnav_bot'
 

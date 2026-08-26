@@ -126,6 +126,11 @@ _WORLD_SPAWN_DEFAULTS = {
     # (x=-9..-5, y=-6..6); generic default landed the robot inside shelf
     # sh_3f_1's collision box (x=-1.4..1.4, y=0.75..1.25).
     'warehouse': {'x': '-7.0', 'y': '0.0', 'z': '0.3', 'yaw': '0.0'},
+    # Clear center hallway of simple_rooms.world. The layout intentionally
+    # gives 2m doorways and a 3m hall for low-friction exploration tests.
+    'simple_rooms': {'x': '0.0', 'y': '0.0', 'z': '0.3', 'yaw': '0.0'},
+    # Off-center spawn in a small asymmetric near-100% coverage sanity target.
+    'coverage_100': {'x': '-0.8', 'y': '-0.4', 'z': '0.3', 'yaw': '0.3'},
     # South-central floor of bench_room_cluttered's spawn-side half — clear
     # of the divider wall and every crate by >=0.8m. The generic default
     # (1.5, 1.0) sits ~0.46m from cb_box_3, inside the collision monitor's
@@ -165,6 +170,8 @@ def _build_runtime_actions(context, pkg_share: str):
     lidar3d_height = LaunchConfiguration('lidar3d_height').perform(context).strip()
     lidar3d_vfov_deg = LaunchConfiguration('lidar3d_vfov_deg').perform(context).strip()
     octomap = _common.truthy(LaunchConfiguration('octomap').perform(context))
+    slam_debug_enabled = _common.truthy(
+        LaunchConfiguration('slam_debug').perform(context))
 
     slam_algo = LaunchConfiguration('slam_algo').perform(context).strip().lower()
     # Defined early (not just inside the use_slam branch below) so the summary
@@ -281,15 +288,45 @@ def _build_runtime_actions(context, pkg_share: str):
         lidar3d_height=lidar3d_height, lidar3d_vfov_deg=lidar3d_vfov_deg,
         enable_camera=enable_camera, enable_rgbd=enable_rgbd)
 
-    gazebo_server = _common.gazebo_server_action(world_path, pkg_share)
+    spawn_mode = LaunchConfiguration('spawn_mode').perform(context).strip().lower()
+    if spawn_mode not in ('baked', 'dynamic'):
+        print(f'[slam_nav] spawn_mode={spawn_mode!r} not recognized — using baked')
+        spawn_mode = 'baked'
+
+    urdf_path = os.path.join(pkg_share, 'urdf', urdf_filename)
+    robot_entity_name = robot_name.perform(context)
+    if spawn_mode == 'baked':
+        gazebo_runtime_world_path = _common.baked_robot_world(
+            world_path,
+            pkg_share,
+            robot_entity_name,
+            spawn_x,
+            spawn_y,
+            spawn_z,
+            spawn_yaw,
+            urdf_path=urdf_path,
+            lidar_type=lidar_type,
+            lidar3d_height=lidar3d_height,
+            lidar3d_vfov_deg=lidar3d_vfov_deg,
+            enable_camera=enable_camera,
+            enable_rgbd=enable_rgbd,
+        )
+    else:
+        gazebo_runtime_world_path = world_path
+
+    gazebo_server = _common.gazebo_server_action(gazebo_runtime_world_path, pkg_share)
 
     gazebo_client = GroupAction(
         condition=UnlessCondition(headless),
         actions=[_common.gazebo_client_action(pkg_share)],
     )
 
-    spawn_robot = _common.spawn_robot_node(
-        gazebo_world_name, 'robot_description', robot_name, spawn_x, spawn_y, spawn_z, spawn_yaw)
+    spawn_robot = (
+        LogInfo(msg='[slam_nav] robot baked into Gazebo world before startup; dynamic spawn skipped.')
+        if spawn_mode == 'baked'
+        else _common.spawn_robot_node(
+            gazebo_world_name, 'robot_description', robot_name, spawn_x, spawn_y, spawn_z, spawn_yaw)
+    )
 
     bridge_yaml = _common.gz_bridge_yaml(lidar_type, enable_rgbd == 'true')
     ros_gz_bridge = Node(
@@ -895,6 +932,26 @@ def _build_runtime_actions(context, pkg_share: str):
     else:
         gs_semantic_fusion = LogInfo(msg='[slam_nav] GS semantic fusion disabled (gs_semantic_npz not set).')
 
+    if slam_debug_enabled and (use_slam or use_vslam_localize or use_orbslam3):
+        slam_debug_monitor = TimerAction(
+            period=12.0,
+            actions=[
+                Node(
+                    package='rosnav_bot',
+                    executable='slam_debug_monitor.py',
+                    name='slam_debug_monitor',
+                    output='screen',
+                    parameters=[{
+                        'use_sim_time': True,
+                        'report_period_sec': 2.0,
+                        'window_sec': 20.0,
+                    }],
+                )
+            ],
+        )
+    else:
+        slam_debug_monitor = LogInfo(msg='[slam_nav] SLAM debug monitor disabled.')
+
     # ── Dynamic obstacles (optional) ───────────────────────────────────────
     dynamic_obstacles = int(LaunchConfiguration('dynamic_obstacles').perform(context).strip())
     dynamic_obstacle_actions = []
@@ -930,12 +987,15 @@ def _build_runtime_actions(context, pkg_share: str):
         LogInfo(msg=f'[slam_nav.launch] mode={mode}, ROS_DISTRO={ROS_DISTRO}, controller={controller}, drive_type={drive_type}'),
         LogInfo(msg=f'[slam_nav.launch] slam_algo={slam_algo}, slam_toolbox_mode={slam_toolbox_mode}, localization_filter={localization_filter}'),
         LogInfo(msg=f'[slam_nav.launch] world={world_path}'),
-        LogInfo(msg=f'[slam_nav.launch] robot_name={robot_name.perform(context)}'),
+        LogInfo(msg=f'[slam_nav.launch] gazebo_world={gazebo_runtime_world_path}'),
+        LogInfo(msg=f'[slam_nav.launch] spawn_mode={spawn_mode}, robot_name={robot_entity_name}, '
+                    f'spawn=({spawn_x}, {spawn_y}, {spawn_z}, yaw={spawn_yaw})'),
         LogInfo(msg=f'[slam_nav.launch] urdf={urdf_filename}, nav2_params={nav2_params_name}'),
         LogInfo(msg=f'[slam_nav.launch] octomap={octomap} (slam_algo=3d only; Grid/3D={"true" if octomap else "false"})'),
         LogInfo(msg=f'[slam_nav.launch] bridge={bridge_yaml}, lidar_type={lidar_type}, '
                     f'enable_rgbd={enable_rgbd}'),
         LogInfo(msg=f'[slam_nav.launch] odom->base_link TF: {localization_filter}_filter_node (wheel odom + IMU fused)'),
+        LogInfo(msg=f'[slam_nav.launch] slam_debug={slam_debug_enabled}'),
         rsp,
         gazebo_server,
         gazebo_client,
@@ -957,6 +1017,7 @@ def _build_runtime_actions(context, pkg_share: str):
         frontier_node,
         yolo_detector,
         gs_semantic_fusion,
+        slam_debug_monitor,
     ] + dynamic_obstacle_actions
 
 
@@ -978,6 +1039,13 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument('rviz', default_value='True', description='Launch RViz'),
         DeclareLaunchArgument('robot_name', default_value='diff_drive', description='Gazebo robot entity name'),
+        DeclareLaunchArgument(
+            name='spawn_mode',
+            default_value='baked',
+            description='Robot insertion mode: "baked" writes a temporary world with the '
+                        'robot model already present before Gazebo starts, avoiding Gazebo '
+                        'Sim dynamic-spawn sensor registration bugs; "dynamic" keeps the '
+                        'old ros_gz_sim create-from-/robot_description path.'),
         DeclareLaunchArgument(
             name='enable_camera', default_value='false',
             description='Include the RGB camera sensor (used by aruco_dock.py, '
@@ -1139,6 +1207,11 @@ def generate_launch_description():
                         'too few valid beams, stamp jumps) so SLAM never sees them. '
                         'Chain: scan_raw → laser_filters → scan_pre → gate → scan.'),
         DeclareLaunchArgument(
+            name='slam_debug',
+            default_value='false',
+            description='Launch slam_debug_monitor.py for live map->odom oscillation, '
+                        'map-growth, odom, and scan diagnostics.'),
+        DeclareLaunchArgument(
             name='lidar_type',
             default_value='2d',
             description='"2d" (default, LaserScan on /scan) or "3d" (16-channel PointCloud2 on '
@@ -1177,9 +1250,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             name='slam_params_file', default_value='',
             description='Optional slam_toolbox params override. Accepts an absolute/relative '
-                        'path, a config filename, or a bare config stem such as '
-                        'mapper_params_online_async_warehouse_stable. Empty uses the '
-                        'slam_toolbox_mode default params.'),
+                        'path, a config filename, or a bare config stem (e.g. '
+                        'mapper_params_lifelong). Empty uses the slam_toolbox_mode default '
+                        'params.'),
         DeclareLaunchArgument(
             name='localization_filter', default_value='ekf',
             description='robot_localization filter fusing wheel odom + IMU for odom->base_link: '
