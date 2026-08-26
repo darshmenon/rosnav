@@ -497,11 +497,10 @@ Edit `WAYPOINTS` at the top of the script to change the route.
 5. Send the goal to Nav2 via `NavigateToPose`.
 6. Repeat until no frontiers remain.
 
-Interactive step-through of this exact pipeline (naive frontier mask → WFD reachability
-filter → clustering → safe goal placement → utility scoring), computed live against a small
-illustrative grid: https://claude.ai/code/artifact/bcce2ab9-74e1-4472-9eab-50d33daacfda
-(private Claude artifact — share it from the page's share menu if this doc ever needs to be
-readable by someone without access to your account).
+The stages above are the repository-local step-through of the complete goal-selection
+pipeline: frontier mask → reachability filter → clustering → safe goal placement → utility
+scoring. The detector and scorer options below change individual stages without changing
+the Nav2 handoff.
 
 ```bash
 # Single command — SLAM + Nav2 + frontier explorer + auto-save

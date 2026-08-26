@@ -21,10 +21,6 @@ ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
 
 <p><sub>3D lidar point cloud · camera · costmap · Gaussian Splat semantic markers — all in one RViz config (<code>rviz/gs_overview.rviz</code>)</sub></p>
 
-![Nav2 autonomous navigation](images/nav2spedup-ezgif.com-video-to-gif-converter.gif)
-
-<p><sub>Single-robot SLAM · Nav2 · frontier exploration</sub></p>
-
 </div>
 
 One launch → Gazebo + SLAM/Nav2 + RViz. Scale to a fleet with one arg. Humble/Jazzy params auto-selected from `$ROS_DISTRO`.
@@ -42,27 +38,27 @@ Deep dive → [`concepts.md`](concepts.md) · launch args → `ros2 launch rosna
 - [3. Fleet & explore](#3-fleet--explore)
 
 **Features**
-- [3b. Dynamic obstacles](#3b-dynamic-obstacles)
-- [4. YOLO object detection](#4-yolo-object-detection)
-- [5. ArUco docking](#5-aruco-docking)
-- [6. LLM voice navigation](#6-llm-voice-navigation)
+- [4. Dynamic obstacles](#4-dynamic-obstacles)
+- [5. YOLO object detection](#5-yolo-object-detection)
+- [6. ArUco docking](#6-aruco-docking)
+- [7. LLM voice navigation](#7-llm-voice-navigation)
 
 **Platforms & tuning**
-- [7. Platforms — drive bases, chassis skins, how to switch](#7-platforms--drive-bases-chassis-skins-how-to-switch)
-- [7b. Controllers, SLAM backends & benchmarking](#7b-controllers-slam-backends--benchmarking)
-- [8. Worlds](#8-worlds)
-- [9. Update YAML (tuning)](#9-update-yaml-tuning)
+- [8. Platforms — drive bases, chassis skins, how to switch](#8-platforms--drive-bases-chassis-skins-how-to-switch)
+- [9. Controllers, SLAM backends & benchmarking](#9-controllers-slam-backends--benchmarking)
+- [10. Worlds](#10-worlds)
+- [11. Update YAML (tuning)](#11-update-yaml-tuning)
 
 **Fleet & multi-robot**
-- [10. Open-RMF](#10-open-rmf)
-- [11. Fleet CLI](#11-fleet-cli)
+- [12. Open-RMF](#12-open-rmf)
+- [13. Fleet CLI](#13-fleet-cli)
 
 **Research / advanced**
-- [12. Gaussian Splatting capture](#12-gaussian-splatting-capture)
-- [13. AI training (YOLO · Gaussian Splat keepout · RL)](#13-ai-training-yolo--gaussian-splat-keepout--rl)
+- [14. Gaussian Splatting capture](#14-gaussian-splatting-capture)
+- [15. AI training (YOLO · Gaussian Splat keepout · RL)](#15-ai-training-yolo--gaussian-splat-keepout--rl)
 
 **Reference**
-- [14. Fixes](#14-fixes)
+- [16. Fixes](#16-fixes)
 
 </details>
 
@@ -98,7 +94,7 @@ ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
 `docker-compose.yml` bind-mounts `src/` so host edits are picked up without a
 full image rebuild (just re-`colcon build` inside the container). See
 [`docker/orb_slam3/README.md`](docker/orb_slam3/README.md) for the separate
-ORB-SLAM3 visual-SLAM sidecar (§7b below has more on comparing SLAM backends).
+ORB-SLAM3 visual-SLAM sidecar (§9 below has more on comparing SLAM backends).
 
 ---
 
@@ -135,8 +131,8 @@ ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true exp
 # explorer:=builtin | explore_lite (default) | frontier | rrt
 ```
 
-How `explorer:=builtin` actually picks a goal, step by step: https://claude.ai/code/artifact/bcce2ab9-74e1-4472-9eab-50d33daacfda
-(private Claude artifact — share it from the page's share menu if this needs to be readable without your account)
+How `explorer:=builtin` picks a goal, step by step: [frontier exploration pipeline](concepts.md#9-frontier-exploration)
+(frontier mask → reachability filter → clustering → safe goal placement → utility scoring).
 
 `explorer:=builtin` extras (`concepts.md` §9 for details):
 - `exploration_boundary:="x1,y1,x2,y2,..."` — confine frontiers to a map-frame polygon
@@ -181,6 +177,11 @@ Goal accepted but no motion? Keep `safety:=true` (Nav2 `/cmd_vel` → Gazebo `/c
 
 Multi-SLAM (`slam_mode:=multi`): save `/map_merged` with `-t /map_merged` or `fleet_manager.py savemap`.
 
+<p align="center">
+  <img src="images/nav2spedup-ezgif.com-video-to-gif-converter.gif" alt="Nav2 autonomous navigation" width="720"/>
+  <br/><sub>Single-robot SLAM · Nav2 · frontier exploration</sub>
+</p>
+
 ---
 
 ## 3. Fleet & explore
@@ -199,13 +200,22 @@ ros2 run rosnav_bot mission_server.py patrol robot1 1,2,0 3,4,90
 ros2 run rosnav_bot coverage_planner.py
 ```
 
-![Multi-robot 3D SLAM, point clouds, and collab loop closure](images/multi_robot_collab_loop_closure.png)
+<table align="center">
+  <tr>
+    <td align="center"><b>3D SLAM, collab loop closure</b></td>
+    <td align="center"><b>Coordinated exploration</b></td>
+  </tr>
+  <tr>
+    <td><img src="images/multi_robot_collab_loop_closure.png" alt="Multi-robot 3D SLAM, point clouds, and collab loop closure" width="420"/></td>
+    <td><img src="images/multi_robot_navigation_and_exploration.gif" alt="Multi-robot coordinated exploration" width="420"/></td>
+  </tr>
+</table>
 
 <p><sub>slam_mode:=multi lidar_type:=3d slam_algo:=3d — per-robot rtabmap cloud_map + accepted collab_loop_closure correction</sub></p>
 
 ---
 
-## 3b. Dynamic obstacles
+## 4. Dynamic obstacles
 
 Spawn a patrolling obstacle to test avoidance and [`obstacle_tracker.py`](concepts.md#25-moving-obstacle-tracking-obstacle_trackerpy) against a moving object, not just static walls.
 
@@ -220,7 +230,7 @@ Details → [concepts.md §26](concepts.md#26-dynamic-obstacles-dynamic_obstacle
 
 ---
 
-## 4. YOLO object detection
+## 5. YOLO object detection
 
 Needs: `pip install ultralytics`. Camera is enabled automatically with `enable_yolo:=true`.
 
@@ -255,7 +265,7 @@ Details (why `map_frame:=odom`, not the default `map`) → [concepts.md §35-A](
   <br/><sub>ArUco visual docking</sub>
 </p>
 
-## 5. ArUco docking
+## 6. ArUco docking
 
 Needs: `enable_camera:=true` and `sudo apt install ros-humble-cv-bridge python3-opencv`. Hospital world has the dock marker.
 
@@ -273,7 +283,7 @@ Dock poses / marker IDs → `config/docks.yaml`. Live view: `/tmp/aruco_dock_vie
 
 ---
 
-## 6. LLM voice navigation
+## 7. LLM voice navigation
 
 Needs: `ollama serve` and a pulled model (`ollama pull llama3.1`). Start the nav stack first. `station_server.py` exposes dock/undock/status as ROS 2 actions so the planner can chain them.
 
@@ -302,7 +312,7 @@ ros2 action send_goal /undock_from_station rosnav_bot/action/UndockFromStation "
 
 ---
 
-## 7. Platforms — drive bases, chassis skins, how to switch
+## 8. Platforms — drive bases, chassis skins, how to switch
 
 Two independent launch args:
 
@@ -353,7 +363,7 @@ ros2 launch rosnav_bot multi_robot.launch.py robot_model:=husky
 
 ---
 
-## 7b. Controllers, SLAM backends & benchmarking
+## 9. Controllers, SLAM backends & benchmarking
 
 ### Controllers & sensors (orthogonal)
 
@@ -455,6 +465,20 @@ walkthrough (controller: dwb/mppi/rpp via `mode:=nav`; EKF/UKF via
 
 ![3D lidar point cloud, SLAM map, and costmap in RViz](images/gs_3d_slam_view.png)
 
+RTAB-Map (`slam_algo:=3d`) with the OctoMap voxel layer, live during frontier
+exploration in `maze`:
+
+<table align="center">
+  <tr>
+    <td align="center"><b>Near the start</b></td>
+    <td align="center"><b>Later — more of the maze mapped</b></td>
+  </tr>
+  <tr>
+    <td><img src="images/rtabmap_octomap_explore_1.png" alt="RTAB-Map + OctoMap voxel cloud during frontier exploration, near the start" width="420"/></td>
+    <td><img src="images/rtabmap_octomap_explore_4.png" alt="RTAB-Map + OctoMap voxel cloud during frontier exploration, later in the run" width="420"/></td>
+  </tr>
+</table>
+
 ### SLAM benchmark (headless compare)
 
 ```bash
@@ -495,12 +519,13 @@ Stop other Gazebo/ROS sims first — parallel `gz sim` instances starve DDS and 
 
 ---
 
-## 8. Worlds
+## 10. Worlds
 
 | | |
 |---|---|
 | Indoor | `hospital` `house` `office` `warehouse` `maze` `corridor` `obstacles` |
 | Special | `empty` · `warehouse_depot` (`scripts/download_depot_model.sh` if needed) |
+| Terrain-friction benchmark | `multi_terrain_robot_diff` — 4 zones (concrete/asphalt/gravel/low-friction tile), see §36-37 in concepts.md |
 | No map yet | `outdoor` `multi_terrain` — use `explore:=true` |
 
 ```bash
@@ -508,9 +533,25 @@ ros2 launch rosnav_bot slam_nav.launch.py world_name:=warehouse explore:=true
 ros2 launch rosnav_bot multi_robot.launch.py world:=house
 ```
 
+**Terrain-aware speed costmap** (§36-37) — the robot's 2D lidar has no terrain semantics, so this slows it down via a Nav2 SpeedFilter mask instead, either baked from the world's SDF friction values or driven live from the RGB-D camera:
+
+```bash
+# Static, ground-truth mask baked from the world file's <mu> friction values:
+ros2 run rosnav_bot gen_terrain_speed_mask.py \
+    --world src/rosnav_bot/worlds/multi_terrain_robot_diff.world \
+    --align-to src/rosnav_bot/maps/map_multi_terrain_robot_diff.yaml \
+    --out src/rosnav_bot/maps/terrain_speed_multi_terrain_robot_diff.yaml
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=multi_terrain_robot_diff explore:=true \
+    gs_speed_mask:=src/rosnav_bot/maps/terrain_speed_multi_terrain_robot_diff.yaml
+
+# Live, camera-driven mask (heuristic depth-roughness proxy — no static file needed):
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=multi_terrain_robot_diff explore:=true \
+    terrain_live_camera:=true
+```
+
 ---
 
-## 9. Update YAML (tuning)
+## 11. Update YAML (tuning)
 
 All configs live under `src/rosnav_bot/config/`. With `--symlink-install`, edit then **relaunch** (no rebuild).
 
@@ -542,7 +583,7 @@ More → [`concepts.md`](concepts.md).
 
 ---
 
-## 10. Open-RMF
+## 12. Open-RMF
 
 ```bash
 ros2 launch rosnav_bot multi_robot.launch.py explore:=false robot_count:=2
@@ -554,12 +595,7 @@ Details → [concepts.md §11b](concepts.md#11b-open-rmf-traffic-scheduling-expe
 
 ---
 
-<p align="center">
-  <img src="images/multi_robot_navigation_and_exploration.gif" alt="Multi-robot coordinated exploration" width="720"/>
-  <br/><sub>Multi-robot coordinated exploration</sub>
-</p>
-
-## 11. Fleet CLI
+## 13. Fleet CLI
 
 ```bash
 ros2 run rosnav_bot fleet_manager.py list|status|health
@@ -574,16 +610,22 @@ ros2 run rosnav_bot multi_teleop.py
 
 ---
 
-## 12. Gaussian Splatting capture
+## 14. Gaussian Splatting capture
 
 Feasibility spike: capture a photo set + exact Gazebo-ground-truth poses for [3D Gaussian Splatting](https://docs.nerf.studio/nerfology/methods/splat.html) — no robot, no COLMAP.
 
-![Gaussian Splat reconstruction fly-through](images/gaussian-splat-world-recon.gif)
+<table align="center">
+  <tr>
+    <td align="center"><b>Reconstruction fly-through</b></td>
+    <td align="center"><b>Fully trained splat, training view</b></td>
+  </tr>
+  <tr>
+    <td><img src="images/gaussian-splat-world-recon.gif" alt="Gaussian Splat reconstruction fly-through" width="420"/></td>
+    <td><img src="images/gs_splat_cafe_final.jpg" alt="Fully trained Gaussian Splat, rendered from a training view" width="420"/></td>
+  </tr>
+</table>
 
-<p align="center">
-  <img src="images/gs_splat_cafe_final.jpg" alt="Fully trained Gaussian Splat, rendered from a training view" width="720"/>
-  <br/><sub>cafe.world, fully trained splat — 384 captured frames, 30k splatfacto iterations</sub>
-</p>
+<p align="center"><sub>cafe.world, fully trained splat — 384 captured frames, 30k splatfacto iterations</sub></p>
 
 ### A — Capture
 
@@ -660,7 +702,7 @@ Details → [concepts.md §27](concepts.md#27-gaussian-splatting-capture-rig-gs_
 
 ---
 
-## 13. AI training (YOLO · Gaussian Splat keepout · RL)
+## 15. AI training (YOLO · Gaussian Splat keepout · RL)
 
 Three research pipelines that plug into the existing stack. Core SLAM/Nav2 stay classical.
 
@@ -711,9 +753,10 @@ ros2 run rosnav_bot rl_policy_node.py --ros-args \
 ```
 
 `train_ppo.py` defaults to a pure-PyTorch PPO (`--backend torch`). `--backend sb3` needs a working stable-baselines3 build.
+
 ---
 
-## 14. Fixes
+## 16. Fixes
 
 | Problem | Try |
 |---|---|
