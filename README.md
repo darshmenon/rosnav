@@ -135,13 +135,6 @@ ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true exp
 # explorer:=builtin | explore_lite (default) | frontier | rrt
 ```
 
-`explore_lite` had a permanent 0%-coverage bug on `warehouse.world` (a frontier goal landing
-inside Nav2's `xy_goal_tolerance` "succeeded" instantly with zero real motion, forever) —
-fixed 2026-08-25/26 by retargeting to the nearest point on the same frontier that clears a
-minimum goal distance. Verified live: warehouse.world coverage 0% → 45.3%, and on house.world
-(120s `benchmark.py` run) final drift 0.335m → 0.216m / yaw drift 98.2° → 21.2° vs `builtin`.
-Full writeup: `EXPLORATION_TESTING_NOTES.md` (repo-local, not pushed).
-
 How `explorer:=builtin` actually picks a goal, step by step: https://claude.ai/code/artifact/bcce2ab9-74e1-4472-9eab-50d33daacfda
 (private Claude artifact — share it from the page's share menu if this needs to be readable without your account)
 
@@ -450,11 +443,15 @@ drift, with its position-covariance ellipse on.
 
 ### Controller / localization-filter / SLAM-mode benchmark
 
+Exploration-backend (`builtin`/`explore_lite`/`frontier`/`rrt`) coverage/accuracy comparisons
+live in `EXPLORATION_TESTING_NOTES.md` (repo-local, not committed).
+
 `benchmark.py mode:=nav|accuracy|slam` + `mode:=report` compares any of the
-above numerically and writes PNG charts + a self-contained HTML dashboard
-(needs matplotlib; table-only otherwise) — see concepts.md §3/§6b/§7 for the
-full run/compare walkthrough (controller: dwb/mppi/rpp via `mode:=nav`;
-EKF/UKF via `mode:=accuracy`; slam_toolbox_mode via `mode:=slam`).
+above numerically and writes a self-contained HTML dashboard. Local chart
+generation is available from the reporting scripts but is intentionally kept
+out of this README — see concepts.md §3/§6b/§7 for the full run/compare
+walkthrough (controller: dwb/mppi/rpp via `mode:=nav`; EKF/UKF via
+`mode:=accuracy`; slam_toolbox_mode via `mode:=slam`).
 
 ![3D lidar point cloud, SLAM map, and costmap in RViz](images/gs_3d_slam_view.png)
 

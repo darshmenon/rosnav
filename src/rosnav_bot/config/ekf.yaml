@@ -14,8 +14,13 @@
     # trusting outright. frame_id/child_frame_id on this topic are already
     # odom/base_link; it no longer reaches TF directly (see gazebo_control*.xacro).
     odom0: odom
+    # yaw (row 2, index 5) intentionally false: post-2026-08-26 IMU-publish
+    # fix, imu0 now reliably supplies clean absolute yaw below — fusing
+    # wheel-integrated yaw here too was averaging it against the IMU's,
+    # dragging in wheel-odom's larger heading drift. Wheel odom still
+    # contributes x/y/vx and yaw-rate (vyaw, row 4).
     odom0_config: [true,  true,  false,
-                   false, false, true,
+                   false, false, false,
                    true,  false, false,
                    false, false, true,
                    false, false, false]
