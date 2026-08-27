@@ -1,0 +1,173 @@
+<?xml version="1.0" ?>
+<!--
+  coverage_100.world - minimal bounded arena for fast near-100% exploration.
+
+  This is deliberately easier than house/warehouse/corridor:
+    - 11m x 9m interior — still fully inside the default 2D lidar's 12m range
+      from the center (corner distance ~7.1m), just a larger single open room.
+    - No internal walls, no doorways, no furniture in the travel area.
+    - Asymmetric wall-attached landmarks provide scan-matching structure
+      without creating isolated obstacle shadows or narrow local minima.
+
+  Use this world as a sanity target. If an explorer cannot complete here, the
+  issue is in bringup/SLAM/explorer logic rather than world complexity.
+
+  Launch:
+    ros2 launch rosnav_bot slam_nav.launch.py world_name:=coverage_100 explore:=true
+-->
+<sdf version='1.8'>
+  <world name='coverage_100'>
+
+    <physics name='4ms' type='ignored'>
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system"
+            name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system"
+            name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system"
+            name="ignition::gazebo::systems::SceneBroadcaster"/>
+    <plugin filename="ignition-gazebo-sensors-system"
+            name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="ignition-gazebo-contact-system"
+            name="ignition::gazebo::systems::Contact"/>
+    <plugin filename="ignition-gazebo-imu-system"
+            name="ignition::gazebo::systems::Imu"/>
+
+    <light name='sun' type='directional'>
+      <pose>0 0 10 0 0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1.0</intensity>
+      <direction>-0.45 0.15 -0.88</direction>
+      <diffuse>0.9 0.9 0.85 1</diffuse>
+      <specular>0.15 0.15 0.15 1</specular>
+    </light>
+
+    <light name='ceiling' type='point'>
+      <pose>0 0 3.0 0 0 0</pose>
+      <diffuse>0.9 0.9 0.86 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>12</range>
+        <linear>0.08</linear>
+      </attenuation>
+    </light>
+
+    <model name='ground_plane'>
+      <static>true</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.70 0.70 0.70 1</ambient>
+            <diffuse>0.70 0.70 0.70 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name='floor'>
+      <static>true</static>
+      <pose>0 0 0.003 0 0 0</pose>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry><box><size>11.0 9.0 0.004</size></box></geometry>
+        </collision>
+        <visual name='visual'>
+          <geometry><box><size>11.0 9.0 0.004</size></box></geometry>
+          <material>
+            <ambient>0.55 0.57 0.52 1</ambient>
+            <diffuse>0.55 0.57 0.52 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Interior bounds are x=[-5.5,5.5], y=[-4.5,4.5]. -->
+    <model name='wall_north'><static>true</static><pose>0 4.6 1.2 0 0 0</pose><link name='link'>
+      <collision name='collision'><geometry><box><size>11.4 0.2 2.4</size></box></geometry></collision>
+      <visual name='visual'><geometry><box><size>11.4 0.2 2.4</size></box></geometry>
+        <material><ambient>0.48 0.52 0.58 1</ambient><diffuse>0.48 0.52 0.58 1</diffuse></material></visual>
+    </link></model>
+
+    <model name='wall_south'><static>true</static><pose>0 -4.6 1.2 0 0 0</pose><link name='link'>
+      <collision name='collision'><geometry><box><size>11.4 0.2 2.4</size></box></geometry></collision>
+      <visual name='visual'><geometry><box><size>11.4 0.2 2.4</size></box></geometry>
+        <material><ambient>0.48 0.52 0.58 1</ambient><diffuse>0.48 0.52 0.58 1</diffuse></material></visual>
+    </link></model>
+
+    <model name='wall_east'><static>true</static><pose>5.6 0 1.2 0 0 0</pose><link name='link'>
+      <collision name='collision'><geometry><box><size>0.2 9.0 2.4</size></box></geometry></collision>
+      <visual name='visual'><geometry><box><size>0.2 9.0 2.4</size></box></geometry>
+        <material><ambient>0.48 0.52 0.58 1</ambient><diffuse>0.48 0.52 0.58 1</diffuse></material></visual>
+    </link></model>
+
+    <model name='wall_west'><static>true</static><pose>-5.6 0 1.2 0 0 0</pose><link name='link'>
+      <collision name='collision'><geometry><box><size>0.2 9.0 2.4</size></box></geometry></collision>
+      <visual name='visual'><geometry><box><size>0.2 9.0 2.4</size></box></geometry>
+        <material><ambient>0.48 0.52 0.58 1</ambient><diffuse>0.48 0.52 0.58 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- Asymmetric wall-attached landmarks. They break rectangular symmetry
+         for scan matching without blocking the open center. Positions scaled
+         2x from the original 5.5x4.5 layout, sizes unchanged. -->
+    <model name='landmark_north_tab'><static>true</static><pose>-2.7 4.3 0.35 0 0 0</pose><link name='link'>
+      <collision name='collision'><geometry><box><size>0.7 0.4 0.7</size></box></geometry></collision>
+      <visual name='visual'><geometry><box><size>0.7 0.4 0.7</size></box></geometry>
+        <material><ambient>0.65 0.42 0.36 1</ambient><diffuse>0.65 0.42 0.36 1</diffuse></material></visual>
+    </link></model>
+
+    <model name='landmark_south_tab'><static>true</static><pose>1.8 -4.3 0.25 0 0 0</pose><link name='link'>
+      <collision name='collision'><geometry><box><size>1.0 0.4 0.5</size></box></geometry></collision>
+      <visual name='visual'><geometry><box><size>1.0 0.4 0.5</size></box></geometry>
+        <material><ambient>0.38 0.58 0.42 1</ambient><diffuse>0.38 0.58 0.42 1</diffuse></material></visual>
+    </link></model>
+
+    <model name='landmark_east_tab'><static>true</static><pose>5.3 -1.1 0.45 0 0 0</pose><link name='link'>
+      <collision name='collision'><geometry><box><size>0.4 0.9 0.9</size></box></geometry></collision>
+      <visual name='visual'><geometry><box><size>0.4 0.9 0.9</size></box></geometry>
+        <material><ambient>0.36 0.48 0.65 1</ambient><diffuse>0.36 0.48 0.65 1</diffuse></material></visual>
+    </link></model>
+
+    <model name='landmark_west_tab'><static>true</static><pose>-5.3 2.1 0.3 0 0 0</pose><link name='link'>
+      <collision name='collision'><geometry><box><size>0.4 0.5 0.6</size></box></geometry></collision>
+      <visual name='visual'><geometry><box><size>0.4 0.5 0.6</size></box></geometry>
+        <material><ambient>0.62 0.56 0.34 1</ambient><diffuse>0.62 0.56 0.34 1</diffuse></material></visual>
+    </link></model>
+
+    <model name='world_monitor_cam'>
+      <static>true</static>
+      <pose>0 0 13.0 0 1.5708 0</pose>
+      <link name='link'>
+        <sensor name='monitor_camera' type='camera'>
+          <always_on>true</always_on>
+          <update_rate>10</update_rate>
+          <topic>world_monitor/image_raw</topic>
+          <camera>
+            <horizontal_fov>1.25</horizontal_fov>
+            <image><width>960</width><height>540</height><format>R8G8B8</format></image>
+            <clip><near>0.05</near><far>20.0</far></clip>
+          </camera>
+        </sensor>
+      </link>
+    </model>
+
+  </world>
+</sdf>

@@ -129,8 +129,9 @@ _WORLD_SPAWN_DEFAULTS = {
     # Clear center hallway of simple_rooms.world. The layout intentionally
     # gives 2m doorways and a 3m hall for low-friction exploration tests.
     'simple_rooms': {'x': '0.0', 'y': '0.0', 'z': '0.3', 'yaw': '0.0'},
-    # Off-center spawn in a small asymmetric near-100% coverage sanity target.
-    'coverage_100': {'x': '-0.8', 'y': '-0.4', 'z': '0.3', 'yaw': '0.3'},
+    # Off-center spawn in an asymmetric near-100% coverage sanity target
+    # (11m x 9m interior).
+    'coverage_100': {'x': '-1.6', 'y': '-0.8', 'z': '0.3', 'yaw': '0.3'},
     # South-central floor of bench_room_cluttered's spawn-side half — clear
     # of the divider wall and every crate by >=0.8m. The generic default
     # (1.5, 1.0) sits ~0.46m from cb_box_3, inside the collision monitor's

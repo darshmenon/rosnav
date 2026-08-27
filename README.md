@@ -470,12 +470,28 @@ exploration in `maze`:
 
 <table align="center">
   <tr>
-    <td align="center"><b>Near the start</b></td>
-    <td align="center"><b>Later — more of the maze mapped</b></td>
+    <td align="center"><b>Frontier just starting</b></td>
+    <td align="center"><b>Dense scan coverage</b></td>
   </tr>
   <tr>
-    <td><img src="images/rtabmap_octomap_explore_1.png" alt="RTAB-Map + OctoMap voxel cloud during frontier exploration, near the start" width="420"/></td>
-    <td><img src="images/rtabmap_octomap_explore_4.png" alt="RTAB-Map + OctoMap voxel cloud during frontier exploration, later in the run" width="420"/></td>
+    <td><img src="images/rtabmap_octomap_frontier_start.png" alt="RTAB-Map + OctoMap frontier exploration just starting in RViz" width="420"/></td>
+    <td><img src="images/rtabmap_octomap_explore_dense.png" alt="RTAB-Map + OctoMap dense scan coverage during frontier exploration in RViz" width="420"/></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Wall frontier selected</b></td>
+    <td align="center"><b>Goal sent across the map</b></td>
+  </tr>
+  <tr>
+    <td><img src="images/rtabmap_octomap_explore_2.png" alt="RTAB-Map + OctoMap frontier selected along the wall" width="420"/></td>
+    <td><img src="images/rtabmap_octomap_explore_3.png" alt="RTAB-Map + OctoMap goal sent across the partially mapped area" width="420"/></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Later — map boundary closing</b></td>
+    <td align="center"><b>Final local frontier pass</b></td>
+  </tr>
+  <tr>
+    <td><img src="images/rtabmap_octomap_explore_5.png" alt="RTAB-Map + OctoMap later exploration with map boundary closing" width="420"/></td>
+    <td><img src="images/rtabmap_octomap_explore_6.png" alt="RTAB-Map + OctoMap final local frontier pass" width="420"/></td>
   </tr>
 </table>
 
@@ -526,6 +542,7 @@ Stop other Gazebo/ROS sims first — parallel `gz sim` instances starve DDS and 
 | Indoor | `hospital` `house` `office` `warehouse` `maze` `corridor` `obstacles` |
 | Special | `empty` · `warehouse_depot` (`scripts/download_depot_model.sh` if needed) |
 | Terrain-friction benchmark | `multi_terrain_robot_diff` — 4 zones (concrete/asphalt/gravel/low-friction tile), see §36-37 in concepts.md |
+| Coverage sanity target | `coverage_100` — single bounded 11m x 9m room, no internal walls/furniture; see coverage-plateau finding below |
 | No map yet | `outdoor` `multi_terrain` — use `explore:=true` |
 
 ```bash
@@ -548,6 +565,36 @@ ros2 launch rosnav_bot slam_nav.launch.py world_name:=multi_terrain_robot_diff e
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=multi_terrain_robot_diff explore:=true \
     terrain_live_camera:=true
 ```
+
+**Known finding — `explore_lite` coverage plateau on a large open room:** on `coverage_100`
+(single bounded room, no internal walls), `explore_lite` reliably plateaus around
+55-60% map coverage and stops making progress well before the room is fully mapped,
+even though a large contiguous unknown region remains inside the walls with a clear
+free/unknown frontier boundary around it. Screenshots below are from the final stages
+of exploration, with the robot near one local frontier cluster instead of the large
+remaining region:
+
+```bash
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=coverage_100 explore:=true
+```
+
+<table align="center">
+  <tr>
+    <td align="center"><b>Initial — just the first scan sweep</b></td>
+    <td align="center"><b>Full room — large gray region still unknown</b></td>
+    <td align="center"><b>Close-up — final stage of exploration</b></td>
+  </tr>
+  <tr>
+    <td><img src="images/coverage_100_explore_plateau_initial.png" alt="explore_lite on coverage_100, initial state right after the first scan sweep" width="220"/></td>
+    <td><img src="images/coverage_100_explore_plateau_overview.png" alt="explore_lite coverage plateau on coverage_100, full room view" width="220"/></td>
+    <td><img src="images/coverage_100_explore_plateau_closeup.png" alt="explore_lite coverage plateau on coverage_100, close-up on the stuck robot" width="220"/></td>
+  </tr>
+</table>
+
+`explorer:=builtin` (`frontier_coordinator.py`/`frontier_explorer.py`) does no better on
+this world — it stops even earlier (~10% coverage), logging every candidate frontier as
+`unreachable`/`failed`. Not yet root-caused; tracked as an open issue rather than tuned
+around.
 
 ---
 
