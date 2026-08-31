@@ -315,6 +315,7 @@ class FrontierExplorer(Node):
         self._last_growth_log = 0.0
         self._logged_costmap = False
         self._last_status_log = 0.0
+        self._save_proc: subprocess.Popen | None = None
 
         if self._resume_session:
             self._load_session()
@@ -377,6 +378,8 @@ class FrontierExplorer(Node):
     # Main exploration loop
     # ------------------------------------------------------------------
     def _explore(self):
+        if self._save_proc is not None and self._save_proc.poll() is not None:
+            self._save_proc = None
         if self._navigating:
             elapsed = time.monotonic() - self._goal_sent_time
             timed_out = elapsed > self._goal_timeout
@@ -464,14 +467,21 @@ class FrontierExplorer(Node):
         self._empty_streak = 0
         self._iteration += 1
         if self._map_save_path and self._iteration % 10 == 0:
-            self.get_logger().info(
-                f'Progressively auto-saving map to {self._map_save_path} '
-                f'(topic={self._map_topic}) ...')
-            subprocess.Popen(
-                ['ros2', 'run', 'nav2_map_server', 'map_saver_cli',
-                 '-t', self._map_topic, '-f', self._map_save_path],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
+            if self._save_proc is not None and self._save_proc.poll() is None:
+                self.get_logger().warn(
+                    'Previous progressive map-save still running — skipping '
+                    'this cycle\'s autosave to avoid piling up map_saver_cli processes.')
+            else:
+                if self._save_proc is not None:
+                    self._save_proc.wait()
+                self.get_logger().info(
+                    f'Progressively auto-saving map to {self._map_save_path} '
+                    f'(topic={self._map_topic}) ...')
+                self._save_proc = subprocess.Popen(
+                    ['ros2', 'run', 'nav2_map_server', 'map_saver_cli',
+                     '-t', self._map_topic, '-f', self._map_save_path],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
         if self._session_path and self._iteration % 10 == 0:
             self._save_session_checkpoint()
 
@@ -516,6 +526,9 @@ class FrontierExplorer(Node):
     # Map saving and shutdown
     # ------------------------------------------------------------------
     def _finish_exploration(self):
+        if self._save_proc is not None and self._save_proc.poll() is None:
+            self.get_logger().info('Waiting for in-flight progressive autosave to finish...')
+            self._save_proc.wait()
         if self._map_save_path:
             self.get_logger().info(f'Final map save to {self._map_save_path} ...')
             try:
