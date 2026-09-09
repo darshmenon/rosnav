@@ -52,9 +52,16 @@ class CostmapGhostClear(Node):
         self.declare_parameter('fixed_frame', 'map')
         self.declare_parameter('odom_frame', 'odom')
         self.declare_parameter('check_period_sec', 1.0)
-        self.declare_parameter('jump_threshold_m', 0.15)
+        # jump_threshold_m/cooldown_sec raised 0.15->0.35 / 3.0->8.0 (2026-09-09):
+        # a ClearEntireCostmap call racing an in-flight compute_path_to_pose can
+        # trigger NavFn's "legal potential but plan trace fails" bug even with
+        # use_astar:true. At the old thresholds this fired ~16x in 190s during
+        # normal exploration (continuous small SLAM drift, not just genuine loop
+        # closures) — every hit was a chance at the race. This only reduces
+        # exposure, it doesn't eliminate the underlying Nav2 race.
+        self.declare_parameter('jump_threshold_m', 0.35)
         self.declare_parameter('jump_threshold_deg', 8.0)
-        self.declare_parameter('cooldown_sec', 3.0)
+        self.declare_parameter('cooldown_sec', 8.0)
         self.declare_parameter('clear_local', False)
         self.declare_parameter('global_costmap_service',
                                 'global_costmap/clear_entirely_global_costmap')
