@@ -1,0 +1,18 @@
+# dynamic_obstacle_filter.yaml — Nav2 costmap filter pair for
+# dynamic_obstacle_predictor.py's live, velocity-projected KeepoutFilter mask
+# (see concepts.md §26). No filter_mask_server/map_server here — unlike
+# gs_keepout_filter.yaml's static file-backed mask, dynamic_obstacle_predictor.py
+# *is* the mask publisher (same trick camera_terrain_speed_mask.py uses for
+# gs_speed_filter.yaml), so only the info server is needed.
+#
+# Distinct node name (dynobs_costmap_filter_info_server) and distinct
+# filter_info_topic/mask_topic from gs_keepout_filter.yaml/gs_speed_filter.yaml
+# so all three filters can run at once without a node-name or topic collision.
+dynobs_costmap_filter_info_server:
+  ros__parameters:
+    use_sim_time: true
+    filter_info_topic: "/dynobs/keepout_info"
+    type: 0  # 0 = Keepout/Binary (nav2_costmap_2d::KeepoutFilter)
+    mask_topic: "/dynobs/keepout_mask"
+    base: 0.0
+    multiplier: 1.0

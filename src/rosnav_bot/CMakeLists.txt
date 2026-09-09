@@ -82,6 +82,7 @@ install(
     scripts/rmf_fleet_adapter.py
     scripts/rmf_submit_task.py
     scripts/dynamic_obstacle_driver.py
+    scripts/dynamic_obstacle_predictor.py
     scripts/pointcloud_to_scan.py
     scripts/scan_quality_gate.py
     scripts/slam_accuracy_monitor.py

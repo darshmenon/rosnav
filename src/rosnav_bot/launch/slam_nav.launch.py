@@ -975,6 +975,55 @@ def _build_runtime_actions(context, pkg_share: str):
                     period=5.0,
                     actions=[_common.dynamic_obstacle_driver_node(do_name, do_axis, do_amplitude, do_speed)]),
             ]
+        # Close the loop into Nav2: obstacle_tracker.py Kalman-tracks the
+        # patrolling obstacle(s) from LaserScan, dynamic_obstacle_predictor.py
+        # projects each track forward along its velocity and republishes a
+        # KeepoutFilter mask (config/dynamic_obstacle_filter.yaml) so the
+        # costmap already carries cost where the obstacle is about to be,
+        # instead of only reacting once it's actually in the beam. See
+        # concepts.md §26. Started after the obstacle(s) above (period=9.0
+        # vs 5.0) so there's something to track from the first mask publish.
+        dynamic_obstacle_filter_params = os.path.join(
+            pkg_share, 'config', 'dynamic_obstacle_filter.yaml')
+        dynamic_obstacle_actions.append(
+            TimerAction(
+                period=9.0,
+                actions=[
+                    Node(
+                        package='rosnav_bot',
+                        executable='obstacle_tracker.py',
+                        name='obstacle_tracker',
+                        output='screen',
+                        parameters=[{'use_sim_time': True}],
+                    ),
+                    Node(
+                        package='rosnav_bot',
+                        executable='dynamic_obstacle_predictor.py',
+                        name='dynamic_obstacle_predictor',
+                        output='screen',
+                        parameters=[{'use_sim_time': True}],
+                    ),
+                    Node(
+                        package='nav2_map_server',
+                        executable='costmap_filter_info_server',
+                        name='dynobs_costmap_filter_info_server',
+                        output='screen',
+                        parameters=[dynamic_obstacle_filter_params, {'use_sim_time': True}],
+                    ),
+                    Node(
+                        package='nav2_lifecycle_manager',
+                        executable='lifecycle_manager',
+                        name='lifecycle_manager_dynobs',
+                        output='screen',
+                        parameters=[{
+                            'use_sim_time': True,
+                            'autostart': True,
+                            'node_names': ['dynobs_costmap_filter_info_server'],
+                        }],
+                    ),
+                ],
+            )
+        )
 
     if use_orbslam3:
         mode = 'ORB-SLAM3+frontier' if actions else 'ORB-SLAM3'
