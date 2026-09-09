@@ -1952,6 +1952,10 @@ ros2 run rosnav_bot obstacle_tracker.py
 ros2 topic echo /obstacle_tracker/state
 ```
 
+**Avoidance is purely reactive**, not predictive: the moving obstacle is only ever seen through the live LaserScan → costmap `obstacle_layer`, so Nav2 replans after the fact, same as for any static obstacle it hasn't seen yet. `obstacle_tracker.py`'s Kalman-filtered position/velocity tracks are **not** fed into the costmap or planner — it's a standalone detector/visualizer, not part of the avoidance loop.
+
+**NavFn `use_astar` bug found via this feature (2026-09-09):** a headless `slam_nav.launch.py world_name:=maze explore:=true dynamic_obstacles:=1` run hit `planner_server: Failed to create a plan from potential when a legal potential was found` — a known upstream NavFn quirk where Dijkstra-mode's (`use_astar: false`) flood-fill potential field can produce a "legal" boundary value near the current costmap edge that the gradient-descent path trace then fails to walk back from, aborting the plan and cascading into a `behavior_server` recovery loop. Fixed by flipping `use_astar: true` (goal-directed A*, avoids the flood-fill plateau case, also faster) in every `NavfnPlanner` `GridBased` block: `nav2_params.yaml`, `nav2_params_mppi.yaml`, `nav2_params_rpp.yaml`, `nav2_params_mecanum.yaml`, `nav2_multirobot_params.yaml`, `nav2_multirobot_params_jazzy.yaml`. Re-verified live: same scenario, same 90s window, no more empty-path aborts. (`nav2_params_ackermann.yaml`/`nav2_params_mecanum_jazzy.yaml`/`nav2_params_jazzy.yaml` already use `SmacPlannerHybrid`, unaffected.)
+
 ## 27. Gaussian Splatting Capture Rig (`gs_capture.py`)
 
 Feasibility-spike tool for turning any world into a [3D Gaussian Splatting](https://docs.nerf.studio/nerfology/methods/splat.html) training set — no robot, no COLMAP structure-from-motion needed, since poses come straight from Gazebo ground truth.

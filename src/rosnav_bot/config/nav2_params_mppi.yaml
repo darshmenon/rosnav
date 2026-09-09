@@ -355,7 +355,12 @@ planner_server:
     GridBased:
       plugin: "nav2_navfn_planner/NavfnPlanner"
       tolerance: 0.5
-      use_astar: false
+      # A* (goal-directed) instead of Dijkstra flood-fill: avoids NavFn's
+      # "Failed to create a plan from potential when a legal potential was
+      # found" gradient-trace bug on plateau/boundary cells near the
+      # current costmap edge (hit live during a maze explore_lite run with
+      # dynamic_obstacles:=1), and is faster to a distant goal besides.
+      use_astar: true
       allow_unknown: true
 
 smoother_server:
