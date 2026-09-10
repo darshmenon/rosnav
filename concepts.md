@@ -335,6 +335,25 @@ ros2 run rosnav_bot benchmark.py --ros-args -p mode:=report \
 EKF vs UKF is the same pattern with `mode:=accuracy` and
 `localization_filter:=ekf|ukf` instead of `controller:=...`.
 
+**Verified (2026-09-10):** ran `mode:=slam` on `cafe` (headless, driven manually
+~27s) — clean result: 38.3% coverage, converged (98% threshold logic) at t=6.5s
+into visible-area growth, `cafe_slam_slam.json`. No issues.
+
+Ran `mode:=nav` on `cafe` (`slam:=false`, AMCL) and found two real gotchas:
+1. `src/rosnav_bot/config/waypoints.yaml` referenced above **does not exist** —
+   `_load_goals()` silently falls back to a hardcoded generic square
+   `(2,0)→(2,2)→(0,2)→(0,0)`. In `cafe` that path runs through furniture near
+   spawn; the robot got physically wedged (`controller_server: Failed to make
+   progress`, zero twist, explore_lite also gave up early against the same
+   obstacle in an earlier exploration run). Use a `goals_file:=` with modest,
+   near-spawn waypoints for this world instead of relying on the fallback.
+2. Controller timing comparisons on this benchmark run were confounded by
+   variable simulation real-time-factor from other concurrent processes on
+   this shared machine (§28/§29 note the same effect) — one `dwb` run finished
+   goal 1 in 21s/0 recoveries, another in 73s/3 recoveries; `mppi` didn't
+   finish goal 1 within 150s in one run. Not a reliable dwb-vs-mppi verdict —
+   re-run controller comparisons in a quiet window before trusting the numbers.
+
 ---
 
 ## 6b. Localization Filter — EKF vs UKF
@@ -365,11 +384,14 @@ Compare numerically with `benchmark.py mode:=accuracy` (drift-only, no setup
 needed; add `ground_truth_topic:=...` for absolute RMSE if a ground-truth pose
 is bridged) — see §3's Benchmarking algorithms section for the report/chart flow.
 
-**Ground-truth bridge (added 2026-09-10):** `gazebo_control.xacro` now also
-carries a `gz-sim-odometry-publisher-system` plugin publishing the model's true
-simulated pose (world-frame, independent of wheel encoders) on `/ground_truth`
-(`nav_msgs/Odometry`, ~27Hz), bridged in all four `config/gz_bridge*.yaml`
-variants. This is what `benchmark.py mode:=accuracy ground_truth_topic:=/ground_truth
+**Ground-truth bridge (added 2026-09-10):** `gazebo_control.xacro` (diff, also
+covers `mir100`/`husky` skins which include it), `gazebo_control_mecanum.xacro`,
+and `gazebo_control_ackermann.xacro` all carry a `gz-sim-odometry-publisher-system`
+plugin publishing the model's true simulated pose (world-frame, independent of
+wheel encoders) on `/ground_truth` (`nav_msgs/Odometry`, ~27Hz), bridged in all
+four `config/gz_bridge*.yaml` variants. Verified publishing on `drive_type:=diff`,
+`mecanum`, and `ackermann` (headless, isolated `ROS_DOMAIN_ID`). This is what
+`benchmark.py mode:=accuracy ground_truth_topic:=/ground_truth
 ground_truth_type:=odometry` needs for real RMSE — previously no script bridged
 this, so all past "accuracy" numbers in this repo were drift-only.
 

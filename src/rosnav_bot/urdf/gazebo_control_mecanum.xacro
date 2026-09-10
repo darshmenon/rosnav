@@ -39,6 +39,18 @@
          <joint_name>right_front_wheel_joint</joint_name>
 
       </plugin>
+
+      <!-- True simulated pose (reads the model's actual world-frame pose each
+           step, independent of wheel encoders) — for benchmarking EKF/UKF
+           fusion accuracy against ground truth. Not consumed by nav/perception. -->
+      <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+         <odom_topic>${ns + '/ground_truth' if ns else 'ground_truth'}</odom_topic>
+         <odom_frame>${ns + '/ground_truth_odom' if ns else 'ground_truth_odom'}</odom_frame>
+         <robot_base_frame>${ns + '/base_link' if ns else 'base_link'}</robot_base_frame>
+         <dimensions>2</dimensions>
+         <odom_publish_frequency>30</odom_publish_frequency>
+         <tf_topic>${ns + '/tf_ground_truth_raw' if ns else 'tf_ground_truth_raw'}</tf_topic>
+      </plugin>
    </gazebo>
 
 </robot>
