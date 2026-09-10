@@ -365,6 +365,35 @@ Compare numerically with `benchmark.py mode:=accuracy` (drift-only, no setup
 needed; add `ground_truth_topic:=...` for absolute RMSE if a ground-truth pose
 is bridged) — see §3's Benchmarking algorithms section for the report/chart flow.
 
+**Ground-truth bridge (added 2026-09-10):** `gazebo_control.xacro` now also
+carries a `gz-sim-odometry-publisher-system` plugin publishing the model's true
+simulated pose (world-frame, independent of wheel encoders) on `/ground_truth`
+(`nav_msgs/Odometry`, ~27Hz), bridged in all four `config/gz_bridge*.yaml`
+variants. This is what `benchmark.py mode:=accuracy ground_truth_topic:=/ground_truth
+ground_truth_type:=odometry` needs for real RMSE — previously no script bridged
+this, so all past "accuracy" numbers in this repo were drift-only.
+
+**Verified (2026-09-10):** ran 3 trials each of EKF vs UKF on `world_name:=cafe`,
+`explore:=false`, driving an identical scripted pattern (4× [forward 1.4m, turn
+90°] — a closed square, headless, isolated `ROS_DOMAIN_ID`) so both filters see
+the exact same commanded motion. Averaged over 3 trials:
+
+| Metric | EKF | UKF |
+|---|---|---|
+| RMSE position error | 0.217m | 0.167m |
+| Max position error | 0.389m | 0.399m |
+| Final yaw error | **0.0°** (all 3 trials) | **18.2°** |
+| Final map→odom drift correction | 0.54m | 0.75m |
+
+UKF edges out EKF on raw position RMSE, but its yaw estimate consistently
+failed to recover after the square's four 90° turns (12.8–22.1° final heading
+error across all 3 trials) while EKF's yaw returned to within measurement noise
+of 0° every time. For a diff-drive robot, heading accuracy matters more than a
+~0.05m RMSE difference (bad heading compounds into worse SLAM/Nav2 behavior
+over time), so this backs `ekf` as the sensible default. Single 45s runs per
+trial, cafe world only — not exhaustive, worth re-running before treating as
+final.
+
 ---
 
 ## 4. Nav2 Stack

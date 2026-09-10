@@ -17,6 +17,14 @@
   gz_type_name: "gz.msgs.Odometry"
   direction: GZ_TO_ROS
 
+# True simulated pose (OdometryPublisher plugin, gazebo_control.xacro) — for
+# EKF/UKF fusion accuracy benchmarking, not consumed by nav/perception.
+- ros_topic_name: "/ground_truth"
+  gz_topic_name: "/ground_truth"
+  ros_type_name: "nav_msgs/msg/Odometry"
+  gz_type_name: "gz.msgs.Odometry"
+  direction: GZ_TO_ROS
+
 # cmd_vel_safe is the collision-monitor-filtered output — the only path to the robot.
 # Chain: controller → cmd_vel → velocity_smoother → cmd_vel_smoothed
 #        → collision_monitor(relay) → cmd_vel_safe → Gazebo
