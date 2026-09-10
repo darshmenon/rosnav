@@ -127,6 +127,7 @@ class FrontierExplorer(Node):
         self.declare_parameter('goal_timeout', 60.0)
         self.declare_parameter('frontier_detector', 'wfd')
         self.declare_parameter('frontier_scorer', 'utility')
+        self.declare_parameter('learned_model_path', '')
         self.declare_parameter('rrt_iterations', 300)
         self.declare_parameter('rrt_step_size', 0.5)
         self.declare_parameter('frontier_clearance_radius', 0.55)
@@ -211,6 +212,8 @@ class FrontierExplorer(Node):
         self._map_topic = self.get_parameter('map_topic').value
         self._detector = self.get_parameter('frontier_detector').value.strip().lower()
         self._scorer = self.get_parameter('frontier_scorer').value.strip().lower()
+        self._learned_model_path = self.get_parameter('learned_model_path').value.strip()
+        self._learned_net = None
         self._rrt_iterations = int(self.get_parameter('rrt_iterations').value)
         self._rrt_step = float(self.get_parameter('rrt_step_size').value)
         self._frontier_clearance = self.get_parameter('frontier_clearance_radius').value
@@ -266,10 +269,20 @@ class FrontierExplorer(Node):
             self.get_logger().warn(
                 f'Unknown frontier_detector={self._detector!r}; using wfd.')
             self._detector = 'wfd'
-        if self._scorer not in ('nearest', 'weighted', 'utility'):
+        if self._scorer not in ('nearest', 'weighted', 'utility', 'learned'):
             self.get_logger().warn(
                 f'Unknown frontier_scorer={self._scorer!r}; using utility.')
             self._scorer = 'utility'
+        if self._scorer == 'learned':
+            if not self._learned_model_path:
+                self.get_logger().warn(
+                    'frontier_scorer=learned but learned_model_path is empty; '
+                    'falling back to utility.')
+                self._scorer = 'utility'
+            else:
+                self._learned_net = self._load_learned_scorer(self._learned_model_path)
+                if self._learned_net is None:
+                    self._scorer = 'utility'
         if self._info_gain_mode not in ('ring', 'fov'):
             self.get_logger().warn(
                 f'Unknown info_gain_mode={self._info_gain_mode!r}; using ring.')
@@ -1150,6 +1163,22 @@ class FrontierExplorer(Node):
     def _score_frontier(self, frontier, distance):
         suspicious_ratio = self._suspicious_frontier_ratio(
             frontier['size_m'], frontier.get('clearance', 0.0))
+        if self._scorer == 'learned':
+            # The net saw suspicious_ratio/hysteresis as input features and
+            # learned its own weighting for them during training (see
+            # rl/frontier_env.py / rl/frontier_policy.py) — layering the
+            # hand-tuned penalty/bonus below on top would fight what it
+            # already learned, so this branch returns the raw logit as-is.
+            hysteresis = 0.0
+            if self._current_goal is not None:
+                fx, fy = frontier['point']
+                cx, cy = self._current_goal
+                if math.hypot(fx - cx, fy - cy) <= self._hyst_r:
+                    hysteresis = 1.0
+            return self._learned_score(
+                distance, frontier['size_m'], frontier['info_gain'],
+                frontier.get('clearance', 0.0), suspicious_ratio, hysteresis)
+
         suspicious_penalty = 0.0
         if self._scorer != 'nearest' and suspicious_ratio > self._suspect_ratio:
             suspicious_penalty = (
@@ -1169,6 +1198,35 @@ class FrontierExplorer(Node):
             if math.hypot(fx - cx, fy - cy) <= self._hyst_r:
                 score += self._hyst_gain
         return score - suspicious_penalty
+
+    def _load_learned_scorer(self, model_path: str):
+        try:
+            import torch
+            from rosnav_bot.rl.frontier_policy import FrontierScorer
+        except ImportError as exc:
+            self.get_logger().error(
+                f'frontier_scorer=learned needs torch + rosnav_bot.rl on the '
+                f'PYTHONPATH: {exc}')
+            return None
+        try:
+            ckpt = torch.load(os.path.expanduser(model_path), map_location='cpu')
+            net = FrontierScorer(n_features=ckpt.get('n_features', 6))
+            net.load_state_dict(ckpt['state_dict'])
+            net.eval()
+        except Exception as exc:
+            self.get_logger().error(f'Failed to load learned_model_path={model_path!r}: {exc}')
+            return None
+        self._torch = torch
+        self.get_logger().info(f'[frontier_explorer] loaded learned scorer from {model_path}')
+        return net
+
+    def _learned_score(self, distance, size_m, info_gain, clearance,
+                        suspicious_ratio, hysteresis) -> float:
+        with self._torch.no_grad():
+            features = self._torch.tensor(
+                [distance, size_m, info_gain, clearance, suspicious_ratio, hysteresis],
+                dtype=self._torch.float32)
+            return float(self._learned_net.score_one(features).item())
 
     def _suspicious_frontier_ratio(self, size_m: float, clearance: float) -> float:
         """Large clusters with very small safe pullback are often wall-leak artifacts.

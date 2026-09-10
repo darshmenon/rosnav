@@ -792,6 +792,7 @@ def _build_runtime_actions(context, pkg_share: str):
                     'use_sim_time': True,
                     'frontier_detector': LaunchConfiguration('frontier_detector'),
                     'frontier_scorer': LaunchConfiguration('frontier_scorer'),
+                    'learned_model_path': LaunchConfiguration('learned_model_path'),
                     'info_gain_weight': LaunchConfiguration('info_gain_weight'),
                     'potential_scale': LaunchConfiguration('potential_scale'),
                     'gain_scale': LaunchConfiguration('gain_scale'),
@@ -1160,7 +1161,13 @@ def generate_launch_description():
             description='Frontier detector: wfd (reachable wavefront), classic, or rrt (sampling-based)'),
         DeclareLaunchArgument(
             name='frontier_scorer', default_value='utility',
-            description='Frontier scorer: utility (size/distance tradeoff), weighted, or nearest'),
+            description='Frontier scorer: utility (size/distance tradeoff), weighted, nearest, '
+                        'or learned (trained NN, needs learned_model_path — see concepts.md, '
+                        'scripts/train_frontier_ppo.py)'),
+        DeclareLaunchArgument(
+            name='learned_model_path', default_value='',
+            description='Path to a .pt checkpoint from train_frontier_ppo.py, used only when '
+                        'frontier_scorer:=learned (explorer:=builtin only).'),
         DeclareLaunchArgument(
             name='info_gain_weight', default_value='3.0',
             description='Weighted scorer information-gain reward'),

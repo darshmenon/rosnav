@@ -78,6 +78,7 @@ install(
     scripts/gs_relocalization_check.py
     scripts/gs_train_keepout.sh
     scripts/train_ppo.py
+    scripts/train_frontier_ppo.py
     scripts/rl_policy_node.py
     scripts/rmf_fleet_adapter.py
     scripts/rmf_submit_task.py
@@ -109,6 +110,7 @@ if(BUILD_TESTING)
 
   find_package(ament_cmake_pytest REQUIRED)
   ament_add_pytest_test(test_frontier_explorer test/test_frontier_explorer.py)
+  ament_add_pytest_test(test_frontier_env test/test_frontier_env.py)
 endif()
 
 ament_package()

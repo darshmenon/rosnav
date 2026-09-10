@@ -2295,3 +2295,39 @@ ros2 run rosnav_bot rl_policy_node.py --ros-args \
 Not for production nav — benchmark against MPPI in `maze`, blog/demo angle. Live Gazebo-as-Gym wrapper is still optional follow-up (ROADMAP); the PGM raycast env is deliberately enough to train and deploy the same observation layout.
 
 **Verified (2026-08-21):** `--smoke` (2048 steps, `map_maze.yaml`, `--backend torch`) saved `runs/rl/_smoke/ppo_scan_nav.pt`; deterministic forward pass loads and infers. On this machine `stable-baselines3` `PPO(...)` segfaults during construction (Torch 2.12+cu130 interaction) — hence the pure-torch default; use `--backend sb3` only where SB3 is known-good.
+
+### D — Learned frontier scorer (`rosnav_bot/rl/frontier_env.py` + `frontier_policy.py` + `train_frontier_ppo.py`)
+
+`frontier_explorer.py`'s `frontier_scorer` param already picks the best candidate frontier by a hand-tuned formula (`nearest | weighted | utility`) over per-candidate features (`distance`, `size_m`, `info_gain`, `clearance`). `frontier_scorer:=learned` replaces that formula with a small trained network scoring the same features — same detector, same Nav2 goal-sending, same recovery/suspicious-frontier filtering; only *how a candidate's score is computed* changes.
+
+| Piece | Role |
+|---|---|
+| `rosnav_bot/rl/frontier_env.py` | `FrontierSelectEnv`: offline Gymnasium env, loads a saved PGM+YAML, semi-MDP (one step = pick a frontier, "travel" there, reveal a scan) |
+| `rosnav_bot/rl/frontier_policy.py` | `FrontierScorer`: per-candidate MLP (Deep-Sets style — no cross-candidate attention), masked-Categorical policy + pooled value head |
+| `scripts/train_frontier_ppo.py` | PPO loop (mirrors `train_ppo.py`), rotates across several saved maps per run for cross-layout generalization |
+
+```bash
+python3 src/rosnav_bot/scripts/train_frontier_ppo.py --smoke
+python3 src/rosnav_bot/scripts/train_frontier_ppo.py \
+    --maps src/rosnav_bot/maps/map_maze.yaml src/rosnav_bot/maps/map_house_builtin.yaml \
+           src/rosnav_bot/maps/map_bench_room_small.yaml src/rosnav_bot/maps/map_corridor.yaml \
+    --timesteps 200000 --out runs/rl/ppo_frontier
+
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=house explore:=true \
+    explorer:=builtin frontier_scorer:=learned \
+    learned_model_path:=runs/rl/ppo_frontier/ppo_frontier.pt
+```
+
+Deliberately per-candidate-independent scoring (no cross-attention over the whole candidate set, unlike some published architectures for this problem): it lets `frontier_explorer.py` call the exact same forward pass inside its existing `_best_frontier()` loop, one candidate at a time, with zero restructuring — argmax over independent logits reproduces the trained policy's greedy action exactly, since softmax is monotonic per-logit.
+
+`frontier_env.py`'s per-step frontier distance is straight-line, not true path distance — a deliberate cheap approximation for the training signal (the real path-distance BFS used to dominate per-step cost as the known region grew across an episode). The live-deployed `frontier_explorer.py` is unaffected — it still filters candidates by real Nav2/costmap path distance before any scorer (hand-tuned or learned) ever sees them.
+
+Three real bugs surfaced building this:
+1. **BFS-relaxation blowup.** An early version of the training env's path-distance BFS used Bellman-Ford-style relaxation (`if d < dist[n]: update`) instead of visited-once BFS. With `dist` stored as `float32`, ulp-level rounding noise between equal-length alternate paths in a densely-cyclic open grid re-triggered updates combinatorially — confirmed millions of spurious pushes hanging a single call on a 14k-cell region. Fixed by switching to single-visit BFS (mark visited on first discovery, never re-relax), which is both correct for uniform edge weights and immune to float noise by construction.
+2. **All-invalid action mask → NaN.** A spawn whose sensor sweep covers its whole (small, enclosed) starting pocket can have zero frontiers right at `reset()`. That produced an all-`False` action mask, which reaches `Categorical(logits=all -inf)` in `frontier_policy.py` → NaN loss. Fixed with a bounded reset-retry (resample spawn) in the env, plus a belt-and-suspenders check in the training loop that never calls the policy on an empty mask.
+3. **O(known-area) per-step cost.** Recomputing full-grid path distance every step made each step slower as the known region grew across an episode — fine early in an episode, prohibitively slow by the end (bug #1's fix alone wasn't enough for training throughput). Replaced with the straight-line approximation described above.
+
+**Verified (2026-09-11):** `--smoke` (2048 steps, `map_maze.yaml`) saved `runs/rl/_smoke_frontier/ppo_frontier.pt`; `test/test_frontier_env.py` (reset-mask, step-latency, and shape regression tests for the three bugs above) passes. Live: `explorer:=builtin frontier_scorer:=learned` on `house` with the `--smoke` checkpoint loaded correctly, picked real network-scored frontiers (`scorer=learned score=...` in the log), and Nav2 accepted/reached goals — reached 55.9% coverage before Nav2 couldn't path to the remaining candidates (a pre-existing planner/frontier-reachability edge case, not specific to this scorer) and correctly reported exploration complete. Map saved as `maps/map_house_learned_smoke.pgm/yaml`. This checkpoint is a pipeline-validation smoke run, not a trained result — a longer run across more maps/timesteps is the natural next step before treating its coverage numbers as a real comparison entrant.
+
+---
+
