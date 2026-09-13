@@ -2498,3 +2498,96 @@ It's built for terrain with actual surface irregularity (uneven ground, rubble, 
 follow-up would be adding real height-noise geometry to a zone, or testing against a
 world with genuine unevenness, to confirm the variance signal actually separates rough
 from smooth there.
+
+---
+
+## 38. DenoiseLayer + BinaryFilter (Privacy-Zone Camera Mute)
+
+Two more stock Nav2 costmap plugins added to every drive-type's costmap chain
+(`nav2_params.yaml`, its `_jazzy`/`_mecanum`/`_mecanum_jazzy`/`_ackermann`/`_mppi`/`_rpp`
+siblings, and both `nav2_multirobot_params*.yaml` templates — 9 files, local + global
+costmap each), alongside the existing `keepout_filter`/`speed_filter` pair:
+
+- **`denoise_layer`** (`nav2_costmap_2d::DenoiseLayer`) — strips lidar speckle noise
+  (isolated lethal cells) from the costmap before inflation, placed right after
+  `obstacle_layer` in the `plugins:` list. `minimal_group_size: 2` (default),
+  `group_connectivity_type: 8`. Complements `scan_quality_gate.py` rather than
+  duplicating it: the gate rejects whole bad scans, this cleans up individual noisy
+  returns within scans that pass. Always active, no launch arg — same "safe to always
+  list" reasoning as the existing filters.
+- **`binary_filter`** (`nav2_costmap_2d::BinaryFilter`) — flips a bool instead of
+  KeepoutFilter's no-go or SpeedFilter's grading. Publishes to `<local|global>_costmap/
+  privacy_zone_state` (a `std_msgs/Bool`, **not** nested under the node name twice —
+  see the bug below), `default_state: False`, `flip_threshold: 50.0`,
+  `filter_info_topic: "/gs/binary_filter_info"`.
+
+### Mask + wiring (`gen_privacy_zone_mask.py`, `gs_binary_filter.yaml`)
+
+Same mask-generation shape as `gen_terrain_speed_mask.py` (§36) but binary instead of
+graded: a rectangular zone (`--center`, `--size`, optional `--yaw`), mask value 100
+inside, 0 outside — matching `gs_binary_filter.yaml`'s `base=0`/`multiplier=1` so
+BinaryFilter's `flip_threshold` cleanly separates the two. `gs_binary_filter.yaml` uses
+`type: 3` for `costmap_filter_info_server` — Humble's actual
+`nav2_costmap_2d::filter_values.hpp` enum is `KEEPOUT_FILTER=0`,
+`SPEED_FILTER_PERCENT=1`, `SPEED_FILTER_ABSOLUTE=2`, `BINARY_FILTER=3` (the
+`gs_keepout_filter.yaml` comment saying "0 = Keepout/Binary" predates BinaryFilter
+getting its own type value — stale, left alone, not touched by this section).
+
+`slam_nav.launch.py gs_privacy_mask:=<path>` starts `gs_binary_filter_mask_server` +
+`gs_binary_costmap_filter_info_server` (mirrors `gs_keepout_mask`'s node group exactly,
+distinct node names so all three filters can run together) — empty (default) = disabled.
+
+```bash
+ros2 run rosnav_bot gen_privacy_zone_mask.py \
+    --center 0.0 0.0 --size 4.0 4.0 \
+    --out src/rosnav_bot/maps/privacy_zone_house.yaml
+
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=house explore:=true \
+    enable_yolo:=true gs_privacy_mask:=src/rosnav_bot/maps/privacy_zone_house.yaml
+```
+
+**Mask coordinates are map-frame, not Gazebo-world-frame, under live SLAM:** a fresh
+`slam_toolbox` session's `map` frame starts at wherever the robot spawned, not at
+Gazebo's world origin (confirmed while testing this — a mask centered on
+`multi_terrain_robot_diff`'s actual spawn point, (-9.2, 0.0) in world coordinates, landed
+0 cells under the robot because the live SLAM map frame was still near (0, 0) at that
+point in the run). `--align-to` an existing *saved* map (§36's convention) works because
+`map_saver_cli` bakes in that session's map-frame origin, which a fresh SLAM run in the
+same world approximately reproduces from the same spawn point. For a fresh live-SLAM
+test with no saved map yet, center the zone near (0, 0) instead of the world-frame spawn
+coordinate.
+
+### `yolo_detector.py` — privacy-zone mute
+
+New `privacy_zone_topic` parameter (default `local_costmap/privacy_zone_state`,
+namespace-prefixed like every other topic param) subscribed as `std_msgs/Bool`;
+`_infer_tick()` returns immediately while it reads `True` — no inference, no detections
+published, no annotated image — logging the transition once on each edge
+("Entering privacy zone — muting YOLO inference" / "Leaving … — resuming …"), not every
+tick. This is the one BinaryFilter zone actually gets consumed by something — the
+tradeoff flagged when this was proposed (a filter mask alone is inert without a
+consumer) is addressed here rather than left as a stub.
+
+**Real bug hit and fixed while building this:** `yolo_detector.py`'s privacy-zone
+subscription was first wired to `local_costmap/local_costmap/privacy_zone_state` — a
+reasonable-looking guess by analogy with the `[local_costmap.local_costmap]` node-name
+prefix seen in nav2's own log lines, but wrong. `BinaryFilter`'s `binary_state_topic`
+param is *relative to the costmap node's namespace* (`/local_costmap`), not its fully-
+qualified node name (`/local_costmap/local_costmap`), so the real topic is
+`/local_costmap/privacy_zone_state` (confirmed live via `ros2 topic list` /
+`ros2 topic info` — the doubled-up path returned "Unknown topic"). With the wrong topic,
+BinaryFilter's logged `Switched on`/`Switched off` transitions were real (confirmed in
+the costmap's own log) but `yolo_detector.py` never saw them — no error, no warning, just
+silent no-op muting. Fixed by dropping the duplicated `local_costmap/` segment; re-verified
+headless with the robot actually crossing the zone boundary under live `explore_lite`
+exploration: `yolo_detector` logged "Entering privacy zone — muting YOLO inference" the
+moment `BinaryFilter` switched on, and zero further detection log lines followed until
+teardown.
+
+**Verified (2026-09-13):** headless launch (`multi_terrain_robot_diff`, `explore:=true`,
+`enable_yolo:=true`, isolated `ROS_DOMAIN_ID`) showed `denoise_layer` load cleanly on
+both costmaps ("Using plugin"/"Initialized plugin", no errors), `BinaryFilter` toggling
+`Switched on`/`Switched off` live as the robot moved in and out of a 4x4m test zone
+centered near the SLAM map origin, and `yolo_detector.py` muting inference exactly on the
+"Switched on" edge with no detections logged afterward. Clean teardown, no lingering
+process on that domain.

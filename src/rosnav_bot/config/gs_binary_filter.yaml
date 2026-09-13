@@ -1,0 +1,39 @@
+# gs_binary_filter.yaml — Nav2 costmap filter pair that turns a rectangular
+# zone mask (see scripts/gen_privacy_zone_mask.py) into a BinaryFilter layer:
+# instead of KeepoutFilter's no-go or SpeedFilter's speed grading, this just
+# flips a bool (published per-costmap on the `privacy_zone_state` topic —
+# see nav2_params.yaml's binary_filter block) when the robot enters the
+# masked zone. yolo_detector.py subscribes to it to mute inference/detection
+# publishing while inside a privacy-sensitive area. See concepts.md §38.
+#
+# Top-level keys MUST match the actual launched node names (slam_nav.launch.py
+# names them gs_binary_filter_mask_server / gs_binary_costmap_filter_info_server,
+# distinct from gs_keepout_filter.yaml's/gs_speed_filter.yaml's own node names,
+# so all three filters can run at once without a node-name collision — see
+# gs_speed_filter.yaml's comment for why a mismatch here fails silently
+# instead of erroring).
+#
+# `yaml_filename` below is overridden at launch (slam_nav.launch.py
+# gs_privacy_mask:=<path>) — the value here is just a placeholder.
+gs_binary_filter_mask_server:
+  ros__parameters:
+    use_sim_time: true
+    frame_id: "map"
+    topic_name: "/gs/binary_filter_mask"
+    yaml_filename: ""
+
+gs_binary_costmap_filter_info_server:
+  ros__parameters:
+    use_sim_time: true
+    filter_info_topic: "/gs/binary_filter_info"
+    type: 3  # BINARY_FILTER (Humble nav2_costmap_2d::filter_values.hpp: 0=Keepout,
+             # 1/2=SpeedFilter percent/absolute, 3=Binary — distinct from the
+             # stale "0=Keepout/Binary" comment in gs_keepout_filter.yaml, which
+             # predates BinaryFilter getting its own type value)
+    mask_topic: "/gs/binary_filter_mask"
+    # gen_privacy_zone_mask.py writes 0 outside the zone, 100 inside;
+    # raw value = base + multiplier * mask, compared against binary_filter's
+    # flip_threshold (50.0, in nav2_params.yaml) — so 0 stays default_state
+    # (False) and 100 flips to non-default (True).
+    base: 0.0
+    multiplier: 1.0

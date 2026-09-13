@@ -93,6 +93,7 @@ install(
     scripts/benchmark.py
     scripts/gen_terrain_speed_mask.py
     scripts/camera_terrain_speed_mask.py
+    scripts/gen_privacy_zone_mask.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(

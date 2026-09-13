@@ -678,6 +678,52 @@ def _build_runtime_actions(context, pkg_share: str):
     else:
         gs_keepout_group = LogInfo(msg='[slam_nav] GS keepout filter disabled (gs_keepout_mask not set).')
 
+    # ── GS binary (privacy-zone) costmap filter (optional) ──────────────────
+    # See concepts.md §38 and scripts/gen_privacy_zone_mask.py — a plain
+    # bool flip (BinaryFilter) instead of KeepoutFilter's no-go or
+    # SpeedFilter's grading: nav2_params.yaml's binary_filter block publishes
+    # it on `privacy_zone_state`, and yolo_detector.py subscribes to mute
+    # inference while inside the masked zone.
+    gs_privacy_mask = LaunchConfiguration('gs_privacy_mask').perform(context).strip()
+    if gs_privacy_mask:
+        gs_binary_filter_params = os.path.join(pkg_share, 'config', 'gs_binary_filter.yaml')
+        gs_binary_group = TimerAction(
+            period=9.0,
+            actions=[
+                LogInfo(msg=f'[slam_nav] GS binary (privacy-zone) filter ENABLED — mask={gs_privacy_mask}'),
+                Node(
+                    package='nav2_map_server',
+                    executable='map_server',
+                    name='gs_binary_filter_mask_server',
+                    output='screen',
+                    parameters=[gs_binary_filter_params, {
+                        'use_sim_time': True,
+                        'yaml_filename': gs_privacy_mask,
+                    }],
+                ),
+                Node(
+                    package='nav2_map_server',
+                    executable='costmap_filter_info_server',
+                    name='gs_binary_costmap_filter_info_server',
+                    output='screen',
+                    parameters=[gs_binary_filter_params, {'use_sim_time': True}],
+                ),
+                Node(
+                    package='nav2_lifecycle_manager',
+                    executable='lifecycle_manager',
+                    name='lifecycle_manager_gs_binary',
+                    output='screen',
+                    parameters=[{
+                        'use_sim_time': True,
+                        'autostart': True,
+                        'node_names': ['gs_binary_filter_mask_server', 'gs_binary_costmap_filter_info_server'],
+                    }],
+                ),
+            ],
+        )
+    else:
+        gs_binary_group = LogInfo(msg='[slam_nav] GS binary (privacy-zone) filter disabled (gs_privacy_mask not set).')
+
     # ── GS speed costmap filter (optional) ──────────────────────────────────
     # See concepts.md §30 and scripts/gs_speed_mask_from_splat.py — density-
     # graded slow zones instead of gs_keepout_mask's binary no-go. Distinct
@@ -1116,6 +1162,7 @@ def _build_runtime_actions(context, pkg_share: str):
         cslam_group,
         nav2,
         gs_keepout_group,
+        gs_binary_group,
         gs_speed_group,
         rviz2,
         collision_monitor,
@@ -1417,5 +1464,12 @@ def generate_launch_description():
                         'scripts/gs_speed_mask_from_splat.py (Gaussian-Splat density-graded '
                         'slow zones, distinct from the binary gs_keepout_mask). Empty '
                         '(default) = disabled. See concepts.md §30.'),
+        DeclareLaunchArgument(
+            'gs_privacy_mask', default_value='',
+            description='Path to a Nav2 costmap-filter-mask yaml produced by '
+                        'scripts/gen_privacy_zone_mask.py (BinaryFilter zone — flips a bool '
+                        'on privacy_zone_state instead of KeepoutFilter/SpeedFilter grading; '
+                        'yolo_detector.py mutes inference while inside it). Empty '
+                        '(default) = disabled. See concepts.md §38.'),
         OpaqueFunction(function=_build_runtime_actions, args=[pkg_share]),
     ])

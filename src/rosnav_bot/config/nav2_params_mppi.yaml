@@ -204,7 +204,7 @@ local_costmap:
       # keepout_filter is inert until a costmap_filter_info_server publishes
       # /gs/costmap_filter_info (see gs_keepout_filter.yaml + slam_nav.launch.py
       # gs_keepout_mask:=<path>) — safe to always list.
-      plugins: ["obstacle_layer", "inflation_layer", "keepout_filter", "speed_filter"]
+      plugins: ["obstacle_layer", "denoise_layer", "inflation_layer", "keepout_filter", "speed_filter", "binary_filter"]
       keepout_filter:
         plugin: "nav2_costmap_2d::KeepoutFilter"
         enabled: True
@@ -214,6 +214,18 @@ local_costmap:
         enabled: True
         filter_info_topic: "/gs/speed_filter_info"
         speed_limit_topic: "/gs/speed_limit"
+      denoise_layer:
+        plugin: "nav2_costmap_2d::DenoiseLayer"
+        enabled: True
+        minimal_group_size: 2
+        group_connectivity_type: 8
+      binary_filter:
+        plugin: "nav2_costmap_2d::BinaryFilter"
+        enabled: True
+        filter_info_topic: "/gs/binary_filter_info"
+        binary_state_topic: "privacy_zone_state"
+        default_state: False
+        flip_threshold: 50.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
@@ -273,7 +285,7 @@ global_costmap:
       robot_radius: 0.34
       resolution: 0.05
       track_unknown_space: true
-      plugins: ["static_layer", "obstacle_layer", "inflation_layer", "keepout_filter", "speed_filter"]
+      plugins: ["static_layer", "obstacle_layer", "denoise_layer", "inflation_layer", "keepout_filter", "speed_filter", "binary_filter"]
       keepout_filter:
         plugin: "nav2_costmap_2d::KeepoutFilter"
         enabled: True
@@ -283,6 +295,18 @@ global_costmap:
         enabled: True
         filter_info_topic: "/gs/speed_filter_info"
         speed_limit_topic: "/gs/speed_limit"
+      denoise_layer:
+        plugin: "nav2_costmap_2d::DenoiseLayer"
+        enabled: True
+        minimal_group_size: 2
+        group_connectivity_type: 8
+      binary_filter:
+        plugin: "nav2_costmap_2d::BinaryFilter"
+        enabled: True
+        filter_info_topic: "/gs/binary_filter_info"
+        binary_state_topic: "privacy_zone_state"
+        default_state: False
+        flip_threshold: 50.0
       obstacle_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: True

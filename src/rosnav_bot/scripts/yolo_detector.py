@@ -31,6 +31,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image
+from std_msgs.msg import Bool
 from vision_msgs.msg import (
     Detection2D, Detection2DArray, ObjectHypothesisWithPose,
 )
@@ -54,6 +55,7 @@ class YoloDetector(Node):
         self.declare_parameter('max_rate_hz', 5.0)
         self.declare_parameter('publish_annotated', True)
         self.declare_parameter('classes', '')  # comma-separated allow-list, empty = all
+        self.declare_parameter('privacy_zone_topic', 'local_costmap/privacy_zone_state')
 
         ns = self.get_parameter('namespace').value
         pre = f'/{ns}' if ns else ''
@@ -105,6 +107,7 @@ class YoloDetector(Node):
         self._last_summary_log = None
         self._last_frame_recv = None
         self._detections_seen_total = 0
+        self._privacy_active = False
 
         qos = QoSProfile(
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
@@ -112,6 +115,8 @@ class YoloDetector(Node):
             depth=1,
         )
         self.create_subscription(Image, image_topic, self._image_cb, qos)
+        privacy_topic = f'{pre}/{self.get_parameter("privacy_zone_topic").value}'
+        self.create_subscription(Bool, privacy_topic, self._privacy_cb, 1)
         self._det_pub = self.create_publisher(Detection2DArray, detections_topic, 10)
         self._annotated_pub = (
             self.create_publisher(Image, annotated_topic, 1)
@@ -122,7 +127,8 @@ class YoloDetector(Node):
         self.get_logger().info(
             f'YOLO detector ready — image={image_topic} → detections={detections_topic}'
             + (f', annotated={annotated_topic}' if self._publish_annotated else '')
-            + f' | rate={self._max_rate_hz}Hz classes=[{allow_str}]')
+            + f' | rate={self._max_rate_hz}Hz classes=[{allow_str}]'
+            + f' | privacy_zone={privacy_topic} (mutes inference when True)')
 
         self.create_timer(1.0 / self._max_rate_hz, self._infer_tick)
         self.create_timer(2.0, self._check_no_frames)
@@ -142,6 +148,13 @@ class YoloDetector(Node):
         self._latest_stamp = time.monotonic()
         self._last_frame_recv = self._latest_stamp
 
+    def _privacy_cb(self, msg: Bool):
+        if msg.data != self._privacy_active:
+            self.get_logger().info(
+                'Entering privacy zone — muting YOLO inference' if msg.data
+                else 'Leaving privacy zone — resuming YOLO inference')
+        self._privacy_active = msg.data
+
     def _check_no_frames(self):
         if not self._ready:
             return
@@ -154,6 +167,8 @@ class YoloDetector(Node):
 
     def _infer_tick(self):
         if not self._ready or self._latest_frame is None:
+            return
+        if self._privacy_active:
             return
         if self._latest_stamp == self._last_processed_stamp:
             return  # no new frame since last inference — skip rather than reprocess
