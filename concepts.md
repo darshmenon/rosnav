@@ -2331,3 +2331,170 @@ Three real bugs surfaced building this:
 
 ---
 
+## 36. Terrain-Friction Speed Costmap (`multi_terrain_robot_diff`)
+
+The robot's only obstacle sensor is a 2D lidar — range only, no terrain semantics — so
+"multi-terrain navigation" has to get its cost signal from somewhere else. This section
+covers a friction-based one built entirely on infrastructure that already existed for
+Gaussian Splatting (§28/§30): the `nav2_costmap_2d::SpeedFilter`/`KeepoutFilter` plugins,
+`filter_mask_server`/`costmap_filter_info_server` wiring, and `gs_speed_mask:=<path>` /
+`gs_keepout_mask:=<path>` launch args on `slam_nav.launch.py` are all generic — any Nav2
+map-format mask works, not just a splat-derived one. No new Nav2 plugin was needed.
+
+### The world (`worlds/multi_terrain_robot_diff.world`)
+
+4 static zones on a shared floor plane, each an SDF box with its own `<surface><friction>`
+`<ode><mu>` and a distinct color so the zones are visually obvious in Gazebo/RViz:
+
+| Model name | Friction (`mu`) | Color |
+|---|---|---|
+| `terrain_flat_concrete` | 1.2 | grey |
+| `terrain_wide_asphalt` | 1.1 | dark grey |
+| `terrain_gravel_rough` | 0.9 | tan |
+| `terrain_low_friction_tile` | 0.25 | blue |
+
+```bash
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=multi_terrain_robot_diff explore:=true drive_type:=diff
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=multi_terrain_robot_diff explore:=true drive_type:=mecanum
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=multi_terrain_robot_diff explore:=true drive_type:=ackermann safety:=true controller:=mppi
+```
+
+**Verified (2026-08-26):** headless launch (`explore:=true headless:=true rviz:=false`,
+isolated `ROS_DOMAIN_ID`) spawned cleanly (baked-world mode, no SDF/URDF warnings beyond
+the usual benign `gz_frame_id` ones already seen on every world), SLAM/Nav2/frontier came
+up, and `explore_lite` ran to `All frontiers traversed/tried out, stopping.` with no
+lingering process on that domain after teardown. A static map was then saved via
+`map_saver_cli` to `maps/map_multi_terrain_robot_diff.pgm/.yaml` (+ PNG render) so
+`explore:=false` static-map mode works on this world too, matching every other
+benchmark world's convention.
+
+Not touched by this section: `worlds/multi_terrain.world` (a different, older world) has
+a stale comment referencing `stand_go2_gz.py` — a script that only exists in the separate
+`~/quadruped-dog-rl` project, not this repo. Pre-existing oddity, left alone.
+
+### Static mask (`gen_terrain_speed_mask.py`)
+
+Parses the `terrain_*` model blocks straight out of the world SDF (name, `<pose>`, box
+`<size>`, `<surface><friction><ode><mu>`) and rasterizes them into a Nav2
+costmap-filter-mask, using the *same* linear convention `gs_speed_filter.yaml` already
+expects (`base: 100.0`, `multiplier: -1.0`): `mu >= --full-speed-mu` (default 1.2) → mask
+value 0 (100% speed), `mu <= --min-speed-mu` (default 0.25) → mask value 100 (near-stop),
+linear in between. Cells outside every zone are left at 0 — this mask only ever slows the
+robot down, never blocks it outright (that's `gs_keepout_mask`/`KeepoutFilter`).
+
+```bash
+ros2 run rosnav_bot gen_terrain_speed_mask.py \
+    --world src/rosnav_bot/worlds/multi_terrain_robot_diff.world \
+    --align-to src/rosnav_bot/maps/map_multi_terrain_robot_diff.yaml \
+    --out src/rosnav_bot/maps/terrain_speed_multi_terrain_robot_diff.yaml
+
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=multi_terrain_robot_diff explore:=true \
+    gs_speed_mask:=src/rosnav_bot/maps/terrain_speed_multi_terrain_robot_diff.yaml
+```
+
+No new launch arg, no new Nav2 plugin, no new `costmap_filter_info_server` — this reuses
+§30's existing `gs_speed_mask:=<path>` wiring unchanged; the script just produces a
+friction-derived mask instead of a splat-density one.
+
+`--align-to` an existing saved map (recommended, as above) means the mask only covers
+cells the robot actually explored — `terrain_flat_concrete` fell entirely outside
+`map_multi_terrain_robot_diff`'s explored bounds in the reference run below, but since
+concrete's mask value is 0 (full speed) anyway, an unexplored cell defaulting to the
+mask's edge value is indistinguishable from correct coverage there. Without `--align-to`,
+the script auto-fits a bbox around the zones themselves instead.
+
+**Verified (2026-08-26):** ran `gen_terrain_speed_mask.py` against the real world file
+aligned to the saved map — output: `terrain_gravel_rough` mu=0.9 → value 31.6 (68%
+speed), `terrain_low_friction_tile` mu=0.25 → value 100.0 (0%/near-stop),
+`terrain_wide_asphalt` mu=1.1 → value 10.5 (89% speed), `terrain_flat_concrete` mu=1.2 →
+value 0.0 (100% speed, 0 cells — outside explored bounds, see above); 41.6% of cells fell
+inside a zone. Launched `slam_nav.launch.py world_name:=multi_terrain_robot_diff
+explore:=true gs_speed_mask:=<that mask>` headless on an isolated `ROS_DOMAIN_ID` — both
+`local_costmap` and `global_costmap` logged `SpeedFilter: Received filter info from
+/gs/speed_filter_info topic.` and `SpeedFilter: Received filter mask from
+/gs/speed_filter_mask topic.`, confirming the friction-derived mask loads through the
+existing filter pipeline exactly like a splat-derived one. Clean teardown, no lingering
+process on that domain afterward.
+
+**Note:** `explore:=false` (AMCL/pre-built-map mode) is a separate axis from `slam:=false`
+on `slam_nav.launch.py` — `explore:=false` alone only disables the frontier explorer node
+and leaves `slam_toolbox` (SLAM mode) running; it does *not* switch to AMCL + static
+`map_server`. Discovered while testing this section (the run never got the real `/map`
+loaded and `local_costmap` spun forever on `Timed out waiting for transform from
+base_link to odom`) — unrelated to the terrain mask, reproduces with `gs_speed_mask`
+unset too. Use `slam:=false` for pre-built-map/AMCL mode, as README §2 already documents.
+
+---
+
+## 37. Live Camera Terrain Speed Overlay (`camera_terrain_speed_mask.py`)
+
+§36's mask is baked from the world file's ground-truth friction — accurate for this one
+benchmark world, but nothing the robot could produce on a world it doesn't have SDF
+access to. This section is the live counterpart: a node that turns the robot's own RGB-D
+camera into the SpeedFilter mask source at runtime, reusing the exact same Nav2 wiring
+(`nav2_costmap_2d::SpeedFilter`, `costmap_filter_info_server`, `base=100`/`multiplier=-1`)
+— no new Nav2 plugin here either.
+
+**Heuristic, not classification:** there's no ground-truth terrain label at runtime, only
+depth geometry. `camera_terrain_speed_mask.py` unprojects the depth image into 3D points
+via pinhole intrinsics (vectorized numpy over a downsampled pixel grid — `--stride`,
+default 8 — not a per-point Python loop, since a 1280x960 depth frame is too large to
+iterate one pixel at a time every publish cycle), transforms them into `base_link` via TF,
+keeps points in a thin height band near the ground (`--ground-z-min/--ground-z-max` —
+this robot has no calibrated ground-clearance spec, so the band is a generous heuristic),
+and uses per-cell Z variance as the roughness proxy: flat → low variance → full speed;
+uneven/rough → high variance → near-stop (`--smooth-variance`/`--rough-variance`
+thresholds). Binning uses the same `np.add.at` count/sum/sum-of-squares accumulation
+trick §30's `gs_speed_mask_from_splat.py` uses for density, just for variance instead.
+
+Publishes `nav_msgs/OccupancyGrid` directly to `/gs/speed_filter_mask` (TRANSIENT_LOCAL,
+matching map_server's latched publish) at `--publish-period` Hz (default 1.0) — no
+PGM/YAML round-trip, no `map_server`. The grid is small (`--grid-ahead`/`--grid-behind`/
+`--grid-width`, default 3.5m x 3.0m) and re-centered on the robot's map-frame pose each
+cycle; cells outside it are simply absent from the message, the same graceful
+"unrestricted where there's no data" behavior §36 relies on for unexplored zones.
+
+**Wiring:** `slam_nav.launch.py terrain_live_camera:=true` forces `enable_rgbd:=true`
+(same pattern `slam_algo:=vslam` already uses) and takes priority over a static
+`gs_speed_mask` file if both are set — it starts `camera_terrain_speed_mask.py` +
+`gs_speed_costmap_filter_info_server` (the type/base/multiplier config is source-agnostic,
+reused unchanged from §30's `gs_speed_filter.yaml`) but skips the static
+`gs_speed_filter_mask_server`/`map_server`, since the node publishes the mask itself.
+
+```bash
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=multi_terrain_robot_diff \
+    explore:=true terrain_live_camera:=true
+```
+
+**Verified (2026-08-26):** launched headless on an isolated `ROS_DOMAIN_ID` (`enable_rgbd`
+auto-forced true, confirmed in the startup log). `camera_terrain_speed_mask.py` came up
+clean, and both `local_costmap` and `global_costmap` logged `SpeedFilter: Received filter
+info from /gs/speed_filter_info topic.` and `SpeedFilter: Received filter mask from
+/gs/speed_filter_mask topic.` — `ros2 topic echo /gs/speed_filter_mask --field info`
+confirmed a live 35x30 grid @ 0.10 m/cell, origin tracking near the robot's pose, matching
+the configured `grid_ahead=3.0/grid_behind=0.5/grid_width=3.0` geometry. One transient
+`TF lookup failed: Lookup would require extrapolation into the future` warning occurred
+once during the run (throttled to 5s, self-recovered next cycle, does not repeat) —
+normal minor clock/timing skew between the depth image and TF buffer under load on this
+shared machine, not a bug; the node's TF lookup is already wrapped in a try/except that
+just skips that one publish cycle. No crash, no repeated warnings, clean teardown.
+
+**Real bug hit and fixed while building this:** both new scripts
+(`gen_terrain_speed_mask.py`, `camera_terrain_speed_mask.py`) were written without the
+executable bit — `ros2 launch` failed with `executable '...' not found on the libexec
+directory` even though the CMakeLists `install(PROGRAMS ...)` entry and the built
+`--symlink-install` symlink were both correct, because `ros2 pkg executables` (and
+`ros2 run`/launch's `Node` action) filter by the file's `+x` permission, not just its
+presence. Fixed with `chmod +x` on both scripts — no rebuild needed since
+`--symlink-install` symlinks straight to the source file, so the permission fix took
+effect immediately.
+
+**Not attempted:** validating the roughness heuristic actually tracks the SDF friction
+zones (e.g. confirming variance is measurably higher over `terrain_gravel_rough` than
+`terrain_flat_concrete` in this world) — Gazebo's simple flat-box terrain zones have no
+real geometric texture for a depth camera to see (they're SDF friction properties, not
+height variation), so this heuristic has nothing to key off of *in this specific world*.
+It's built for terrain with actual surface irregularity (uneven ground, rubble, grass) —
+follow-up would be adding real height-noise geometry to a zone, or testing against a
+world with genuine unevenness, to confirm the variance signal actually separates rough
+from smooth there.

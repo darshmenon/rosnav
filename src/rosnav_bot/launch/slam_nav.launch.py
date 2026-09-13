@@ -98,7 +98,12 @@ def _resolve_slam_params_file(raw_value: str, pkg_share: str) -> str:
 # the generic default (1.5, 1.0): 'outdoor's flat bowl-center default is out
 # of lidar range of any terrain (map stays 0x0 forever); 'multi_terrain's
 # open flat pad gives RTAB-Map's ICP nothing to lock onto, so drift shows up
-# as false obstacles that box the robot in near spawn. Only applied when the
+# as false obstacles that box the robot in near spawn; 'tugbot_warehouse's
+# old (0, 12, yaw=3.14) default faced the lidar into the loading-dock's open
+# floor — 64.7% of beams permanently exceeded scan_quality_gate's 50%
+# max_nan_ratio (confirmed live 2026-09-10: 45s/1000 scans, 0 ever accepted,
+# zero odom motion — nothing ever primes SLAM's first scan, so the robot
+# never gets a reason to move and self-correct). Only applied when the
 # corresponding spawn_* argument is left at its 'auto' sentinel, so an
 # explicit spawn_x/y/z/yaw override always wins.
 _WORLD_SPAWN_DEFAULTS = {
@@ -110,8 +115,11 @@ _WORLD_SPAWN_DEFAULTS = {
     'lake_house': {'x': '1.2', 'y': '0.8', 'z': '7.2', 'yaw': '0.0'},
     # Center aisle of AWS RoboMaker warehouse (away from clutter at y>2)
     'aws_warehouse': {'x': '0.5', 'y': '0.0', 'z': '0.3', 'yaw': '0.0'},
-    # Open floor between shelf rows in Tugbot warehouse
-    'tugbot_warehouse': {'x': '0.0', 'y': '12.0', 'z': '0.3', 'yaw': '3.14'},
+    # Inside the shelf grid (rows at x=-4.4/x=5.6, cross-aisles at
+    # y=-0.69/2.31/5.31/8.34) instead of the old loading-dock spot — see
+    # comment above. Verified live: 58.9% valid scans, SLAM locks on
+    # immediately.
+    'tugbot_warehouse': {'x': '0.5', 'y': '1.5', 'z': '0.3', 'yaw': '0.0'},
     # Cafe interior, looking down the seating aisle
     'cafe': {'x': '0.0', 'y': '-2.0', 'z': '0.3', 'yaw': '-1.57'},
     # Living room floor, clear of sofa/coffee-table/TV-stand and both hallway
@@ -132,6 +140,8 @@ _WORLD_SPAWN_DEFAULTS = {
     # Off-center spawn in an asymmetric near-100% coverage sanity target
     # (11m x 9m interior).
     'coverage_100': {'x': '-1.6', 'y': '-0.8', 'z': '0.3', 'yaw': '0.3'},
+    # West staging zone of the terrain/drive-base differentiation world.
+    'multi_terrain_robot_diff': {'x': '-9.2', 'y': '0.0', 'z': '0.3', 'yaw': '0.0'},
     # South-central floor of bench_room_cluttered's spawn-side half — clear
     # of the divider wall and every crate by >=0.8m. The generic default
     # (1.5, 1.0) sits ~0.46m from cb_box_3, inside the collision monitor's
@@ -271,15 +281,19 @@ def _build_runtime_actions(context, pkg_share: str):
     enable_camera_arg = LaunchConfiguration('enable_camera').perform(context).strip().lower()
     enable_rgbd_arg = LaunchConfiguration('enable_rgbd').perform(context).strip().lower()
     enable_yolo_arg = LaunchConfiguration('enable_yolo').perform(context).strip().lower()
+    terrain_live_camera_arg = LaunchConfiguration('terrain_live_camera').perform(context).strip().lower()
+    terrain_live_camera = _common.truthy(terrain_live_camera_arg)
     # yolo_detector.py has nothing to detect on without the camera, so
     # enable_yolo:=true pulls it in even if enable_camera wasn't set explicitly.
     # slam_algo=3d also wants it: RTAB-Map's own bag-of-words loop closure
     # needs an RGB image on top of the lidar cloud (lidar ICP alone can
     # alias in geometrically repetitive aisles/corridors).
     # slam_algo=vslam|multisensor forces RGB-D; enable_rgbd:=true does the same for
-    # depth-aware costmaps without switching SLAM.
+    # depth-aware costmaps without switching SLAM; terrain_live_camera:=true needs
+    # the same depth stream for camera_terrain_speed_mask.py (see concepts.md §37).
     enable_rgbd = 'true' if (
-        slam_algo in ('vslam', 'multisensor', 'orbslam3') or _common.truthy(enable_rgbd_arg)) else 'false'
+        slam_algo in ('vslam', 'multisensor', 'orbslam3') or _common.truthy(enable_rgbd_arg)
+        or terrain_live_camera) else 'false'
     enable_camera = 'true' if (
         _common.truthy(enable_camera_arg) or _common.truthy(enable_yolo_arg)
         or slam_algo in ('3d', 'multisensor') or enable_rgbd == 'true') else 'false'
@@ -668,8 +682,49 @@ def _build_runtime_actions(context, pkg_share: str):
     # See concepts.md §30 and scripts/gs_speed_mask_from_splat.py — density-
     # graded slow zones instead of gs_keepout_mask's binary no-go. Distinct
     # node names from the keepout group above so both can run together.
+    #
+    # terrain_live_camera:=true (concepts.md §37) takes priority over a static
+    # gs_speed_mask file: camera_terrain_speed_mask.py becomes the mask
+    # *publisher* itself (publishing straight to /gs/speed_filter_mask), so
+    # the static map_server (gs_speed_filter_mask_server) is skipped — only
+    # gs_speed_costmap_filter_info_server is still needed, since the
+    # type/base/multiplier config is source-agnostic.
     gs_speed_mask = LaunchConfiguration('gs_speed_mask').perform(context).strip()
-    if gs_speed_mask:
+    if terrain_live_camera:
+        gs_speed_filter_params = os.path.join(pkg_share, 'config', 'gs_speed_filter.yaml')
+        gs_speed_group = TimerAction(
+            period=9.0,
+            actions=[
+                LogInfo(msg='[slam_nav] Terrain live-camera speed filter ENABLED '
+                            '(camera_terrain_speed_mask.py) — gs_speed_mask ignored if set.'),
+                Node(
+                    package='rosnav_bot',
+                    executable='camera_terrain_speed_mask.py',
+                    name='camera_terrain_speed_mask',
+                    output='screen',
+                    parameters=[{'use_sim_time': True}],
+                ),
+                Node(
+                    package='nav2_map_server',
+                    executable='costmap_filter_info_server',
+                    name='gs_speed_costmap_filter_info_server',
+                    output='screen',
+                    parameters=[gs_speed_filter_params, {'use_sim_time': True}],
+                ),
+                Node(
+                    package='nav2_lifecycle_manager',
+                    executable='lifecycle_manager',
+                    name='lifecycle_manager_gs_speed',
+                    output='screen',
+                    parameters=[{
+                        'use_sim_time': True,
+                        'autostart': True,
+                        'node_names': ['gs_speed_costmap_filter_info_server'],
+                    }],
+                ),
+            ],
+        )
+    elif gs_speed_mask:
         gs_speed_filter_params = os.path.join(pkg_share, 'config', 'gs_speed_filter.yaml')
         gs_speed_group = TimerAction(
             period=9.0,
@@ -1108,6 +1163,13 @@ def generate_launch_description():
             name='enable_rgbd', default_value='false',
             description='Use RGB-D camera (depth image + /camera/depth/points for '
                         'Nav2 VoxelLayer). Forced true for slam_algo:=vslam|multisensor.'),
+        DeclareLaunchArgument(
+            name='terrain_live_camera', default_value='false',
+            description='Live camera-driven terrain SpeedFilter mask '
+                        '(camera_terrain_speed_mask.py) instead of a static gs_speed_mask '
+                        'file — forces enable_rgbd:=true and takes priority over '
+                        'gs_speed_mask when both are set. Best-effort heuristic, see '
+                        'concepts.md §37.'),
         # Maze default spawn moved away from origin so robot is immediately visible.
         DeclareLaunchArgument(
             name='spawn_x', default_value='auto',
