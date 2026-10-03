@@ -9,7 +9,8 @@ Features
 ────────
 • Live list of active robots (auto-refreshes every 2 s)
 • Select a robot → click-to-send navigation goals on map canvas
-• Manual velocity sliders (linear / angular) for teleoperation
+• Virtual joystick pad (drag to steer) for teleoperation
+• Live camera feed for the selected robot
 • Spawn a new robot at a given (x, y) in Gazebo
 • Save the current SLAM map
 • Map canvas shows the /map OccupancyGrid
@@ -24,18 +25,27 @@ import time
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 
+import cv2
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy
+from cv_bridge import CvBridge
 from geometry_msgs.msg import Twist, PoseStamped
 from nav_msgs.msg import OccupancyGrid
 from nav2_msgs.action import NavigateToPose
+from sensor_msgs.msg import Image
 
 PKG = 'rosnav_bot'
 REFRESH_MS = 2000     # robot list refresh interval
 MAP_W = 400           # canvas width in pixels
 MAP_H = 400           # canvas height in pixels
+CAM_W = 320           # camera view width in pixels
+CAM_H = 240           # camera view height in pixels
+JOY_SIZE = 150         # joystick pad diameter in pixels
+JOY_KNOB_R = 12        # joystick knob radius in pixels
+MAX_LIN = 0.5          # m/s at full joystick deflection
+MAX_ANG = 2.0          # rad/s at full joystick deflection
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -44,6 +54,9 @@ class FleetGuiNode(Node):
         super().__init__('fleet_gui')
         self._pubs: dict[str, any] = {}
         self._map: OccupancyGrid | None = None
+        self._bridge = CvBridge()
+        self._image_subs: dict[str, any] = {}
+        self._latest_image: dict[str, any] = {}   # ns -> bgr8 numpy frame
 
         qos = QoSProfile(depth=1,
                          durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
@@ -52,6 +65,21 @@ class FleetGuiNode(Node):
 
     def _map_cb(self, msg):
         self._map = msg
+
+    def ensure_image_sub(self, ns: str):
+        """Lazily subscribe to a robot's camera the first time it's viewed."""
+        if ns in self._image_subs:
+            return
+
+        def _cb(msg, ns=ns):
+            try:
+                self._latest_image[ns] = self._bridge.imgmsg_to_cv2(
+                    msg, desired_encoding='bgr8')
+            except Exception as exc:
+                self.get_logger().warn(f'camera decode failed for {ns}: {exc}')
+
+        self._image_subs[ns] = self.create_subscription(
+            Image, f'/{ns}/camera/image_raw', _cb, 5)
 
     def _pub(self, ns: str):
         if ns not in self._pubs:
@@ -108,6 +136,7 @@ class FleetGUI:
         self._build_ui()
         self._refresh_robots()
         self._refresh_map()
+        self._refresh_camera()
         self._start_watchdog()
 
     # ── UI construction ───────────────────────────────────────────────────────
@@ -147,7 +176,7 @@ class FleetGUI:
         tk.Button(left, text='Refresh robots', command=self._refresh_robots,
                   bg='#313244', fg='#cdd6f4').pack(pady=2, fill=tk.X, padx=6)
 
-        tk.Separator(left, orient='horizontal').pack(fill=tk.X, pady=6, padx=4)
+        ttk.Separator(left, orient='horizontal').pack(fill=tk.X, pady=6, padx=4)
 
         # Goal click toggle
         self._goal_btn = tk.Button(left, text='Click map → Send goal',
@@ -169,37 +198,42 @@ class FleetGUI:
                   bg='#a6e3a1', fg='#1e1e2e', font=('Helvetica', 9, 'bold')
                   ).grid(row=1, column=0, columnspan=2, pady=2, sticky='ew')
 
-        tk.Separator(left, orient='horizontal').pack(fill=tk.X, pady=6, padx=4)
+        ttk.Separator(left, orient='horizontal').pack(fill=tk.X, pady=6, padx=4)
 
-        # Teleop sliders
+        # Teleop joystick
         tel_frame = tk.LabelFrame(left, text='Teleop',
                                   bg='#181825', fg='#89b4fa')
         tel_frame.pack(fill=tk.X, padx=6, pady=4)
 
-        tk.Label(tel_frame, text='Linear (m/s)',
-                 bg='#181825', fg='#cdd6f4', font=('Helvetica', 8)).pack()
-        self._lin_slider = tk.Scale(tel_frame, from_=-0.5, to=0.5,
-                                    resolution=0.01, orient=tk.HORIZONTAL,
-                                    command=self._on_slider,
-                                    bg='#181825', fg='#cdd6f4',
-                                    troughcolor='#313244',
-                                    highlightthickness=0, length=180)
-        self._lin_slider.pack()
+        self._joy_vel_var = tk.StringVar(value='lin 0.00 m/s | ang 0.00 rad/s')
+        tk.Label(tel_frame, textvariable=self._joy_vel_var,
+                 bg='#181825', fg='#cdd6f4', font=('Courier', 8)).pack(pady=(4, 2))
 
-        tk.Label(tel_frame, text='Angular (rad/s)',
-                 bg='#181825', fg='#cdd6f4', font=('Helvetica', 8)).pack()
-        self._ang_slider = tk.Scale(tel_frame, from_=-2.0, to=2.0,
-                                    resolution=0.05, orient=tk.HORIZONTAL,
-                                    command=self._on_slider,
-                                    bg='#181825', fg='#cdd6f4',
-                                    troughcolor='#313244',
-                                    highlightthickness=0, length=180)
-        self._ang_slider.pack()
+        self._joy_canvas = tk.Canvas(tel_frame, width=JOY_SIZE, height=JOY_SIZE,
+                                     bg='#11111b', highlightthickness=0,
+                                     cursor='hand2')
+        self._joy_canvas.pack(pady=2)
+        self._joy_center = (JOY_SIZE / 2, JOY_SIZE / 2)
+        self._joy_radius = JOY_SIZE / 2 - JOY_KNOB_R
+        self._joy_canvas.create_oval(
+            2, 2, JOY_SIZE - 2, JOY_SIZE - 2, outline='#45475a', width=2)
+        self._joy_canvas.create_line(
+            JOY_SIZE / 2, 2, JOY_SIZE / 2, JOY_SIZE - 2, fill='#313244')
+        self._joy_canvas.create_line(
+            2, JOY_SIZE / 2, JOY_SIZE - 2, JOY_SIZE / 2, fill='#313244')
+        cx, cy = self._joy_center
+        self._joy_knob = self._joy_canvas.create_oval(
+            cx - JOY_KNOB_R, cy - JOY_KNOB_R, cx + JOY_KNOB_R, cy + JOY_KNOB_R,
+            fill='#89b4fa', outline='')
+        self._joy_canvas.bind('<Button-1>', self._on_joy_drag)
+        self._joy_canvas.bind('<B1-Motion>', self._on_joy_drag)
+        self._joy_canvas.bind('<ButtonRelease-1>', self._on_joy_release)
+
         tk.Button(tel_frame, text='STOP', command=self._stop_robot,
                   bg='#f38ba8', fg='#1e1e2e',
-                  font=('Helvetica', 10, 'bold')).pack(fill=tk.X, padx=4, pady=2)
+                  font=('Helvetica', 10, 'bold')).pack(fill=tk.X, padx=4, pady=(4, 2))
 
-        tk.Separator(left, orient='horizontal').pack(fill=tk.X, pady=6, padx=4)
+        ttk.Separator(left, orient='horizontal').pack(fill=tk.X, pady=6, padx=4)
 
         # Spawn + save
         tk.Button(left, text='Spawn new robot …',
@@ -209,12 +243,19 @@ class FleetGUI:
                   command=self._save_map_dialog,
                   bg='#313244', fg='#cdd6f4').pack(pady=2, fill=tk.X, padx=6)
 
-        # Right: map canvas
+        # Right: camera feed + map canvas
         right = tk.Frame(main)
         right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=4, pady=4)
 
-        tk.Label(right, text='/map', font=('Helvetica', 10, 'bold'),
+        tk.Label(right, text='Camera', font=('Helvetica', 10, 'bold'),
                  fg='#89b4fa').pack()
+        self._cam_canvas = tk.Canvas(right, width=CAM_W, height=CAM_H,
+                                     bg='#11111b', highlightthickness=0)
+        self._cam_canvas.pack()
+        self._cam_photo = None   # keep a reference so Tk doesn't GC it
+
+        tk.Label(right, text='/map', font=('Helvetica', 10, 'bold'),
+                 fg='#89b4fa').pack(pady=(8, 0))
         self._canvas = tk.Canvas(right, width=MAP_W, height=MAP_H,
                                  bg='#313244', cursor='crosshair')
         self._canvas.pack(fill=tk.BOTH, expand=True)
@@ -246,6 +287,7 @@ class FleetGUI:
         sel = self._robot_lb.curselection()
         if sel:
             self._selected_ns = self._robot_lb.get(sel[0])
+            self.node.ensure_image_sub(self._selected_ns)
 
     # ── Map canvas ────────────────────────────────────────────────────────────
     def _refresh_map(self):
@@ -372,36 +414,80 @@ class FleetGUI:
                                    f'navigate_to_pose not available for {ns}.\n'
                                    'Is Nav2 running?')
 
-    # ── Teleop ────────────────────────────────────────────────────────────────
+    # ── Teleop (virtual joystick) ────────────────────────────────────────────
     _last_vel_t = 0.0
+    _joy_lin = 0.0
+    _joy_ang = 0.0
 
-    def _on_slider(self, _val=None):
-        if not self._selected_ns:
-            return
-        lin = self._lin_slider.get()
-        ang = self._ang_slider.get()
-        self.node.send_vel(self._selected_ns, lin, ang)
+    def _on_joy_drag(self, event):
+        cx, cy = self._joy_center
+        dx, dy = event.x - cx, event.y - cy
+        dist = math.hypot(dx, dy)
+        if dist > self._joy_radius:
+            dx *= self._joy_radius / dist
+            dy *= self._joy_radius / dist
+        self._joy_canvas.coords(
+            self._joy_knob,
+            cx + dx - JOY_KNOB_R, cy + dy - JOY_KNOB_R,
+            cx + dx + JOY_KNOB_R, cy + dy + JOY_KNOB_R)
+
+        # Up = forward (-dy), right = turn right (+dx → negative ang, standard ccw-positive)
+        self._joy_lin = -dy / self._joy_radius * MAX_LIN
+        self._joy_ang = -dx / self._joy_radius * MAX_ANG
+        self._joy_vel_var.set(
+            f'lin {self._joy_lin:+.2f} m/s | ang {self._joy_ang:+.2f} rad/s')
+
+        if self._selected_ns:
+            self.node.send_vel(self._selected_ns, self._joy_lin, self._joy_ang)
+        self._last_vel_t = time.time()
+
+    def _on_joy_release(self, _event=None):
+        cx, cy = self._joy_center
+        self._joy_canvas.coords(
+            self._joy_knob,
+            cx - JOY_KNOB_R, cy - JOY_KNOB_R,
+            cx + JOY_KNOB_R, cy + JOY_KNOB_R)
+        self._joy_lin = self._joy_ang = 0.0
+        self._joy_vel_var.set('lin 0.00 m/s | ang 0.00 rad/s')
+        if self._selected_ns:
+            self.node.send_vel(self._selected_ns, 0.0, 0.0)
         self._last_vel_t = time.time()
 
     def _stop_robot(self):
-        if self._selected_ns:
-            self._lin_slider.set(0)
-            self._ang_slider.set(0)
-            self.node.send_vel(self._selected_ns, 0.0, 0.0)
+        self._on_joy_release()
 
     def _start_watchdog(self):
-        """Stop robot if sliders haven't moved for 0.5 s."""
+        """Stop robot if the joystick knob hasn't moved for 0.5 s."""
         def wd():
             while True:
                 time.sleep(0.1)
                 ns = self._selected_ns
                 if ns and time.time() - self._last_vel_t > 0.5:
-                    lin = self._lin_slider.get()
-                    ang = self._ang_slider.get()
-                    if lin != 0 or ang != 0:
+                    if self._joy_lin != 0 or self._joy_ang != 0:
                         self.node.send_vel(ns, 0.0, 0.0)
+                        self._joy_lin = self._joy_ang = 0.0
 
         threading.Thread(target=wd, daemon=True).start()
+
+    # ── Camera feed ───────────────────────────────────────────────────────────
+    def _refresh_camera(self):
+        ns = self._selected_ns
+        frame = self.node._latest_image.get(ns) if ns else None
+        if frame is not None:
+            small = cv2.resize(frame, (CAM_W, CAM_H))
+            rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
+            header = f'P6 {CAM_W} {CAM_H} 255\n'.encode()
+            self._cam_photo = tk.PhotoImage(
+                data=header + rgb.tobytes(), format='PPM')
+            self._cam_canvas.delete('cam')
+            self._cam_canvas.create_image(
+                0, 0, anchor='nw', image=self._cam_photo, tags='cam')
+        else:
+            self._cam_canvas.delete('cam')
+            msg = 'Select a robot' if not ns else 'No camera feed'
+            self._cam_canvas.create_text(
+                CAM_W / 2, CAM_H / 2, text=msg, fill='#6c7086', tags='cam')
+        self.root.after(100, self._refresh_camera)
 
     # ── Spawn dialog ──────────────────────────────────────────────────────────
     def _spawn_dialog(self):
