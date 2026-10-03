@@ -1,0 +1,16 @@
+{
+  "duration_sec": 120.0,
+  "samples": 120,
+  "final_drift_m": 1.4339,
+  "max_drift_m": 1.4339,
+  "final_drift_yaw_deg": 0.0,
+  "ground_truth_enabled": true,
+  "final_pos_err_m": 1.0103,
+  "final_yaw_err_deg": 0.12,
+  "rmse_pos_err_m": 0.4178,
+  "max_pos_err_m": 1.0103,
+  "accuracy_samples": 118,
+  "label": "ekf_aws_warehouse",
+  "mode": "accuracy",
+  "generated_at": 1789069992.449309
+}

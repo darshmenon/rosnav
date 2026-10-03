@@ -1,0 +1,11 @@
+{
+  "duration_sec": 120.0,
+  "samples": 120,
+  "final_drift_m": 0.7119,
+  "max_drift_m": 0.7119,
+  "final_drift_yaw_deg": -115.58,
+  "ground_truth_enabled": false,
+  "label": "explore_lite_house_refix",
+  "mode": "accuracy",
+  "generated_at": 1787685039.2046275
+}

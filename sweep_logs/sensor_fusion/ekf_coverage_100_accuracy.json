@@ -1,0 +1,16 @@
+{
+  "duration_sec": 120.0,
+  "samples": 119,
+  "final_drift_m": 1.5852,
+  "max_drift_m": 1.5852,
+  "final_drift_yaw_deg": -0.2,
+  "ground_truth_enabled": true,
+  "final_pos_err_m": 1.2696,
+  "final_yaw_err_deg": -0.14,
+  "rmse_pos_err_m": 0.4768,
+  "max_pos_err_m": 1.2701,
+  "accuracy_samples": 118,
+  "label": "ekf_coverage_100",
+  "mode": "accuracy",
+  "generated_at": 1789071156.049817
+}

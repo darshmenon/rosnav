@@ -1,0 +1,154 @@
+<?xml version="1.0" ?>
+<sdf version='1.8'>
+  <world name='bench_room_cluttered'>
+
+    <physics name='4ms' type='ignored'>
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system"
+            name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system"
+            name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system"
+            name="ignition::gazebo::systems::SceneBroadcaster"/>
+    <plugin filename="ignition-gazebo-sensors-system"
+            name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="ignition-gazebo-contact-system"
+            name="ignition::gazebo::systems::Contact"/>
+    <plugin filename="ignition-gazebo-imu-system"
+            name="ignition::gazebo::systems::Imu"/>
+
+    <light name='sun' type='directional'>
+      <pose>0 0 10 0 0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>-0.5 0.1 -0.9</direction>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+    </light>
+
+    <!-- Ground plane -->
+    <model name='ground_plane'>
+      <static>true</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+        </collision>
+        <visual name='visual'>
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+            <diffuse>0.7 0.7 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ===== SAME 5x5m footprint as bench_room_small, but with a
+         dividing wall (one narrow gap) and denser small clutter — a
+         harder short-range test for explorer/SLAM comparisons while
+         still fully coverable in well under a minute. ===== -->
+
+    <!-- North wall -->
+    <model name='cb_wall_north'><static>true</static><link name='link'>
+      <pose>0 2.5 1 0 0 0</pose>
+      <collision name='c'><geometry><box><size>5.2 0.2 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>5.2 0.2 2</size></box></geometry>
+        <material><ambient>0.4 0.4 0.6 1</ambient><diffuse>0.4 0.4 0.6 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- South wall -->
+    <model name='cb_wall_south'><static>true</static><link name='link'>
+      <pose>0 -2.5 1 0 0 0</pose>
+      <collision name='c'><geometry><box><size>5.2 0.2 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>5.2 0.2 2</size></box></geometry>
+        <material><ambient>0.4 0.4 0.6 1</ambient><diffuse>0.4 0.4 0.6 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- East wall -->
+    <model name='cb_wall_east'><static>true</static><link name='link'>
+      <pose>2.5 0 1 0 0 0</pose>
+      <collision name='c'><geometry><box><size>0.2 5 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.2 5 2</size></box></geometry>
+        <material><ambient>0.4 0.4 0.6 1</ambient><diffuse>0.4 0.4 0.6 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- West wall -->
+    <model name='cb_wall_west'><static>true</static><link name='link'>
+      <pose>-2.5 0 1 0 0 0</pose>
+      <collision name='c'><geometry><box><size>0.2 5 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.2 5 2</size></box></geometry>
+        <material><ambient>0.4 0.4 0.6 1</ambient><diffuse>0.4 0.4 0.6 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- Dividing wall, splits the room roughly in half along y=0.3,
+         with a 0.9m gap on the east side (near x=1.8..2.3) so the
+         robot/frontier planner has to find the single passage. -->
+    <model name='cb_divider'><static>true</static><link name='link'>
+      <pose>-0.6 0.3 1 0 0 0</pose>
+      <collision name='c'><geometry><box><size>3.8 0.2 2</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>3.8 0.2 2</size></box></geometry>
+        <material><ambient>0.3 0.6 0.4 1</ambient><diffuse>0.3 0.6 0.4 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- Small clutter, south half (spawn side) -->
+    <model name='cb_box_1'><static>true</static><link name='link'>
+      <pose>-1.6 -1.2 0.2 0 0 0</pose>
+      <collision name='c'><geometry><box><size>0.4 0.4 0.4</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.4 0.4 0.4</size></box></geometry>
+        <material><ambient>0.8 0.6 0.2 1</ambient><diffuse>0.8 0.6 0.2 1</diffuse></material></visual>
+    </link></model>
+
+    <model name='cb_box_2'><static>true</static><link name='link'>
+      <pose>0.4 -1.6 0.2 0 0 0.3</pose>
+      <collision name='c'><geometry><box><size>0.35 0.35 0.4</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.35 0.35 0.4</size></box></geometry>
+        <material><ambient>0.5 0.5 0.3 1</ambient><diffuse>0.5 0.5 0.3 1</diffuse></material></visual>
+    </link></model>
+
+    <model name='cb_box_3'><static>true</static><link name='link'>
+      <pose>2.0 1.5 0.2 0 0 0</pose>
+      <collision name='c'><geometry><box><size>0.35 0.35 0.4</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.35 0.35 0.4</size></box></geometry>
+        <material><ambient>0.5 0.5 0.3 1</ambient><diffuse>0.5 0.5 0.3 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- Small clutter, north half (beyond the gap) -->
+    <model name='cb_box_4'><static>true</static><link name='link'>
+      <pose>-1.5 1.9 0.2 0 0 0</pose>
+      <collision name='c'><geometry><box><size>0.4 0.4 0.4</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.4 0.4 0.4</size></box></geometry>
+        <material><ambient>0.3 0.6 0.4 1</ambient><diffuse>0.3 0.6 0.4 1</diffuse></material></visual>
+    </link></model>
+
+    <model name='cb_box_5'><static>true</static><link name='link'>
+      <pose>0.6 1.7 0.2 0 0 0.6</pose>
+      <collision name='c'><geometry><box><size>0.35 0.35 0.4</size></box></geometry></collision>
+      <visual name='v'><geometry><box><size>0.35 0.35 0.4</size></box></geometry>
+        <material><ambient>0.8 0.6 0.2 1</ambient><diffuse>0.8 0.6 0.2 1</diffuse></material></visual>
+    </link></model>
+
+    <!-- Overview camera -->
+    <model name='world_monitor_cam'>
+      <static>true</static>
+      <pose>0 0 5.5 0 1.5708 0</pose>
+      <link name='link'>
+        <sensor name='monitor_camera' type='camera'>
+          <always_on>true</always_on>
+          <update_rate>10</update_rate>
+          <topic>world_monitor/image_raw</topic>
+          <camera>
+            <horizontal_fov>1.4</horizontal_fov>
+            <image><width>960</width><height>540</height><format>R8G8B8</format></image>
+            <clip><near>0.05</near><far>15.0</far></clip>
+          </camera>
+        </sensor>
+      </link>
+    </model>
+
+  </world>
+</sdf>

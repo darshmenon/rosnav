@@ -1,0 +1,500 @@
+{
+  "duration_sec": 120.0,
+  "samples": 121,
+  "final_coverage_pct": 26.13,
+  "final_free_cells": 6083,
+  "final_occupied_cells": 430,
+  "final_unknown_cells": 18411,
+  "total_cells": 24924,
+  "time_to_converge_sec": 5.5,
+  "converge_threshold": 0.98,
+  "coverage_timeline": [
+    {
+      "t": 0.1,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 0.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 1.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 2.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 3.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 4.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 5.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 6.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 7.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 8.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 9.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 10.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 11.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 12.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 13.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 14.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 15.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 16.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 17.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 18.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 19.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 20.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 21.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 22.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 23.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 24.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 25.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 26.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 27.5,
+      "coverage_pct": 25.01
+    },
+    {
+      "t": 28.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 29.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 30.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 31.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 32.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 33.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 34.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 35.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 36.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 37.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 38.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 39.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 40.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 41.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 42.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 43.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 44.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 45.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 46.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 47.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 48.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 49.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 50.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 51.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 52.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 53.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 54.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 55.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 56.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 57.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 58.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 59.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 60.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 61.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 62.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 63.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 64.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 65.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 66.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 67.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 68.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 69.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 70.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 71.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 72.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 73.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 74.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 75.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 76.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 77.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 78.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 79.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 80.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 81.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 82.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 83.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 84.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 85.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 86.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 87.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 88.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 89.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 90.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 91.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 92.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 93.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 94.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 95.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 96.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 97.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 98.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 99.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 100.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 101.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 102.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 103.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 104.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 105.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 106.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 107.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 108.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 109.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 110.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 111.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 112.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 113.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 114.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 115.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 116.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 117.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 118.5,
+      "coverage_pct": 26.13
+    },
+    {
+      "t": 119.5,
+      "coverage_pct": 26.13
+    }
+  ],
+  "label": "explore_lite_house_v2fix",
+  "mode": "slam",
+  "generated_at": 1787685591.5642645
+}

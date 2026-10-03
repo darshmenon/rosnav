@@ -1,0 +1,11 @@
+{
+  "duration_sec": 120.0,
+  "samples": 95,
+  "final_drift_m": 0.0,
+  "max_drift_m": 0.0,
+  "final_drift_yaw_deg": 0.0,
+  "ground_truth_enabled": false,
+  "label": "explore_lite_house_postekf",
+  "mode": "accuracy",
+  "generated_at": 1787749293.9302156
+}

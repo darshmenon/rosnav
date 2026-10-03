@@ -1,0 +1,7 @@
+label,world,explorer,slam_algo,mode,coverage_pct,elapsed_sec,time_to_converge_sec,final_drift_m,max_drift_m,yaw_drift_deg,offgrid_errors,source
+builtin_house_refix,house,builtin,2d,accuracy,,120,,0.3347,0.3678,98.18,,/home/asimov/rosnav/sweep_logs/builtin_house_refix_accuracy.json
+builtin_house_refix,house,builtin,2d,slam,48.52,120,6,,,,,/home/asimov/rosnav/sweep_logs/builtin_house_refix_slam.json
+explore_lite_house_refix,house,explore_lite,2d,accuracy,,120,,0.7119,0.7119,-115.58,,/home/asimov/rosnav/sweep_logs/explore_lite_house_refix_accuracy.json
+explore_lite_house_refix,house,explore_lite,2d,slam,28.15,120,5.9,,,,,/home/asimov/rosnav/sweep_logs/explore_lite_house_refix_slam.json
+explore_lite_house_v2fix,house,explore_lite,2d,accuracy,,120,,0.2164,0.2164,21.2,,/home/asimov/rosnav/sweep_logs/explore_lite_house_v2fix_accuracy.json
+explore_lite_house_v2fix,house,explore_lite,2d,slam,26.13,120,5.5,,,,,/home/asimov/rosnav/sweep_logs/explore_lite_house_v2fix_slam.json

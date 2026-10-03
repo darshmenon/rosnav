@@ -1,0 +1,16 @@
+{
+  "duration_sec": 120.0,
+  "samples": 119,
+  "final_drift_m": 4.6026,
+  "max_drift_m": 4.6026,
+  "final_drift_yaw_deg": -0.2,
+  "ground_truth_enabled": true,
+  "final_pos_err_m": 0.2332,
+  "final_yaw_err_deg": -0.19,
+  "rmse_pos_err_m": 0.1877,
+  "max_pos_err_m": 0.4557,
+  "accuracy_samples": 118,
+  "label": "ukf_aws_warehouse",
+  "mode": "accuracy",
+  "generated_at": 1789070147.7252758
+}

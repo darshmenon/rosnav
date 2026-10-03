@@ -1,0 +1,13 @@
+world,filter,launch_ok,gt_enabled,final_drift_m,max_drift_m,final_drift_yaw_deg,rmse_pos_err_m,note
+house,ekf,1,True,0.0,0.0,,,
+house,ukf,0,,,,,,launch_failed
+aws_warehouse,ekf,1,True,1.4339,1.4339,,,
+aws_warehouse,ukf,1,True,4.6026,4.6026,,,
+bench_room_small,ekf,1,True,2.9131,2.9131,,,
+bench_room_small,ukf,0,,,,,,launch_failed
+bench_room_cluttered,ekf,1,True,0.2553,0.4719,,,
+bench_room_cluttered,ukf,1,True,0.2394,0.4886,,,
+corridor,ekf,1,True,0.0,0.0,,,
+corridor,ukf,1,True,0.0,0.0,,,
+coverage_100,ekf,1,True,1.5852,1.5852,,,
+coverage_100,ukf,1,True,2.3934,2.3934,,,

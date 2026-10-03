@@ -1,0 +1,16 @@
+{
+  "duration_sec": 120.0,
+  "samples": 120,
+  "final_drift_m": 0.0,
+  "max_drift_m": 0.0,
+  "final_drift_yaw_deg": 0.0,
+  "ground_truth_enabled": true,
+  "final_pos_err_m": 0.0513,
+  "final_yaw_err_deg": -0.0,
+  "rmse_pos_err_m": 0.0463,
+  "max_pos_err_m": 0.0513,
+  "accuracy_samples": 118,
+  "label": "ekf_house",
+  "mode": "accuracy",
+  "generated_at": 1789069784.7588634
+}
