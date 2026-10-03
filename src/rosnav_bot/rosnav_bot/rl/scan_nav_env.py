@@ -22,8 +22,6 @@ try:
 except ImportError as exc:  # pragma: no cover
     raise ImportError('pip install gymnasium') from exc
 
-from PIL import Image
-
 OCCUPIED_MAX = 50   # PGM: 0=occupied … 254=free (Nav2 trinary)
 FREE_MIN = 200
 
@@ -38,6 +36,7 @@ def load_occupancy(
     img_path = meta['image']
     if not os.path.isabs(img_path):
         img_path = os.path.join(os.path.dirname(os.path.abspath(map_yaml)), img_path)
+    from PIL import Image  # lazy: only map loading needs Pillow (keeps CI lean)
     img = np.array(Image.open(img_path).convert('L'))
     # row 0 = top of image = max y in map frame
     occupied = img < OCCUPIED_MAX

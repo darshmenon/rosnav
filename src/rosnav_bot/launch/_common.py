@@ -101,6 +101,13 @@ def urdf_filename_for(drive_type: str, robot_model: str = 'custom') -> str:
 def nav2_params_filename(controller: str, drive_type: str, ros_distro: str = None) -> str:
     """Pick the single-robot nav2 params file for a drive_type/controller/distro combo."""
     ros_distro = ros_distro or ROS_DISTRO
+    if controller in ('mppi', 'rpp', 'regulated_pure_pursuit', 'pure_pursuit') and (
+            drive_type in ('ackermann', 'mecanum') or ros_distro == 'jazzy'):
+        import sys
+        print(f"[nav2_params] WARNING: controller:={controller} is ignored for "
+              f"drive_type={drive_type} on {ros_distro}; that setup uses its own params "
+              f"file, so a benchmark labelled '{controller}' will not test it.",
+              file=sys.stderr)
     if drive_type == 'ackermann':
         return 'nav2_params_ackermann.yaml'
     # Jazzy's params file already defaults to MPPI; the controller switch only

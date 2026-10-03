@@ -102,16 +102,16 @@ controller_server:
       yaw_goal_tolerance: 0.25
     FollowPath:
       plugin: "nav2_mppi_controller::MPPIController"
-      time_steps: 56
-      model_dt: 0.05
+      time_steps: 70
+      model_dt: 0.04
       batch_size: 2000
       ax_max: 0.5
       ax_min: -0.5
       ay_max: 0.0
       az_max: 0.6
-      vx_std: 0.03
+      vx_std: 0.1
       vy_std: 0.0
-      wz_std: 0.08
+      wz_std: 0.25
       vx_max: 0.15
       vx_min: -0.1
       vy_max: 0.0
@@ -200,7 +200,7 @@ local_costmap:
       width: 5
       height: 5
       resolution: 0.05
-      robot_radius: 0.34
+      footprint: "[[0.314, 0.130], [0.130, 0.314], [-0.130, 0.314], [-0.314, 0.130], [-0.314, -0.130], [-0.130, -0.314], [0.130, -0.314], [0.314, -0.130]]"  # octagon, circumradius 0.34 = same size as the robot_radius DWB/RPP use; MPPI CostCritic(consider_footprint) segfaults on a circular costmap
       # keepout_filter is inert until a costmap_filter_info_server publishes
       # /gs/costmap_filter_info (see gs_keepout_filter.yaml + slam_nav.launch.py
       # gs_keepout_mask:=<path>) — safe to always list.
@@ -282,7 +282,7 @@ global_costmap:
       publish_frequency: 1.0
       global_frame: map
       robot_base_frame: base_link
-      robot_radius: 0.34
+      footprint: "[[0.314, 0.130], [0.130, 0.314], [-0.130, 0.314], [-0.314, 0.130], [-0.314, -0.130], [-0.130, -0.314], [0.130, -0.314], [0.314, -0.130]]"  # octagon, circumradius 0.34 = same size as the robot_radius DWB/RPP use; MPPI CostCritic(consider_footprint) segfaults on a circular costmap
       resolution: 0.05
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "denoise_layer", "inflation_layer", "keepout_filter", "speed_filter", "binary_filter"]

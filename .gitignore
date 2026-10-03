@@ -77,3 +77,7 @@ robocloud.md
 
 # Root-level research / testing scratch notes — local only, never pushed
 /*_NOTES.md
+
+# Raw exploration-sweep logs (keep the json/csv summaries the chart scripts read)
+sweep_logs/*.log
+sweep_logs/run_logs/

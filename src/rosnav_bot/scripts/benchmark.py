@@ -231,8 +231,22 @@ class NavBenchmark(Node):
         # service), so waitUntilNav2Active(localizer='slam_toolbox') hangs;
         # 'none' waits on bt_navigator directly and skips the localizer check.
         self.declare_parameter('localizer', 'amcl')
+        # Gazebo ground truth (world frame) is the arbiter for goal error: the
+        # map frame starts at the spawn pose (AMCL initial pose = spawn), so
+        # map<-world is a fixed rigid transform given the spawn pose. Defaults
+        # are the cafe spawn from slam_nav.launch.py's SPAWN table.
+        self.declare_parameter('gt_topic', '/ground_truth')
+        self.declare_parameter('spawn_x', 0.0)
+        self.declare_parameter('spawn_y', -2.0)
+        self.declare_parameter('spawn_yaw', -1.57)
+        # max measured goal error that still counts as a success
+        self.declare_parameter('success_tol_m', 0.5)
+        # max AMCL-vs-ground-truth start error before a trial is declared invalid
+        self.declare_parameter('loc_tol_m', 0.5)
 
         self._label = self.get_parameter('label').value
+        self._success_tol_m = float(self.get_parameter('success_tol_m').value)
+        self._loc_tol_m = float(self.get_parameter('loc_tol_m').value)
         self._out_dir = _out_dir(self.get_parameter('out_dir').value)
         self._goals = _load_goals(self.get_parameter('goals_file').value)
         odom_topic = self.get_parameter('odom_topic').value
@@ -240,9 +254,47 @@ class NavBenchmark(Node):
 
         self._odom_dist = 0.0
         self._last_odom_xy = None
+        # Goals are in the map frame, so goal error and the getPath start
+        # pose must come from a map-frame pose (AMCL), not /odom: odom's
+        # origin is wherever the robot spawned and only coincides with map
+        # by luck, which made goal_error_m meaningless.
+        self._map_xy = None
+        amcl_qos = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE,
+                              durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
+        self.create_subscription(
+            PoseWithCovarianceStamped, '/amcl_pose', self._amcl_cb, amcl_qos)
         self.create_subscription(Odometry, odom_topic, self._odom_cb, 10)
+        # /amcl_pose only republishes after update_min_d/a of motion, so it
+        # can lag the true final pose by ~0.25 m; map->base_link TF is live.
+        self._tf_buffer = tf2_ros.Buffer(node=self)
+        self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, self)
+        self._gt_map_xy = None
+        self._spawn = (self.get_parameter('spawn_x').value,
+                       self.get_parameter('spawn_y').value,
+                       self.get_parameter('spawn_yaw').value)
+        self.create_subscription(
+            Odometry, self.get_parameter('gt_topic').value, self._gt_cb, 10)
 
         self.get_logger().info(f'[nav] label={self._label} goals={len(self._goals)}')
+
+    def _gt_cb(self, msg: Odometry):
+        sx, sy, syaw = self._spawn
+        dx = msg.pose.pose.position.x - sx
+        dy = msg.pose.pose.position.y - sy
+        self._gt_map_xy = (dx * math.cos(syaw) + dy * math.sin(syaw),
+                           -dx * math.sin(syaw) + dy * math.cos(syaw))
+
+    def _map_pose_xy(self):
+        """Latest map-frame (x, y): TF map->base_link, else /amcl_pose, else None."""
+        try:
+            t = self._tf_buffer.lookup_transform(
+                'map', 'base_link', Time(), timeout=Duration(seconds=0.2)).transform.translation
+            return (t.x, t.y)
+        except Exception:
+            return self._map_xy
+
+    def _amcl_cb(self, msg: PoseWithCovarianceStamped):
+        self._map_xy = (msg.pose.pose.position.x, msg.pose.pose.position.y)
 
     def _odom_cb(self, msg: Odometry):
         x = msg.pose.pose.position.x
@@ -278,10 +330,38 @@ class NavBenchmark(Node):
         else:
             nav.waitUntilNav2Active(localizer=self._localizer)
         results = []
+        # Spin our own subscriptions (odom/amcl/tf/ground truth) before the
+        # first goal; otherwise every start pose below is still None.
+        t_spin = time.time()
+        while time.time() - t_spin < 2.0:
+            own_executor.spin_once(timeout_sec=0.1)
 
         for i, (gx, gy, gyaw_deg) in enumerate(self._goals):
-            start_xy = self._last_odom_xy
+            own_executor.spin_once(timeout_sec=0.1)
+            start_xy = self._map_pose_xy() or self._last_odom_xy
             start_dist = self._odom_dist
+            # AMCL can converge on a wrong pose; Nav2 then believes it is already
+            # at (or far from) the goal and returns instant SUCCEEDED/FAIL. Compare
+            # the map-frame TF pose with Gazebo ground truth before each goal and
+            # mark the trial invalid (not a controller result) if they disagree.
+            start_map = self._map_pose_xy()
+            start_gt = self._gt_map_xy
+            loc_err = (_dist(start_map[0], start_map[1], start_gt[0], start_gt[1])
+                       if start_map and start_gt else None)
+            if loc_err is not None and loc_err > self._loc_tol_m:
+                self.get_logger().warn(
+                    f'[nav] goal {i+1}: INVALID start — AMCL pose is {loc_err:.2f} m from '
+                    f'ground truth; skipping (rerun this trial)')
+                results.append({
+                    'goal_index': i, 'goal': {'x': gx, 'y': gy, 'yaw_deg': gyaw_deg},
+                    'success': False, 'invalid': True,
+                    'invalid_reason': f'start localization error {loc_err:.2f} m',
+                    'start_localization_error_m': round(loc_err, 3),
+                    'elapsed_sec': 0.0, 'num_recoveries': 0, 'goal_error_m': None,
+                    'actual_path_len_m': 0.0, 'planned_path_len_m': None,
+                    'avg_speed_mps': None, 'path_efficiency': None,
+                    'goal_error_frame': 'gt'})
+                continue
 
             goal = PoseStamped()
             goal.header.frame_id = 'map'
@@ -310,9 +390,26 @@ class NavBenchmark(Node):
                 self.get_logger().warn(f'[nav] getPath failed: {exc}')
 
             t0 = time.time()
-            nav.goToPose(goal)
+            accepted = nav.goToPose(goal)
             num_recoveries = 0
+            track_len, track_last, track_t = 0.0, start_xy, 0.0
+            gt_len, gt_last = 0.0, self._gt_map_xy
+            track = []  # per-0.5s [t, map_xy, gt_map_xy, odom_xy] for post-hoc diagnosis
             while not nav.isTaskComplete():
+                if time.time() - track_t > 0.5:
+                    track_t = time.time()
+                    cur = self._map_pose_xy()
+                    if cur and track_last:
+                        track_len += _dist(track_last[0], track_last[1], cur[0], cur[1])
+                    track_last = cur or track_last
+                    track.append([round(time.time() - t0, 2),
+                                  [round(v, 3) for v in cur] if cur else None,
+                                  [round(v, 3) for v in self._gt_map_xy] if self._gt_map_xy else None,
+                                  [round(v, 3) for v in self._last_odom_xy] if self._last_odom_xy else None])
+                    g = self._gt_map_xy
+                    if g and gt_last:
+                        gt_len += _dist(gt_last[0], gt_last[1], g[0], g[1])
+                    gt_last = g or gt_last
                 fb = nav.getFeedback()
                 if fb is not None:
                     num_recoveries = max(num_recoveries, getattr(fb, 'number_of_recoveries', 0))
@@ -321,10 +418,35 @@ class NavBenchmark(Node):
             elapsed = time.time() - t0
 
             result = nav.getResult()
-            success = result == TaskResult.SUCCEEDED
+            # Nav2's own verdict, then cross-checked against measured error below.
+            nav_success = accepted is not False and result == TaskResult.SUCCEEDED
+            success = nav_success
             actual_len = self._odom_dist - start_dist
-            final_xy = self._last_odom_xy
+            own_executor.spin_once(timeout_sec=0.2)  # drain a final /amcl_pose
+            map_xy = self._map_pose_xy()
+            # Primary error = Gazebo ground truth (frame 'gt'). The map->base_link
+            # TF is only valid up to the last AMCL update (it publishes future-
+            # dated map->odom, so a latest-time lookup lags the robot by up to
+            # ~update_min_d), which showed up as 0.3-0.5 m phantom goal error.
+            if self._gt_map_xy:
+                error_frame = 'gt'
+                final_xy = self._gt_map_xy
+            elif map_xy:
+                error_frame = 'map'
+                final_xy = map_xy
+            else:
+                error_frame = 'odom'
+                final_xy = self._last_odom_xy
+                self.get_logger().warn(
+                    '[nav] no ground truth or /amcl_pose — goal_error_m falls back to '
+                    '/odom and is only valid if odom==map')
             goal_error = _dist(final_xy[0], final_xy[1], gx, gy) if final_xy else None
+            # A rejected/instant goal reports SUCCEEDED with the robot nowhere near
+            # the target (seen: t=0.06s, speed 0, 3.56 m error). Require the measured
+            # error to be within a loose bound (>= Nav2's 0.25 m xy tolerance plus
+            # localisation noise) before counting a success.
+            if success and goal_error is not None and goal_error > self._success_tol_m:
+                success = False
 
             run = {
                 'goal_index': i,
@@ -339,6 +461,16 @@ class NavBenchmark(Node):
                 'avg_speed_mps': round(actual_len / elapsed, 3) if elapsed > 0 else None,
                 'num_recoveries': num_recoveries,
                 'goal_error_m': round(goal_error, 3) if goal_error is not None else None,
+                'goal_error_frame': error_frame,
+                'goal_accepted': accepted is not False,
+                'start_localization_error_m': round(loc_err, 3) if loc_err is not None else None,
+                'nav2_reported_success': nav_success,
+                'map_path_len_m': round(track_len, 3),
+                'gt_path_len_m': round(gt_len, 3),
+                'track': track,
+                'goal_error_map_tf_m': (round(_dist(map_xy[0], map_xy[1], gx, gy), 3)
+                                        if map_xy else None),
+                'straight_line_m': round(_dist(start_xy[0], start_xy[1], gx, gy), 3) if start_xy else None,
             }
             results.append(run)
             self.get_logger().info(
@@ -347,13 +479,16 @@ class NavBenchmark(Node):
                 f"speed={run['avg_speed_mps']}m/s err={run['goal_error_m']}m "
                 f"recoveries={num_recoveries}")
 
-        n_ok = sum(1 for r in results if r['success'])
+        n_invalid = sum(1 for r in results if r.get('invalid'))
+        valid = [r for r in results if not r.get('invalid')]
+        n_ok = sum(1 for r in valid if r['success'])
         speeds = [r['avg_speed_mps'] for r in results if r['avg_speed_mps']]
         errors = [r['goal_error_m'] for r in results if r['success'] and r['goal_error_m'] is not None]
         report = {
-            'goals_total': len(results),
+            'goals_total': len(valid),
+            'goals_invalid': n_invalid,  # AMCL mislocalised at start; excluded from the rate
             'goals_succeeded': n_ok,
-            'success_rate': round(n_ok / len(results), 3) if results else 0.0,
+            'success_rate': round(n_ok / len(valid), 3) if valid else None,
             'avg_speed_mps': round(sum(speeds) / len(speeds), 3) if speeds else None,
             'avg_goal_error_m': round(sum(errors) / len(errors), 3) if errors else None,
             'total_recoveries': sum(r['num_recoveries'] for r in results),

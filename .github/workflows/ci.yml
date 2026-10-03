@@ -16,7 +16,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            python3-pip python3-pytest python3-numpy python3-yaml python3-scipy \
+            python3-pip python3-pytest python3-numpy python3-yaml python3-scipy python3-pil \
             ros-humble-ament-cmake-pytest ros-humble-rosidl-default-generators \
             ros-humble-rosidl-default-runtime ros-humble-action-msgs \
             ros-humble-nav2-msgs ros-humble-nav-msgs ros-humble-geometry-msgs \
