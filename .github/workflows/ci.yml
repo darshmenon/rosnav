@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-22.04
+    container: ros:humble
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            python3-pip python3-pytest python3-numpy python3-yaml python3-scipy \
+            ros-humble-ament-cmake-pytest ros-humble-rosidl-default-generators \
+            ros-humble-rosidl-default-runtime ros-humble-action-msgs \
+            ros-humble-nav2-msgs ros-humble-nav-msgs ros-humble-geometry-msgs \
+            ros-humble-tf2-ros ros-humble-rclpy
+          pip3 install gymnasium
+
+      - name: Build rosnav_bot
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          colcon build --packages-select rosnav_bot --event-handlers console_direct+
+
+      - name: Run tests
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          colcon test --packages-select rosnav_bot \
+            --ctest-args -R "test_frontier" --event-handlers console_direct+
+          colcon test-result --verbose
