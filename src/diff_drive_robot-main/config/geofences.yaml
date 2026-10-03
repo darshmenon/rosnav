@@ -1,0 +1,27 @@
+# Geofence zone definitions for GeofenceManager
+# allowed: true  — robot may enter (informational only)
+# allowed: false — entering triggers /geofence/breach alert
+zones:
+  - name: warehouse_floor
+    allowed: true
+    polygon:
+      - {x: -5.0, y: -5.0}
+      - {x:  5.0, y: -5.0}
+      - {x:  5.0, y:  5.0}
+      - {x: -5.0, y:  5.0}
+
+  - name: restricted_charging_bay
+    allowed: false
+    polygon:
+      - {x: 4.5, y: 4.5}
+      - {x: 6.5, y: 4.5}
+      - {x: 6.5, y: 6.5}
+      - {x: 4.5, y: 6.5}
+
+  - name: hazard_zone
+    allowed: false
+    polygon:
+      - {x: -8.0, y: -8.0}
+      - {x: -5.0, y: -8.0}
+      - {x: -5.0, y: -5.0}
+      - {x: -8.0, y: -5.0}
