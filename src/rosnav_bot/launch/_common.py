@@ -136,6 +136,46 @@ def patch_pkg_share_placeholder(raw_params_path: str, pkg_share: str) -> str:
     return out_path
 
 
+_PLANNERS = {
+    'navfn': {'plugin': 'nav2_navfn_planner/NavfnPlanner', 'tolerance': 0.5,
+              'use_astar': True, 'allow_unknown': True},
+    'navfn_dijkstra': {'plugin': 'nav2_navfn_planner/NavfnPlanner', 'tolerance': 0.5,
+                       'use_astar': False, 'allow_unknown': True},
+    # A* that never plans through unknown cells: frontier goals sit on the unknown boundary and
+    # navfn(allow_unknown) then often fails with "Failed to create a plan from potential".
+    'navfn_known': {'plugin': 'nav2_navfn_planner/NavfnPlanner', 'tolerance': 1.0,
+                    'use_astar': True, 'allow_unknown': False},
+    'smac2d': {'plugin': 'nav2_smac_planner/SmacPlanner2D', 'tolerance': 0.5,
+               'allow_unknown': True, 'downsample_costmap': False,
+               'max_iterations': 1000000, 'cost_travel_multiplier': 2.0,
+               'use_final_approach_orientation': False},
+    'thetastar': {'plugin': 'nav2_theta_star_planner/ThetaStarPlanner',
+                  'how_many_corners': 8, 'w_euc_cost': 1.0, 'w_traversal_cost': 2.0,
+                  'w_heuristic_cost': 1.0},
+}
+
+
+def apply_planner(params_path: str, planner: str) -> str:
+    """Rewrite planner_server.GridBased in a patched nav2 params file for planner:=…
+    ('navfn' default = file untouched). Returns the (possibly new) params path."""
+    planner = (planner or 'navfn').strip().lower()
+    if planner == 'navfn':
+        return params_path
+    if planner not in _PLANNERS:
+        raise ValueError(f"planner:={planner} unknown; choose from {sorted(_PLANNERS)}")
+    import yaml
+    with open(params_path) as f:
+        data = yaml.safe_load(f)
+    ps = data['planner_server']['ros__parameters']
+    ps['planner_plugins'] = ['GridBased']
+    ps['GridBased'] = dict(_PLANNERS[planner])
+    out_path = params_path.replace('.yaml', f'_{planner}.yaml')
+    with open(out_path, 'w') as f:
+        yaml.safe_dump(data, f)
+    print(f'[nav2_params] planner:={planner} -> {ps["GridBased"]["plugin"]} ({out_path})')
+    return out_path
+
+
 _FILTER_PLUGINS = ('keepout_filter', 'speed_filter', 'binary_filter', 'dynobs_keepout_filter')
 
 

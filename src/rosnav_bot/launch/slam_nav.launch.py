@@ -374,6 +374,8 @@ def _build_runtime_actions(context, pkg_share: str):
     nav2_params_name = _common.nav2_params_filename(controller, drive_type, ROS_DISTRO)
     _raw_params = os.path.join(pkg_share, 'config', nav2_params_name)
     _params_file = _common.patch_pkg_share_placeholder(_raw_params, pkg_share)
+    _params_file = _common.apply_planner(
+        _params_file, LaunchConfiguration('planner').perform(context))
     _enabled_filters = set()
     if LaunchConfiguration('gs_keepout_mask').perform(context).strip():
         _enabled_filters.add('keepout_filter')
@@ -1283,6 +1285,10 @@ def generate_launch_description():
             description='RTAB-Map SQLite path for slam_algo:=vslam. Mapping: optional '
                         'persist path (created if missing). Localization (slam:=false): '
                         'required existing .db.'),
+        DeclareLaunchArgument(
+            name='planner', default_value='navfn',
+            description='Nav2 global planner: navfn (A*, default), navfn_dijkstra, navfn_known '
+                        '(A*, no planning through unknown), smac2d, thetastar.'),
         DeclareLaunchArgument(
             name='explore', default_value='false',
             description='Auto-start frontier explorer (only valid when slam:=true)'),
