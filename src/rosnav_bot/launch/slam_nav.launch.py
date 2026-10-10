@@ -374,6 +374,16 @@ def _build_runtime_actions(context, pkg_share: str):
     nav2_params_name = _common.nav2_params_filename(controller, drive_type, ROS_DISTRO)
     _raw_params = os.path.join(pkg_share, 'config', nav2_params_name)
     _params_file = _common.patch_pkg_share_placeholder(_raw_params, pkg_share)
+    _enabled_filters = set()
+    if LaunchConfiguration('gs_keepout_mask').perform(context).strip():
+        _enabled_filters.add('keepout_filter')
+    if LaunchConfiguration('gs_privacy_mask').perform(context).strip():
+        _enabled_filters.add('binary_filter')
+    if LaunchConfiguration('gs_speed_mask').perform(context).strip() or terrain_live_camera:
+        _enabled_filters.add('speed_filter')
+    if int(LaunchConfiguration('dynamic_obstacles').perform(context).strip() or 0) > 0:
+        _enabled_filters.add('dynobs_keepout_filter')
+    _params_file = _common.strip_inert_filters(_params_file, _enabled_filters)
 
     use_vslam_localize = (not use_slam) and slam_algo == 'vslam'
     # ORB-SLAM3 (docker/orb_slam3/) runs as a separate sidecar container, not

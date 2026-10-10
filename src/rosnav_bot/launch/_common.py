@@ -136,6 +136,42 @@ def patch_pkg_share_placeholder(raw_params_path: str, pkg_share: str) -> str:
     return out_path
 
 
+_FILTER_PLUGINS = ('keepout_filter', 'speed_filter', 'binary_filter', 'dynobs_keepout_filter')
+
+
+def strip_inert_filters(params_path: str, enabled) -> str:
+    """Drop costmap filter plugins whose mask/info publisher is not running.
+
+    Loaded-but-inert KeepoutFilter/SpeedFilter/BinaryFilter plugins (no filter_info publisher)
+    warn "Filter mask was not received" forever, and with them loaded the controller_server's TF
+    listener stops getting map->odom after a few seconds ("Transform data too old" -> every goal
+    instantly "reached" -> robot never moves). Verified: removing them gave 0 TF errors vs 3000+.
+    `enabled` = filter plugin names to keep. Returns the (possibly new) params path.
+    """
+    drop = [f for f in _FILTER_PLUGINS if f not in set(enabled)]
+    import yaml
+    with open(params_path) as f:
+        data = yaml.safe_load(f)
+    changed = False
+    for node in ('local_costmap', 'global_costmap'):
+        try:
+            plugins = data[node][node]['ros__parameters']['plugins']
+        except (KeyError, TypeError):
+            continue
+        kept = [p for p in plugins if p not in drop]
+        if kept != plugins:
+            data[node][node]['ros__parameters']['plugins'] = kept
+            changed = True
+    if not changed:
+        return params_path
+    out_path = params_path.replace('.yaml', '_nofilt.yaml')
+    with open(out_path, 'w') as f:
+        yaml.safe_dump(data, f)
+    print(f'[nav2_params] costmap filters not enabled -> removed {drop} from plugin lists '
+          f'(keeping {sorted(set(enabled) & set(_FILTER_PLUGINS))}) ({out_path})')
+    return out_path
+
+
 def gazebo_server_action(world_path: str, pkg_share: str = None):
     ros_gz_share = get_package_share_directory('ros_gz_sim')
     gz = IncludeLaunchDescription(
