@@ -21,6 +21,7 @@ class Bootstrap(Node):
         self.declare_parameter('linear', 0.15)
         self.declare_parameter('angular', 0.4)
         self.declare_parameter('timeout_s', 45.0)
+        self.declare_parameter('spin_revolutions', 0.0)  # >0: spin in place instead of waiting for /map
         self.have_map = False
         qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                          durability=DurabilityPolicy.VOLATILE)  # fresh publishes only: the explorer misses the t=2s latched map
@@ -28,11 +29,28 @@ class Bootstrap(Node):
         self.pub = self.create_publisher(Twist, '/cmd_vel', 10)
 
     def _on_map(self, _):
-        if not self.have_map:
+        if not self.have_map and self.get_parameter('spin_revolutions').value <= 0:
             self.get_logger().info('fresh /map received -> stopping bootstrap motion')
         self.have_map = True
 
+    def spin_in_place(self, revs):
+        w = 0.5
+        dur = 2 * 3.14159265 * revs / w
+        self.get_logger().info(f'seeding the initial map: spinning {revs:g} rev in place ({dur:.0f}s at {w} rad/s)')
+        cmd = Twist()
+        cmd.angular.z = w
+        t0 = time.monotonic()
+        while rclpy.ok() and time.monotonic() - t0 < dur:
+            self.pub.publish(cmd)
+            rclpy.spin_once(self, timeout_sec=0.1)
+        for _ in range(5):
+            self.pub.publish(Twist())
+            rclpy.spin_once(self, timeout_sec=0.05)
+
     def run(self):
+        revs = self.get_parameter('spin_revolutions').value
+        if revs > 0:
+            return self.spin_in_place(revs)
         lin = self.get_parameter('linear').value
         ang = self.get_parameter('angular').value
         timeout = self.get_parameter('timeout_s').value

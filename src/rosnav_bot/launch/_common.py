@@ -826,6 +826,10 @@ def explorer_nodes(backend, pkg_share, *, map_topic='/map', namespaces=None,
                 name='explore_node',
                 namespace=ns,
                 output='screen',
+                # explore_lite exits for good on "All frontiers traversed/tried out"; restart it
+                # (fresh blacklist) so a later, bigger map gets explored.
+                respawn=True,
+                respawn_delay=15.0,
                 parameters=[os.path.join(pkg_share, 'config', 'explore_lite.yaml'), {
                     'use_sim_time': True,
                     'robot_base_frame': base_frame,

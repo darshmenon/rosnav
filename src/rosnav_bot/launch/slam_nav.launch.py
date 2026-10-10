@@ -927,9 +927,12 @@ def _build_runtime_actions(context, pkg_share: str):
                 })
         else:
             explore_nodes = _common.explorer_nodes(explorer_backend, pkg_share, map_topic='/map')
+        # Non-RTAB modes get a one-revolution bootstrap spin at 16s (13s long); the explorer must not
+        # start until it is done or its first goal fights the spin and gets blacklisted.
+        _explore_delay = 20.0 if slam_algo in ('vslam', 'multisensor', '3d') or explorer_backend == 'rrt_explore' else 35.0
         actions = [
-            LogInfo(msg=f'[slam_nav] Auto-exploration ENABLED ({explorer_backend}). Starting in 20s...'),
-            TimerAction(period=20.0, actions=explore_nodes),
+            LogInfo(msg=f'[slam_nav] Auto-exploration ENABLED ({explorer_backend}). Starting in {_explore_delay:.0f}s...'),
+            TimerAction(period=_explore_delay, actions=explore_nodes),
         ]
         if explorer_backend == 'rrt_explore':
             # rrt_explore reads map_frame_ from the first /map message
@@ -995,6 +998,15 @@ def _build_runtime_actions(context, pkg_share: str):
             Node(package='rosnav_bot', executable='slam_bootstrap_motion.py',
                  name='slam_bootstrap_motion', output='screen',
                  parameters=[{'use_sim_time': True}]),
+        ]))
+    elif actions and use_slam:
+        # explore_lite quits for good after "All frontiers traversed" when the first map is tiny
+        # (cafe: 5 goals within 0.5 m of spawn, then exit) -> one spin first seeds bigger frontiers.
+        actions.append(TimerAction(period=16.0, actions=[
+            LogInfo(msg='[slam_nav] bootstrap: one in-place revolution to seed the initial map'),
+            Node(package='rosnav_bot', executable='slam_bootstrap_motion.py',
+                 name='slam_bootstrap_motion', output='screen',
+                 parameters=[{'use_sim_time': True, 'spin_revolutions': 1.0}]),
         ]))
     frontier_node = GroupAction(actions=actions) if actions else LogInfo(msg='[slam_nav] Frontier explorer disabled.')
     cslam_group = (
