@@ -90,6 +90,7 @@ install(
     scripts/slam_debug_monitor.py
     scripts/costmap_ghost_clear.py
     scripts/orb_slam3_occupancy_bridge.py
+    scripts/slam_bootstrap_motion.py
     scripts/benchmark.py
     scripts/gen_terrain_speed_mask.py
     scripts/camera_terrain_speed_mask.py

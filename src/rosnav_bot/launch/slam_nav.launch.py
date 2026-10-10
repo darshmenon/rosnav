@@ -977,6 +977,15 @@ def _build_runtime_actions(context, pkg_share: str):
                     output='screen',
                 ),
             ]))
+    if actions and use_slam and slam_algo in ('vslam', 'multisensor', '3d'):
+        # RTAB-Map re-publishes /map only when the map changes; a parked robot never does, so the
+        # explorer (started after the t=2s map) waits forever -> circle until a fresh /map appears.
+        actions.append(TimerAction(period=26.0, actions=[  # after the explorer (starts at 20s)
+            LogInfo(msg='[slam_nav] RTAB-Map mode: bootstrap motion until a fresh /map (see slam_bootstrap_motion.py)'),
+            Node(package='rosnav_bot', executable='slam_bootstrap_motion.py',
+                 name='slam_bootstrap_motion', output='screen',
+                 parameters=[{'use_sim_time': True}]),
+        ]))
     frontier_node = GroupAction(actions=actions) if actions else LogInfo(msg='[slam_nav] Frontier explorer disabled.')
     cslam_group = (
         GroupAction(actions=_common.cslam_lidar_nodes(pkg_share))
