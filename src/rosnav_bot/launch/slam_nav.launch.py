@@ -1293,13 +1293,13 @@ def generate_launch_description():
             name='explore', default_value='false',
             description='Auto-start frontier explorer (only valid when slam:=true)'),
         DeclareLaunchArgument(
-            name='explorer', default_value='explore_lite',
-            description='Exploration backend when explore:=true: explore_lite (m-explore-ros2, '
-                        'default — the only backend that reliably finishes unattended in headless '
-                        'testing; builtin/frontier got the robot wedged on recovery-behavior '
-                        'collisions and rrt_explore does not work in single-robot/no-namespace mode '
-                        'at all, see rrt.cpp get_ros_parameters()), builtin (rosnav WFD/utility, '
-                        'covers more area per run but needs a human to catch it if it wedges), '
+            name='explorer', default_value='builtin',
+            description='Exploration backend when explore:=true: builtin (rosnav WFD/utility, '
+                        'default — in cafe testing 2026-10-11 it left the spawn pocket and mapped '
+                        '~50k cells where explore_lite gave up with "All frontiers traversed" at '
+                        '1.2k; it can still wedge on recovery-behavior collisions, so watch the '
+                        'first runs), explore_lite (m-explore-ros2; previously the default, '
+                        'reliable headless on some worlds but quits early near the cafe spawn), '
                         'frontier (frontier_exploration_ros2 MRTSP), or rrt (rrt_explore, '
                         'multi-robot only). Falls back to builtin if the package is not built.'),
         DeclareLaunchArgument(

@@ -200,7 +200,7 @@ local_costmap:
       width: 5
       height: 5
       resolution: 0.05
-      footprint: "[[0.314, 0.130], [0.130, 0.314], [-0.130, 0.314], [-0.314, 0.130], [-0.314, -0.130], [-0.130, -0.314], [0.130, -0.314], [0.314, -0.130]]"  # octagon, circumradius 0.34 = same size as the robot_radius DWB/RPP use; MPPI CostCritic(consider_footprint) segfaults on a circular costmap
+      footprint: "[[0.45, 0.25], [0.45, -0.25], [-0.10, -0.25], [-0.10, 0.25]]"  # rectangle: chassis x -0.10..0.45, y +-0.25 (base_link = rear axle)
       # keepout_filter is inert until a costmap_filter_info_server publishes
       # /gs/costmap_filter_info (see gs_keepout_filter.yaml + slam_nav.launch.py
       # gs_keepout_mask:=<path>) — safe to always list.
@@ -282,7 +282,7 @@ global_costmap:
       publish_frequency: 1.0
       global_frame: map
       robot_base_frame: base_link
-      footprint: "[[0.314, 0.130], [0.130, 0.314], [-0.130, 0.314], [-0.314, 0.130], [-0.314, -0.130], [-0.130, -0.314], [0.130, -0.314], [0.314, -0.130]]"  # octagon, circumradius 0.34 = same size as the robot_radius DWB/RPP use; MPPI CostCritic(consider_footprint) segfaults on a circular costmap
+      footprint: "[[0.45, 0.25], [0.45, -0.25], [-0.10, -0.25], [-0.10, 0.25]]"  # rectangle: chassis x -0.10..0.45, y +-0.25 (base_link = rear axle)
       resolution: 0.05
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "denoise_layer", "inflation_layer", "keepout_filter", "speed_filter", "binary_filter"]

@@ -123,12 +123,12 @@ ros2 run rosnav_bot scan_quality_gate.py --ros-args -p use_sim_time:=true
 
 Or let the robot explore alone: add `explore:=true` to the launch above.
 
-Exploration backend defaults to `explore_lite` (most reliable unattended — see
-`concepts.md` §9 for a full comparison). Switch it with `explorer:=`:
+Exploration backend defaults to `builtin` (best result in the 2026-10-11 cafe test — see
+`concepts.md` §9 for the earlier comparison). Switch it with `explorer:=`:
 
 ```bash
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true explorer:=builtin
-# explorer:=builtin | explore_lite (default) | frontier | rrt
+# explorer:=builtin (default) | explore_lite | frontier | rrt
 ```
 
 How `explorer:=builtin` picks a goal, step by step: [frontier exploration pipeline](concepts.md#9-frontier-exploration)
