@@ -1088,6 +1088,22 @@ def _build_runtime_actions(context, pkg_share: str):
     else:
         slam_debug_monitor = LogInfo(msg='[slam_nav] SLAM debug monitor disabled.')
 
+    # ── TF-freeze watchdog ─────────────────────────────────────────────────
+    # controller_server's map->odom view can freeze ("Transform data too old"), stalling the
+    # robot and the map. Restart Nav2 via the lifecycle manager when that error floods /rosout.
+    tf_watchdog_on = LaunchConfiguration('tf_watchdog').perform(context).strip().lower() in ('true', '1')
+    if tf_watchdog_on:
+        tf_watchdog = TimerAction(
+            period=20.0,
+            actions=[
+                LogInfo(msg='[slam_nav] tf_freeze_watchdog ENABLED — restarts Nav2 if the controller TF freezes'),
+                Node(package='rosnav_bot', executable='tf_freeze_watchdog.py',
+                     name='tf_freeze_watchdog', output='screen',
+                     parameters=[{'use_sim_time': True}]),
+            ])
+    else:
+        tf_watchdog = LogInfo(msg='[slam_nav] tf_freeze_watchdog disabled (tf_watchdog:=false).')
+
     # ── Dynamic obstacles (optional) ───────────────────────────────────────
     dynamic_obstacles = int(LaunchConfiguration('dynamic_obstacles').perform(context).strip())
     dynamic_obstacle_actions = []
@@ -1204,6 +1220,7 @@ def _build_runtime_actions(context, pkg_share: str):
         yolo_detector,
         gs_semantic_fusion,
         slam_debug_monitor,
+        tf_watchdog,
     ] + dynamic_obstacle_actions
 
 
@@ -1289,6 +1306,11 @@ def generate_launch_description():
             name='planner', default_value='navfn',
             description='Nav2 global planner: navfn (A*, default), navfn_dijkstra, navfn_known '
                         '(A*, no planning through unknown), smac2d, thetastar.'),
+        DeclareLaunchArgument(
+            name='tf_watchdog', default_value='true',
+            description='Restart Nav2 via the lifecycle manager when controller_server floods '
+                        '"Transform data too old" (frozen map->odom view). See '
+                        'scripts/tf_freeze_watchdog.py.'),
         DeclareLaunchArgument(
             name='explore', default_value='false',
             description='Auto-start frontier explorer (only valid when slam:=true)'),

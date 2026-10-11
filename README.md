@@ -141,6 +141,34 @@ How `explorer:=builtin` picks a goal, step by step: [frontier exploration pipeli
 - `info_gain_mode:=fov` (with `frontier_scorer:=weighted`) — sensor-cone info gain instead of
   the default fixed-radius `ring`; tune with `info_gain_fov`/`info_gain_max_depth`
 
+#### Map progression and ground-truth check (hospital, `explorer:=builtin`, 2026-10-11)
+
+![Hospital map growing over 15 min](images/diagnostics/hospital_builtin_progress.gif)
+
+Map snapshots every 30 s while exploring (`slam_toolbox`, headless, 900 s run). This is a
+**partial** map: the robot mapped the central hub and the corridor stubs (≈40.8k known cells,
+25 frontier clusters left) and did not drive the whole hospital. The controller logged
+"Transform data too old (map to odom)" thousands of times during the run — an open issue, see §16.
+
+![SLAM walls vs ground-truth reference](images/diagnostics/hospital_vs_groundtruth.png)
+
+Green = wall in both the SLAM map and a reference map built from the simulator's true robot
+pose + the same lidar scans; red = SLAM-only; blue = reference-only. Near the hub the walls
+line up; the red/blue marks sit at the far ends of long walls. Mean wall error is 36.7 cm with
+the nominal frame alignment and 18.1 cm (57 % of wall cells within 10 cm) after the best rigid
+fit (+3° rotation, at the edge of the search range), which points to a small heading offset
+more than warped walls. The world-to-map yaw alignment is taken from one early sample, so
+treat the cm figures as approximate.
+
+Notes from the same session:
+- Explorer comparison in the open `cafe` world: `builtin` ≈ 50k cells and `frontier` ≈ 49k
+  cells, while `explore_lite` stayed at 1.2k and quit with "All frontiers traversed" — hence
+  `builtin` is now the default.
+- In `cafe` the map pose drifted from ground truth (0.4–4 m) with `builtin`/`frontier`, but stayed
+  within ≈0.05 m in `maze` and `hospital`; open rooms give scan matching little to lock onto.
+- `resume_session:=true` restores only the visited-frontier list, **not** the map — SLAM
+  still starts fresh each launch.
+
 ### B — Save the map
 
 ```bash
@@ -811,6 +839,7 @@ ros2 run rosnav_bot rl_policy_node.py --ros-args \
 | No motion | `ros2 topic hz /cmd_vel` · keep `safety:=true` |
 | Map not saved | `explore:=true` · multi-SLAM: `-t /map_merged` |
 | TF / no frontiers | Kill stale `gz` / `ros2` processes · cold-start deadlock and 3D-lidar leaked/unreachable frontiers are fixed (goal_pullback relaxes on a tiny known-free region; suspicious oversized clusters behind thin walls are penalized) — see `frontier_coordinator.py` / `frontier_explorer.py` |
+| "Transform data too old (map to odom)", robot stays near spawn | Open issue (2026-10-11): the controller's `map→odom` view freezes while other nodes see it fresh; stripping inert costmap filters (`strip_inert_filters`) cut it but did not remove it. Seen with `explore_lite`, `builtin` and `frontier`; footprint comparison on `hospital` pending |
 | Invisible robots | `colcon build --symlink-install && source install/setup.bash` |
 | YAML change ignored | Symlink install + relaunch; edit the correct Humble/Jazzy / drive-type file |
 | Dock sees nothing | Set `enable_camera:=true` |

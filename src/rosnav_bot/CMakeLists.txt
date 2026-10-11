@@ -88,6 +88,7 @@ install(
     scripts/scan_quality_gate.py
     scripts/slam_accuracy_monitor.py
     scripts/slam_debug_monitor.py
+    scripts/tf_freeze_watchdog.py
     scripts/costmap_ghost_clear.py
     scripts/orb_slam3_occupancy_bridge.py
     scripts/slam_bootstrap_motion.py
