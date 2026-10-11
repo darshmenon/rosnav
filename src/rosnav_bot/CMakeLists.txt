@@ -89,6 +89,7 @@ install(
     scripts/slam_accuracy_monitor.py
     scripts/slam_debug_monitor.py
     scripts/tf_freeze_watchdog.py
+    scripts/slam_posegraph_autosave.py
     scripts/costmap_ghost_clear.py
     scripts/orb_slam3_occupancy_bridge.py
     scripts/slam_bootstrap_motion.py

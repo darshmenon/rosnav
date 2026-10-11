@@ -1088,6 +1088,21 @@ def _build_runtime_actions(context, pkg_share: str):
     else:
         slam_debug_monitor = LogInfo(msg='[slam_nav] SLAM debug monitor disabled.')
 
+    # ── slam_toolbox pose-graph autosave (continue a stalled/crashed run) ────
+    posegraph_autosave = LaunchConfiguration('posegraph_autosave').perform(context).strip().lower() in ('true', '1')
+    if posegraph_autosave and use_slam and slam_algo == '2d' and map_prefix:
+        posegraph_autosave_group = TimerAction(
+            period=30.0,
+            actions=[
+                LogInfo(msg=f'[slam_nav] pose-graph autosave ENABLED -> {map_prefix}_posegraph.* every 60s'),
+                Node(package='rosnav_bot', executable='slam_posegraph_autosave.py',
+                     name='slam_posegraph_autosave', output='screen',
+                     parameters=[{'use_sim_time': True, 'path': f'{map_prefix}_posegraph',
+                                  'period_sec': 60.0}]),
+            ])
+    else:
+        posegraph_autosave_group = LogInfo(msg='[slam_nav] pose-graph autosave off (posegraph_autosave:=false, or not slam_algo:=2d).')
+
     # ── TF-freeze watchdog ─────────────────────────────────────────────────
     # controller_server's map->odom view can freeze ("Transform data too old"), stalling the
     # robot and the map. Restart Nav2 via the lifecycle manager when that error floods /rosout.
@@ -1221,6 +1236,7 @@ def _build_runtime_actions(context, pkg_share: str):
         gs_semantic_fusion,
         slam_debug_monitor,
         tf_watchdog,
+        posegraph_autosave_group,
     ] + dynamic_obstacle_actions
 
 
@@ -1306,6 +1322,11 @@ def generate_launch_description():
             name='planner', default_value='navfn',
             description='Nav2 global planner: navfn (A*, default), navfn_dijkstra, navfn_known '
                         '(A*, no planning through unknown), smac2d, thetastar.'),
+        DeclareLaunchArgument(
+            name='posegraph_autosave', default_value='true',
+            description='slam_algo:=2d: save the slam_toolbox pose graph every 60 s to '
+                        '<map_prefix>_posegraph.{posegraph,data} so a stalled/crashed run can be '
+                        'continued (see scripts/slam_posegraph_autosave.py).'),
         DeclareLaunchArgument(
             name='tf_watchdog', default_value='true',
             description='Restart Nav2 via the lifecycle manager when controller_server floods '
