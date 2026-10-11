@@ -104,7 +104,7 @@ controller_server:
       plugin: "nav2_mppi_controller::MPPIController"
       time_steps: 70
       model_dt: 0.04
-      batch_size: 2000
+      batch_size: 1000
       ax_max: 0.5
       ax_min: -0.5
       ay_max: 0.0
@@ -126,7 +126,7 @@ controller_server:
       # rollout this step, colored by cost, so you can actually see the
       # velocity-sample generation/scoring RViz-side (vs DWB/RPP which don't
       # expose their sample set this way). Small perf cost; fine for benchmarking.
-      visualize: true
+      visualize: false
       regenerate_noises: true
       TrajectoryVisualizer:
         trajectory_step: 5

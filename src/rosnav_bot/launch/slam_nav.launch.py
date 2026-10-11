@@ -866,7 +866,7 @@ def _build_runtime_actions(context, pkg_share: str):
                     output='screen',
                     parameters=[{
                         'stop_distance':     0.55,
-                        'slowdown_distance': 1.0,
+                        'slowdown_distance': 0.6,
                         'front_angle_deg':   120.0,
                         'watch_all_around':  False,
                         'relay_mode':        True,
