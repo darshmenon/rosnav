@@ -14,6 +14,11 @@ This node counts those log lines on /rosout. If `threshold` of them arrive withi
 navigation stack, which recreates controller_server and its costmaps with fresh TF
 listeners. A cooldown and a restart cap keep it from looping.
 
+NOTE (2026-10-12): EXPERIMENTAL — do not enable. (1) The "Transform data too old" lines come from the
+non-node logger "tf_help" and never reach /rosout, so this node does not see them. (2) A manual
+RESET+STARTUP of the navigation lifecycle manager deadlocked in planner_server/global_costmap cleanup
+during a real freeze and left Nav2 down. Launch default is tf_watchdog:=false.
+
 Parameters:
   window_sec        (float, 5.0)   sliding window for counting errors
   threshold         (int,   20)    errors inside the window that trigger a restart

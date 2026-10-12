@@ -14,6 +14,7 @@ Parameters:
 """
 
 import os
+import time
 
 import rclpy
 from rclpy.node import Node
@@ -34,24 +35,31 @@ class PoseGraphAutosave(Node):
         os.makedirs(os.path.dirname(os.path.abspath(self._path)), exist_ok=True)
         self._cli = self.create_client(SerializePoseGraph, str(self.get_parameter('service').value))
         self._busy = False
+        self._call_t = 0.0
         self._saves = 0
         self.create_timer(period, self._save)
         self.get_logger().info(f'saving pose graph to {self._path}.posegraph every {period:.0f}s')
 
     def _save(self):
         if self._busy:
-            self.get_logger().warn('previous save still running — skipping this cycle')
-            return
+            # slam_toolbox may have been killed/restarted (slam_stall_watchdog) with a call pending:
+            # that future never completes, so give up on it after a while instead of waiting forever.
+            if time.monotonic() - self._call_t < 45.0:
+                self.get_logger().warn('previous save still running — skipping this cycle')
+                return
+            self.get_logger().warn('previous save never finished (slam_toolbox restarted?) — retrying')
+            self._busy = False
         if not self._cli.wait_for_service(timeout_sec=1.0):
             self.get_logger().warn('slam_toolbox serialize_map service not available yet')
             return
         self._busy = True
+        self._call_t = time.monotonic()
         req = SerializePoseGraph.Request()
         req.filename = self._path
         self._cli.call_async(req).add_done_callback(self._done)
 
     def _done(self, fut):
-        self._busy = False
+        self._busy = False   # (an abandoned call that completes late is harmless)
         res = fut.result()
         if res is not None and res.result == 0:
             self._saves += 1

@@ -571,21 +571,21 @@ def _build_runtime_actions(context, pkg_share: str):
                 slam_params_file_override
                 or os.path.join(pkg_share, 'config', _mode_params_file)
             )
+            # Started directly (the stock launch file is just this one Node) so it can respawn:
+            # slam_toolbox sometimes hangs ~30 s in; slam_stall_watchdog.py kills it and respawn
+            # brings up a fresh one. Same node/params as slam_toolbox's online_*_launch.py.
+            _slam_exe = 'sync_slam_toolbox_node' if slam_toolbox_mode == 'online_sync' else 'async_slam_toolbox_node'
             slam_or_localization = TimerAction(
                 period=5.0,
                 actions=[
-                    IncludeLaunchDescription(
-                        PythonLaunchDescriptionSource(
-                            os.path.join(
-                                get_package_share_directory('slam_toolbox'),
-                                'launch',
-                                _mode_launch_file,
-                            )
-                        ),
-                        launch_arguments={
-                            'slam_params_file': _slam_params_file,
-                            'use_sim_time': 'true',
-                        }.items(),
+                    Node(
+                        package='slam_toolbox',
+                        executable=_slam_exe,
+                        name='slam_toolbox',
+                        output='screen',
+                        parameters=[_slam_params_file, {'use_sim_time': True}],
+                        respawn=True,
+                        respawn_delay=2.0,
                     )
                 ],
             )
@@ -1094,14 +1094,31 @@ def _build_runtime_actions(context, pkg_share: str):
         posegraph_autosave_group = TimerAction(
             period=30.0,
             actions=[
-                LogInfo(msg=f'[slam_nav] pose-graph autosave ENABLED -> {map_prefix}_posegraph.* every 60s'),
+                LogInfo(msg=f'[slam_nav] pose-graph autosave ENABLED -> {map_prefix}_posegraph.* every 30s'),
                 Node(package='rosnav_bot', executable='slam_posegraph_autosave.py',
                      name='slam_posegraph_autosave', output='screen',
                      parameters=[{'use_sim_time': True, 'path': f'{map_prefix}_posegraph',
-                                  'period_sec': 60.0}]),
+                                  'period_sec': 30.0}]),
             ])
     else:
         posegraph_autosave_group = LogInfo(msg='[slam_nav] pose-graph autosave off (posegraph_autosave:=false, or not slam_algo:=2d).')
+
+    # ── slam_toolbox hang watchdog ─────────────────────────────────────────
+    slam_watchdog_on = LaunchConfiguration('slam_watchdog').perform(context).strip().lower() in ('true', '1')
+    if slam_watchdog_on and use_slam and slam_algo == '2d' and slam_toolbox_mode in ('online_async', 'online_sync'):
+        slam_watchdog = TimerAction(
+            period=25.0,
+            actions=[
+                LogInfo(msg='[slam_nav] slam_stall_watchdog ENABLED — restarts slam_toolbox if map->odom goes stale'),
+                Node(package='rosnav_bot', executable='slam_stall_watchdog.py',
+                     name='slam_stall_watchdog', output='screen',
+                     parameters=[{'use_sim_time': True,
+                                  # reload the autosaved pose graph after a restart (keeps the map)
+                                  'posegraph_path': f'{map_prefix}_posegraph'
+                                  if (posegraph_autosave and map_prefix) else ''}]),
+            ])
+    else:
+        slam_watchdog = LogInfo(msg='[slam_nav] slam_stall_watchdog off (slam_watchdog:=false, or not online slam_toolbox).')
 
     # ── TF-freeze watchdog ─────────────────────────────────────────────────
     # controller_server's map->odom view can freeze ("Transform data too old"), stalling the
@@ -1236,6 +1253,7 @@ def _build_runtime_actions(context, pkg_share: str):
         gs_semantic_fusion,
         slam_debug_monitor,
         tf_watchdog,
+        slam_watchdog,
         posegraph_autosave_group,
     ] + dynamic_obstacle_actions
 
@@ -1324,14 +1342,36 @@ def generate_launch_description():
                         '(A*, no planning through unknown), smac2d, thetastar.'),
         DeclareLaunchArgument(
             name='posegraph_autosave', default_value='true',
-            description='slam_algo:=2d: save the slam_toolbox pose graph every 60 s to '
+            description='slam_algo:=2d: save the slam_toolbox pose graph every 30 s to '
                         '<map_prefix>_posegraph.{posegraph,data} so a stalled/crashed run can be '
                         'continued (see scripts/slam_posegraph_autosave.py).'),
         DeclareLaunchArgument(
-            name='tf_watchdog', default_value='true',
-            description='Restart Nav2 via the lifecycle manager when controller_server floods '
-                        '"Transform data too old" (frozen map->odom view). See '
-                        'scripts/tf_freeze_watchdog.py.'),
+            name='slam_watchdog', default_value='true',
+            description='slam_algo:=2d (online_async/sync): restart slam_toolbox when map->odom goes '
+                        'stale (it hangs ~30 s in on some runs). See scripts/slam_stall_watchdog.py.'),
+        DeclareLaunchArgument(
+            name='tf_watchdog', default_value='false',
+            description='EXPERIMENTAL, off by default: restart Nav2 via the lifecycle manager on a '
+                        'frozen controller map->odom view. It cannot see the error (not in /rosout) and a '
+                        'manual RESET deadlocked in planner_server cleanup in testing. '
+                        'See scripts/tf_freeze_watchdog.py.'),
+        DeclareLaunchArgument(
+            name='visual_reloc', default_value='false',
+            description='Nav-on-map (slam:=false): also run RTAB-Map localization (pose only, '
+                        'needs rtabmap_db:=) and re-seed AMCL from it when AMCL is lost.'),
+        DeclareLaunchArgument(
+            name='planner', default_value='navfn',
+            description='Nav2 global planner: navfn (A*, default), navfn_dijkstra, smac2d, thetastar.'),
+        DeclareLaunchArgument(
+            name='vslam_features', default_value='default',
+            description='RTAB-Map visual feature extractor for slam_algo:=vslam/multisensor: '
+                        'default (RTAB-Map default GFTT/BRIEF), orb, gftt_orb, sift, surf, '
+                        'gftt_brief, gftt_freak, fast_brief, fast_freak, superpoint '
+                        '(needs an RTAB-Map built with libtorch; the apt build is not).'),
+        DeclareLaunchArgument(
+            name='vslam_variant', default_value='A',
+            description='slam_algo:=vslam tuning: A baseline RGB-D, B +planar constraint/faster '
+                        'updates, C +lidar grid & visual+ICP, E B+denoise/range 4, F E+height filter. See scripts/benchmark_vslam_variants.sh'),
         DeclareLaunchArgument(
             name='explore', default_value='false',
             description='Auto-start frontier explorer (only valid when slam:=true)'),
