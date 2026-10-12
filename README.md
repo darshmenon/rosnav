@@ -123,11 +123,14 @@ ros2 run rosnav_bot scan_quality_gate.py --ros-args -p use_sim_time:=true
 
 Or let the robot explore alone: add `explore:=true` to the launch above.
 
-**Frontier exploration:** with `explore:=true` the robot drives to the edge between mapped and unknown space (a *frontier*), maps what it finds, and repeats until none are left. Hospital map growing, 30 s per frame:
-
-![Hospital map growing](images/diagnostics/hospital_rpp_frontier_progress.gif)
+**Frontier exploration:** with `explore:=true` the robot drives to the edge between mapped and unknown space (a *frontier*), maps what it finds, and repeats until none are left. Three worlds mapped, 30 s per frame:
 
 `ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true controller:=rpp explorer:=frontier`
+
+| Hospital | House | Simple rooms |
+|:---:|:---:|:---:|
+| <img src="images/frontier_maps/hospital.gif" width="260"> | <img src="images/frontier_maps/house.gif" width="200"> | <img src="images/frontier_maps/simple_rooms.gif" width="240"> |
+| 147.6k cells · 4.1 cm | 35.7k cells · 11 cm | 96.5k cells · 3.1 cm |
 
 Exploration backend defaults to `builtin` (best result in the 2026-10-11 cafe test — see
 `concepts.md` §9 for the earlier comparison). Switch it with `explorer:=`:
@@ -458,9 +461,6 @@ slam_toolbox's nodes + loop-closure constraints live; "Fused Odom (EKF/UKF)" vs
 drift, with its position-covariance ellipse on.
 
 ### Controller / localization-filter / SLAM-mode benchmark
-
-Exploration-backend (`builtin`/`explore_lite`/`frontier`/`rrt`) coverage/accuracy comparisons
-live in `EXPLORATION_TESTING_NOTES.md` (repo-local, not committed).
 
 `benchmark.py mode:=nav|accuracy|slam` + `mode:=report` compares any of the
 above numerically and writes a self-contained HTML dashboard. Local chart
@@ -817,6 +817,7 @@ ros2 run rosnav_bot rl_policy_node.py --ros-args \
 | No motion | `ros2 topic hz /cmd_vel` · keep `safety:=true` |
 | Map not saved | `explore:=true` · multi-SLAM: `-t /map_merged` |
 | TF / no frontiers | Kill stale `gz` / `ros2` processes · cold-start deadlock and 3D-lidar leaked/unreachable frontiers are fixed (goal_pullback relaxes on a tiny known-free region; suspicious oversized clusters behind thin walls are penalized) — see `frontier_coordinator.py` / `frontier_explorer.py` |
+| Robot stops, `Transform data too old` floods, map stuck | Run ≤3 sims at once · stop a sim with Ctrl+C, not `kill -9` · clear leftovers: `src/rosnav_bot/scripts/clean_fastdds_shm.sh --delete` (dry run without the flag) |
 | Invisible robots | `colcon build --symlink-install && source install/setup.bash` |
 | YAML change ignored | Symlink install + relaunch; edit the correct Humble/Jazzy / drive-type file |
 | Dock sees nothing | Set `enable_camera:=true` |

@@ -369,6 +369,11 @@ def scan_quality_gate_node(namespace: str = '', *,
         'mode': mode,
         'scan_in': scan_in,
         'scan_out': scan_out,
+        # A robot facing a long corridor or an open room sees >50% out-of-range (NaN) beams; with the
+        # default 0.50 the gate dropped EVERY scan from such a pose, SLAM starved, map->odom went stale
+        # and exploration deadlocked (hospital corridor end 51% NaN, cafe spawn). Out-of-range beams are
+        # valid "free" information, so only reject near-empty scans (min_valid_beams / min_valid_ratio).
+        'max_nan_ratio': 0.97,
     }
     if namespace:
         # TF frame ids aren't topics — node namespacing doesn't prefix them,

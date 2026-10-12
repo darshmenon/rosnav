@@ -8,7 +8,8 @@ slam_toolbox logs "Message Filter dropping message ... queue is full", the map s
 downstream (Nav2 "Transform data too old", explorer "no frontiers") fails. Unlike the controller-side
 TF freeze this one IS visible from outside: map->odom goes stale while odom->base_link stays live.
 
-If map->odom is older than `stale_sec` (sim time) while odom->base_link is fresh, this node sends
+Only if /scan is still arriving (a silent /scan means the fault is upstream and a restart cannot help),
+if map->odom is older than `stale_sec` (sim time) while odom->base_link is fresh, this node sends
 SIGKILL to the slam_toolbox process and the launch's respawn=True brings a fresh one up.
 Only a direct child of this node's own launch process is ever killed (never a name/pattern kill,
 the machine is shared with other ROS instances).
@@ -33,7 +34,9 @@ import math
 import rclpy
 from geometry_msgs.msg import Pose2D
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from rclpy.time import Time
+from sensor_msgs.msg import LaserScan
 import tf2_ros
 from slam_toolbox.srv import DeserializePoseGraph
 
@@ -77,6 +80,11 @@ class SlamStallWatchdog(Node):
         self._restore_at = None           # wall time after which to reload the pose graph
         self._restore_done_by = 0.0
         self._deser = self.create_client(DeserializePoseGraph, '/slam_toolbox/deserialize_map')
+        # A stale map->odom is only slam_toolbox's fault if scans are still reaching it. If /scan is silent
+        # (e.g. scan_quality_gate rejecting everything) a restart cannot help and just throws the map away.
+        self._last_scan_wall = 0.0
+        self._warned_no_scan = 0.0
+        self.create_subscription(LaserScan, '/scan', self._on_scan, qos_profile_sensor_data)
 
         self._buf = tf2_ros.Buffer()
         self._tl = tf2_ros.TransformListener(self._buf, self)
@@ -89,6 +97,9 @@ class SlamStallWatchdog(Node):
         self.get_logger().info(
             f'watching map->odom: restart slam_toolbox if older than {self._stale:.0f}s '
             f'(grace {self._grace:.0f}s, cooldown {self._cool:.0f}s, max {self._max or "unlimited"})')
+
+    def _on_scan(self, _msg):
+        self._last_scan_wall = time.monotonic()
 
     def _age(self, parent, child):
         try:
@@ -118,6 +129,13 @@ class SlamStallWatchdog(Node):
                 f'ok: map->odom age={"none" if a_mo is None else f"{a_mo:.1f}s"}, up={up:.0f}s, '
                 f'restarts={self._restarts}')
         if not hung:
+            return
+        if time.monotonic() - self._last_scan_wall > 4.0:
+            if now_wall - self._warned_no_scan > 30.0:
+                self._warned_no_scan = now_wall
+                self.get_logger().warn(
+                    f'map->odom stale ({a_mo}) but /scan has been silent for >4 s — the problem is upstream of '
+                    'slam_toolbox (scan filter/gate, bridge), NOT restarting it')
             return
         if self._max and self._restarts >= self._max:
             if self._restarts == self._max:
