@@ -130,7 +130,9 @@ Or let the robot explore alone: add `explore:=true` to the launch above.
 | Hospital | House | Simple rooms |
 |:---:|:---:|:---:|
 | <img src="images/frontier_maps/hospital.gif" width="260"> | <img src="images/frontier_maps/house.gif" width="200"> | <img src="images/frontier_maps/simple_rooms.gif" width="240"> |
-| 147.6k cells · 4.1 cm | 35.7k cells · 11 cm | 96.5k cells · 3.1 cm |
+| 147.6k cells · 4.1 cm | 47.0k cells · 12.7 cm | 96.5k cells · 3.1 cm |
+
+Ready-made maps: `src/rosnav_bot/maps/map_{hospital,house,simple_rooms}.yaml` — skip exploring and [navigate on them directly](#c--navigate-on-the-saved-map).
 
 Exploration backend defaults to `builtin` (best result in the 2026-10-11 cafe test — see
 `concepts.md` §9 for the earlier comparison). Switch it with `explorer:=`:
@@ -471,8 +473,8 @@ walkthrough (controller: dwb/mppi/rpp via `mode:=nav`; EKF/UKF via
 
 ![3D lidar point cloud, SLAM map, and costmap in RViz](images/gs_3d_slam_view.png)
 
-RTAB-Map (`slam_algo:=3d`) with the OctoMap voxel layer, live during frontier
-exploration in `maze`:
+OctoMap voxel layer (blue voxels) live during frontier exploration of the single-room
+`coverage_100` world (same session as the coverage screenshots in §10):
 
 <table align="center">
   <tr>
@@ -480,24 +482,24 @@ exploration in `maze`:
     <td align="center"><b>Dense scan coverage</b></td>
   </tr>
   <tr>
-    <td><img src="images/rtabmap_octomap_frontier_start.png" alt="RTAB-Map + OctoMap frontier exploration just starting in RViz" width="420"/></td>
-    <td><img src="images/rtabmap_octomap_explore_dense.png" alt="RTAB-Map + OctoMap dense scan coverage during frontier exploration in RViz" width="420"/></td>
+    <td><img src="images/rtabmap_octomap_frontier_start.png" alt="OctoMap frontier exploration just starting in RViz" width="420"/></td>
+    <td><img src="images/rtabmap_octomap_explore_dense.png" alt="OctoMap dense scan coverage during frontier exploration in RViz" width="420"/></td>
   </tr>
   <tr>
     <td align="center"><b>Wall frontier selected</b></td>
     <td align="center"><b>Goal sent across the map</b></td>
   </tr>
   <tr>
-    <td><img src="images/rtabmap_octomap_explore_2.png" alt="RTAB-Map + OctoMap frontier selected along the wall" width="420"/></td>
-    <td><img src="images/rtabmap_octomap_explore_3.png" alt="RTAB-Map + OctoMap goal sent across the partially mapped area" width="420"/></td>
+    <td><img src="images/rtabmap_octomap_explore_2.png" alt="OctoMap frontier selected along the wall" width="420"/></td>
+    <td><img src="images/rtabmap_octomap_explore_3.png" alt="OctoMap goal sent across the partially mapped area" width="420"/></td>
   </tr>
   <tr>
     <td align="center"><b>Later — map boundary closing</b></td>
     <td align="center"><b>Final local frontier pass</b></td>
   </tr>
   <tr>
-    <td><img src="images/rtabmap_octomap_explore_5.png" alt="RTAB-Map + OctoMap later exploration with map boundary closing" width="420"/></td>
-    <td><img src="images/rtabmap_octomap_explore_6.png" alt="RTAB-Map + OctoMap final local frontier pass" width="420"/></td>
+    <td><img src="images/rtabmap_octomap_explore_5.png" alt="OctoMap later exploration with map boundary closing" width="420"/></td>
+    <td><img src="images/rtabmap_octomap_explore_6.png" alt="OctoMap final local frontier pass" width="420"/></td>
   </tr>
 </table>
 
@@ -817,7 +819,7 @@ ros2 run rosnav_bot rl_policy_node.py --ros-args \
 | No motion | `ros2 topic hz /cmd_vel` · keep `safety:=true` |
 | Map not saved | `explore:=true` · multi-SLAM: `-t /map_merged` |
 | TF / no frontiers | Kill stale `gz` / `ros2` processes · cold-start deadlock and 3D-lidar leaked/unreachable frontiers are fixed (goal_pullback relaxes on a tiny known-free region; suspicious oversized clusters behind thin walls are penalized) — see `frontier_coordinator.py` / `frontier_explorer.py` |
-| Robot stops, `Transform data too old` floods, map stuck | Run ≤3 sims at once · stop a sim with Ctrl+C, not `kill -9` · clear leftovers: `src/rosnav_bot/scripts/clean_fastdds_shm.sh --delete` (dry run without the flag) |
+| Robot stops, `Transform data too old` floods, map stuck | Run ≤3 sims at once · stop a sim with Ctrl+C, not `kill -9` · clear leftovers: `src/rosnav_bot/scripts/clean_fastdds_shm.sh --delete` (dry run without the flag) · still floods? try `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` (0 errors in one hospital run, still being tested) |
 | Invisible robots | `colcon build --symlink-install && source install/setup.bash` |
 | YAML change ignored | Symlink install + relaunch; edit the correct Humble/Jazzy / drive-type file |
 | Dock sees nothing | Set `enable_camera:=true` |

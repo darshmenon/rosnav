@@ -2272,7 +2272,7 @@ ros2 launch rosnav_bot slam_nav.launch.py world_name:=cafe \
 
 ### C — RL local planner (`rosnav_bot/rl` + `train_ppo.py` + `rl_policy_node.py`)
 
-Research controller from ROADMAP_CONCEPTS ("learned local planner"): train offline on a static Nav2 occupancy map with raycast LiDAR — **no Gazebo in the train loop** — then deploy as a `/cmd_vel` source. Observation = downsampled scan (`n_beams`, default 36, normalized by `max_range`) + goal `(dx, dy, dyaw)` in the robot frame; action = `[v, w]` in `[-1, 1]` scaled by `v_max`/`w_max`.
+Research controller from docs/ROADMAP_CONCEPTS.md ("learned local planner"): train offline on a static Nav2 occupancy map with raycast LiDAR — **no Gazebo in the train loop** — then deploy as a `/cmd_vel` source. Observation = downsampled scan (`n_beams`, default 36, normalized by `max_range`) + goal `(dx, dy, dyaw)` in the robot frame; action = `[v, w]` in `[-1, 1]` scaled by `v_max`/`w_max`.
 
 | Piece | Role |
 |---|---|
@@ -2591,3 +2591,58 @@ both costmaps ("Using plugin"/"Initialized plugin", no errors), `BinaryFilter` t
 centered near the SLAM map origin, and `yolo_detector.py` muting inference exactly on the
 "Switched on" edge with no detections logged afterward. Clean teardown, no lingering
 process on that domain.
+
+## 39. Exploration stalls: what actually caused them (2026-10-12)
+
+A long mapping session chased "robot stops, map stops growing" across DWB, RPP and MPPI. Most of it was
+**not** the controllers. Causes found, in the order they cost time:
+
+| # | Symptom | Real cause | Fix |
+|---|---|---|---|
+| 1 | Map frozen at exactly ~1,100 cells; `map->odom` goes stale; explorer idle | `scan_quality_gate` dropped every scan with >50% NaN beams. A robot facing a long corridor or an open spawn sees that many out-of-range beams, so SLAM got no input | `max_nan_ratio: 0.97` in `_common.scan_quality_gate_node` |
+| 2 | Thousands of `Transform data too old (map to odom)`, flaky runs | ~4,300 stale Fast DDS shared-memory files in `/dev/shm` left by `kill -9` of ROS/Gazebo processes. Cleaning cut TF errors ~36x in one A/B | `scripts/clean_fastdds_shm.sh` (dry run by default; only your own, unused, >5 min old files); stop sims with SIGINT, not `kill -9` |
+| 3 | Robot crawls near walls | `collision_monitor` SLOWDOWN zone (1.0 m) scaled every command to 40% in corridors | `slowdown_distance` 1.0 -> 0.6 |
+| 4 | MPPI "never moves" | `visualize: true` + `batch_size: 2000` starved the controller loop; rectangle footprint is larger than the old octagon | `visualize: false`, `batch_size: 1000` |
+| 5 | Controller TF view frozen while TF is healthy on the wire | Not solved. `controller_server` keeps `map->odom` at one stamp while `/tf` carries fresh data. Hunter run: no tf2 warnings, threads idle. The slam_toolbox pose-graph autosave (`posegraph_autosave`) looks like a trigger: runs with it on froze, runs with it off did not (small sample) | `posegraph_autosave` is now **off** by default |
+
+### Watchdogs
+- `slam_stall_watchdog.py` (on by default, `slam_watchdog:=true`): if `map->odom` is stale while `/scan` still
+  arrives, SIGKILLs slam_toolbox (exact child PID only) and the launch `respawn=True` restarts it; with an
+  autosaved pose graph it reloads it at the odom-propagated pose. If `/scan` is silent it does nothing
+  (that was the scan-gate bug, a restart cannot help).
+- `tf_freeze_watchdog.py` is **experimental and off** (`tf_watchdog:=false`): the controller's error is logged by a
+  non-node logger and never reaches `/rosout`, and a manual Nav2 lifecycle RESET deadlocked in costmap cleanup.
+
+### Judging a map
+Cell count lies. `compare_gt` style checks against a reference built from the simulator pose + the same scans
+give wall error and the share of walls within 10 cm; `bbox_fill` (known cells / bounding box of the known area)
+shows an unfinished map (house with RPP: 47%, even though it had only 6 frontier clusters). A run that ends on
+"map unchanged for N s" is stalled, not finished.
+
+### Update 2026-10-13: the controller TF freeze appears when sims run concurrently
+- Hospital, RPP + `frontier`, three sims started together after a reboot: **6 of 6 froze** within 46–306 s (with or without
+  the benchmark probe attached, so the probe is not the cause). One sim alone: 0 TF errors in 15 min.
+  Real-time factor stays 1.00 even with three idle sims and CPU load ~10/22, power profile balanced on AC, code unchanged
+  since the clean runs. The exact mechanism is not found. **Benchmarks must run one sim at a time**; every house run in
+  this session was done three at once, so the "the house always floods" conclusion is unreliable until redone alone.
+- The freeze signature is the same in every case: the controller's latest `map->odom` stays at one stamp while `/tf` is
+  fresh on the wire and its own local costmap (`odom->base_link`) has no TF errors, i.e. one reader stops receiving one
+  writer's samples. No tf2 warning appears.
+- RTAB-Map (`slam_algo:=vslam`): give every run its own `rtabmap_db:=` (runs sharing `~/.ros/rtabmap.db` abort), keep
+  `map_always_update: True` (otherwise a stationary robot never gets map updates and the explorer sends no goals), and
+  use `vslam_variant:=C` (lidar grid; the default depth-camera grid is a small blob whose frontiers are trivial goals).
+  Variant C maps well (5.2 cm wall error on the maze) but showed the freeze at the first goal when run beside other sims.
+- Static checks worth repeating: every script CMake installs must be executable in the source (`--symlink-install` links
+  to the source file); fixed for `bt_server.py`, `pid_controller.py`, `train_frontier_ppo.py`.
+- A laptop that suspends while idle kills unattended runs (seen 2026-10-13 01:02). Wrap long queues in
+  `systemd-inhibit --what=sleep:idle:handle-lid-switch ...`, and keep working files out of `/tmp` (cleared on reboot).
+
+**Correction (same day):** the freeze is not only a concurrent-sims effect: 19 of 27 single-sim logs have it (hospital 13,256 errors,
+multi_terrain 4,909, RTAB-Map C 181-354 on every world). RTAB-Map "not driving" is this freeze: its map matches the walls (3-6 cm) but the
+robot never leaves, and Nav2 reports "Reached the goal!" while its TF check fails. The scheduler reruns jobs with >500 such errors.
+First transport test (hospital): `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` gave 0 errors over 1,220 s (Fast DDS: 13,256). One run, not proof.
+
+### Controller notes (same explorer, hospital)
+All three produce accurate maps when they run (RPP 3.6-4.1 cm, MPPI 2.4 cm). MPPI is slower; DWB left the start
+in none of the house runs. Best default for exploration so far: RPP + `frontier`; MPPI + `builtin` is the
+accurate-but-slow alternative.

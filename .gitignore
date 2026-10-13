@@ -15,6 +15,13 @@ src/rosnav_bot/maps/*.yaml
 src/rosnav_bot/maps/*.data
 src/rosnav_bot/maps/*.posegraph
 src/rosnav_bot/maps/*.db
+# ...except the ready-made maps the README points to (hospital, house, simple_rooms)
+!src/rosnav_bot/maps/map_hospital.pgm
+!src/rosnav_bot/maps/map_hospital.yaml
+!src/rosnav_bot/maps/map_house.pgm
+!src/rosnav_bot/maps/map_house.yaml
+!src/rosnav_bot/maps/map_simple_rooms.pgm
+!src/rosnav_bot/maps/map_simple_rooms.yaml
 
 # Python
 __pycache__/
@@ -68,6 +75,9 @@ src/cslam_common_interfaces
 /image.png
 /image copy*.png
 /render.png
+
+# Local scratch captures moved out of the repo root (screenshots, screencasts, one-off images)
+local/
 
 # Resume
 resume.md
