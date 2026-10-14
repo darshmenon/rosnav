@@ -130,7 +130,7 @@ Or let the robot explore alone: add `explore:=true` to the launch above.
 | Hospital | House | Simple rooms |
 |:---:|:---:|:---:|
 | <img src="images/frontier_maps/hospital.gif" width="260"> | <img src="images/frontier_maps/house.gif" width="200"> | <img src="images/frontier_maps/simple_rooms.gif" width="240"> |
-| 147.6k cells · 4.1 cm | 47.0k cells · 12.7 cm | 96.5k cells · 3.1 cm |
+| 133.1k cells · 3.4 cm | 47.0k cells · 12.7 cm | 98.3k cells · 3.7 cm |
 
 Ready-made maps: `src/rosnav_bot/maps/map_{hospital,house,simple_rooms}.yaml` — skip exploring and [navigate on them directly](#c--navigate-on-the-saved-map).
 
@@ -470,6 +470,17 @@ generation is available from the reporting scripts but is intentionally kept
 out of this README — see concepts.md §3/§6b/§7 for the full run/compare
 walkthrough (controller: dwb/mppi/rpp via `mode:=nav`; EKF/UKF via
 `mode:=accuracy`; slam_toolbox_mode via `mode:=slam`).
+
+<table align="center">
+  <tr>
+    <td align="center"><b>RTAB-Map (<code>slam_algo:=vslam vslam_variant:=C</code>) · simple_rooms</b></td>
+    <td align="center"><b>slam_toolbox · hospital, live exploration</b></td>
+  </tr>
+  <tr>
+    <td><img src="images/rtabmap_simple_rooms_rviz.png" alt="RTAB-Map occupancy grid of simple_rooms in RViz" width="420"/></td>
+    <td><img src="images/slam_toolbox_hospital_rviz.png" alt="slam_toolbox map and planned path of the hospital in RViz" width="420"/></td>
+  </tr>
+</table>
 
 ![3D lidar point cloud, SLAM map, and costmap in RViz](images/gs_3d_slam_view.png)
 
