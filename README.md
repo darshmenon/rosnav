@@ -132,7 +132,7 @@ Or let the robot explore alone: add `explore:=true` to the launch above.
 | <img src="images/frontier_maps/hospital.gif" width="260"> | <img src="images/frontier_maps/house.gif" width="200"> | <img src="images/frontier_maps/simple_rooms.gif" width="240"> |
 | 133.1k cells · 3.4 cm | 47.0k cells · 12.7 cm | 98.3k cells · 3.7 cm |
 
-Ready-made maps: `src/rosnav_bot/maps/map_{hospital,house,simple_rooms}.yaml` — skip exploring and [navigate on them directly](#c--navigate-on-the-saved-map).
+Ready-made maps: `src/rosnav_bot/maps/map_{hospital,house,simple_rooms}.yaml` (+ RTAB-Map `map_cafe_rtab.yaml`, [3D views](#rtab-map-rgb-d--cafe)) — skip exploring and [navigate on them directly](#c--navigate-on-the-saved-map).
 
 Exploration backend defaults to `builtin` (best result in the 2026-10-11 cafe test — see
 `concepts.md` §9 for the earlier comparison). Switch it with `explorer:=`:
@@ -478,6 +478,15 @@ drift, with its position-covariance ellipse on.
 
 #### RTAB-Map RGB-D · cafe
 
+`slam_algo:=vslam world_name:=cafe` — saved 2D map and exported 3D cloud:
+
+| 2D map | 3D cloud (RViz) | 3D cloud (MeshLab) |
+|:---:|:---:|:---:|
+| <img src="images/rtabmap/map_cafe_rtab.png" width="260"> | <img src="images/rtabmap/cafe_3d_cloud.png" width="260"> | <img src="images/rtabmap/cafe_3d_meshlab.png" width="260"> |
+| 111 m² · `src/rosnav_bot/maps/map_cafe_rtab.yaml` | 682k coloured points | `rtabmap-export --cloud` |
+
+**Live in RViz**
+
 <table align="center">
   <tr>
     <td align="center"><b>Coloured cloud and Nav2 path</b></td>
@@ -488,8 +497,6 @@ drift, with its position-covariance ellipse on.
     <td><img src="images/rtabmap_vslam_cafe_rviz_3.png" alt="RTAB-Map RGB-D map with furniture and door after more exploration, cafe" width="420"/></td>
   </tr>
 </table>
-
-`slam_algo:=vslam world_name:=cafe` — coloured RGB-D map cloud and Nav2 path in RViz.
 
 #### RTAB-Map OctoMap layer
 

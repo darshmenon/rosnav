@@ -2664,3 +2664,7 @@ Wall error is measured against the ground-truth-pose reference; a run with more 
 | TF-freeze tests | Cyclone DDS, Fast DDS without shared memory, split bridge, slower TF, 640x480 camera: none fixed RTAB-Map; single clean hospital runs on these settings proved nothing, the freeze is intermittent |
 
 Bugs found by these runs: multi_terrain spawn faced the ramp (collision stop) and the start point lay outside the SLAM map (no frontiers) - fixed with a new spawn and marker pillars; the 3D lidar scan band was relative to the sensor, so a taller mount projected an all-NaN scan - the band now follows the mount height; benchmark runs overwrote the ready-made maps in `src/rosnav_bot/maps/` - runs now save to `local/work/automaps/`.
+
+## 41. RTAB-Map cafe map from the `.db` (2026-10-14)
+
+`slam_algo:=vslam` run on cafe → `~/.ros/rtabmap_cafe.db` (231 nodes, 20 loop-closure links). The 2D map needs no live run: the db's `Admin.opt_map` is a zlib'd int8 grid (386×211, origin `opt_map_x_min/y_min`, res `opt_map_resolution`; `<0` unknown, `>=50` occupied) → `maps/map_cafe_rtab.*`. It covers only the 86 nodes in working memory at shutdown. Versus slam_toolbox `map_cafe`: 111 vs 59 m² free, more speckle (248 vs 77 isolated ≤3-cell blobs); wall accuracy vs ground truth not yet measured. Coloured cloud: `rtabmap-export --cloud --voxel 0.02 --max_range 6 --output cafe cafe.db` (682k points).
