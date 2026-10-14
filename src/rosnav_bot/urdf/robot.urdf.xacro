@@ -14,6 +14,9 @@
     </xacro:unless>
 
     <xacro:include filename="imu.xacro" />
+    <xacro:if value="${'$(optenv ROSNAV_GPS 0)' == '1'}">
+        <xacro:include filename="gps.xacro" />
+    </xacro:if>
 
     <xacro:arg name="enable_camera" default="false"/>
     <xacro:arg name="enable_rgbd" default="false"/>

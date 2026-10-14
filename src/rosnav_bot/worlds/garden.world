@@ -1,0 +1,93 @@
+<?xml version="1.0" ?>
+<sdf version='1.8'>
+  <world name='garden'>
+
+    <physics name='4ms' type='ignored'>
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system"
+            name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system"
+            name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system"
+            name="ignition::gazebo::systems::SceneBroadcaster"/>
+    <plugin filename="ignition-gazebo-sensors-system"
+            name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="ignition-gazebo-contact-system"
+            name="ignition::gazebo::systems::Contact"/>
+    <plugin filename="ignition-gazebo-imu-system"
+            name="ignition::gazebo::systems::Imu"/>
+
+    <plugin filename="ignition-gazebo-navsat-system" name="ignition::gazebo::systems::NavSat"/>
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model><world_frame_orientation>ENU</world_frame_orientation>
+      <latitude_deg>47.3977</latitude_deg><longitude_deg>8.5456</longitude_deg><elevation>0</elevation><heading_deg>0</heading_deg>
+    </spherical_coordinates>
+    <light name='sun' type='directional'>
+      <pose>0 0 10 0 0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>-0.5 0.1 -0.9</direction>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+    </light>
+
+    <!-- Ground plane -->
+    <model name='ground_plane'>
+      <static>true</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+        </collision>
+        <visual name='visual'>
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+          <material>
+            <ambient>0.25 0.45 0.2 1</ambient>
+            <diffuse>0.25 0.5 0.2 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+        <!-- Garden: 30 x 30 m, fenced, trees, hedges, benches, gravel paths. Start area (0,0) is open lawn. -->
+    <model name='fence_n'><static>true</static><pose>0 15 0.6 0 0 0</pose><link name='l'><collision name='c'><geometry><box><size>30.2 0.1 1.2</size></box></geometry></collision><visual name='v'><geometry><box><size>30.2 0.1 1.2</size></box></geometry><material><ambient>0.55 0.38 0.2 1</ambient><diffuse>0.55 0.38 0.2 1</diffuse></material></visual></link></model>
+    <model name='fence_s'><static>true</static><pose>0 -15 0.6 0 0 0</pose><link name='l'><collision name='c'><geometry><box><size>30.2 0.1 1.2</size></box></geometry></collision><visual name='v'><geometry><box><size>30.2 0.1 1.2</size></box></geometry><material><ambient>0.55 0.38 0.2 1</ambient><diffuse>0.55 0.38 0.2 1</diffuse></material></visual></link></model>
+    <model name='fence_e'><static>true</static><pose>15 0 0.6 0 0 0</pose><link name='l'><collision name='c'><geometry><box><size>0.1 30.2 1.2</size></box></geometry></collision><visual name='v'><geometry><box><size>0.1 30.2 1.2</size></box></geometry><material><ambient>0.55 0.38 0.2 1</ambient><diffuse>0.55 0.38 0.2 1</diffuse></material></visual></link></model>
+    <model name='fence_w'><static>true</static><pose>-15 0 0.6 0 0 0</pose><link name='l'><collision name='c'><geometry><box><size>0.1 30.2 1.2</size></box></geometry></collision><visual name='v'><geometry><box><size>0.1 30.2 1.2</size></box></geometry><material><ambient>0.55 0.38 0.2 1</ambient><diffuse>0.55 0.38 0.2 1</diffuse></material></visual></link></model>
+    <model name='path_x'><static>true</static><pose>0 0 0.011 0 0 0</pose><link name='l'><visual name='v'><geometry><box><size>28 1.4 0.02</size></box></geometry><material><ambient>0.7 0.65 0.55 1</ambient><diffuse>0.7 0.65 0.55 1</diffuse></material></visual></link></model>
+    <model name='path_y'><static>true</static><pose>0 0 0.011 0 0 0</pose><link name='l'><visual name='v'><geometry><box><size>1.4 28 0.02</size></box></geometry><material><ambient>0.7 0.65 0.55 1</ambient><diffuse>0.7 0.65 0.55 1</diffuse></material></visual></link></model>
+    <model name='hedge_0'><static>true</static><pose>-8 -8 0.45 0 0 0</pose><link name='l'><collision name='c'><geometry><box><size>8 0.7 0.9</size></box></geometry></collision><visual name='v'><geometry><box><size>8 0.7 0.9</size></box></geometry><material><ambient>0.1 0.4 0.12 1</ambient><diffuse>0.1 0.4 0.12 1</diffuse></material></visual></link></model>
+    <model name='hedge_1'><static>true</static><pose>8 -8 0.45 0 0 0</pose><link name='l'><collision name='c'><geometry><box><size>8 0.7 0.9</size></box></geometry></collision><visual name='v'><geometry><box><size>8 0.7 0.9</size></box></geometry><material><ambient>0.1 0.4 0.12 1</ambient><diffuse>0.1 0.4 0.12 1</diffuse></material></visual></link></model>
+    <model name='hedge_2'><static>true</static><pose>-8 8 0.45 0 0 0</pose><link name='l'><collision name='c'><geometry><box><size>8 0.7 0.9</size></box></geometry></collision><visual name='v'><geometry><box><size>8 0.7 0.9</size></box></geometry><material><ambient>0.1 0.4 0.12 1</ambient><diffuse>0.1 0.4 0.12 1</diffuse></material></visual></link></model>
+    <model name='hedge_3'><static>true</static><pose>8 8 0.45 0 0 0</pose><link name='l'><collision name='c'><geometry><box><size>8 0.7 0.9</size></box></geometry></collision><visual name='v'><geometry><box><size>8 0.7 0.9</size></box></geometry><material><ambient>0.1 0.4 0.12 1</ambient><diffuse>0.1 0.4 0.12 1</diffuse></material></visual></link></model>
+    <model name='hedge_4'><static>true</static><pose>-11.6 -4 0.45 0 0 0</pose><link name='l'><collision name='c'><geometry><box><size>0.7 6 0.9</size></box></geometry></collision><visual name='v'><geometry><box><size>0.7 6 0.9</size></box></geometry><material><ambient>0.1 0.4 0.12 1</ambient><diffuse>0.1 0.4 0.12 1</diffuse></material></visual></link></model>
+    <model name='hedge_5'><static>true</static><pose>11.6 4 0.45 0 0 0</pose><link name='l'><collision name='c'><geometry><box><size>0.7 6 0.9</size></box></geometry></collision><visual name='v'><geometry><box><size>0.7 6 0.9</size></box></geometry><material><ambient>0.1 0.4 0.12 1</ambient><diffuse>0.1 0.4 0.12 1</diffuse></material></visual></link></model>
+    <model name='hedge_6'><static>true</static><pose>-4 -11.6 0.45 0 0 0</pose><link name='l'><collision name='c'><geometry><box><size>0.7 5 0.9</size></box></geometry></collision><visual name='v'><geometry><box><size>0.7 5 0.9</size></box></geometry><material><ambient>0.1 0.4 0.12 1</ambient><diffuse>0.1 0.4 0.12 1</diffuse></material></visual></link></model>
+    <model name='hedge_7'><static>true</static><pose>4 11.6 0.45 0 0 0</pose><link name='l'><collision name='c'><geometry><box><size>0.7 5 0.9</size></box></geometry></collision><visual name='v'><geometry><box><size>0.7 5 0.9</size></box></geometry><material><ambient>0.1 0.4 0.12 1</ambient><diffuse>0.1 0.4 0.12 1</diffuse></material></visual></link></model>
+    <model name='planter_0'><static>true</static><pose>5 3 0.25 0 0 0</pose><link name='l'><collision name='c'><geometry><box><size>1.6 1.0 0.5</size></box></geometry></collision><visual name='v'><geometry><box><size>1.6 1.0 0.5</size></box></geometry><material><ambient>0.5 0.3 0.25 1</ambient><diffuse>0.5 0.3 0.25 1</diffuse></material></visual></link></model>
+    <model name='planter_1'><static>true</static><pose>-5 -3 0.25 0 0 0</pose><link name='l'><collision name='c'><geometry><box><size>1.6 1.0 0.5</size></box></geometry></collision><visual name='v'><geometry><box><size>1.6 1.0 0.5</size></box></geometry><material><ambient>0.5 0.3 0.25 1</ambient><diffuse>0.5 0.3 0.25 1</diffuse></material></visual></link></model>
+    <model name='planter_2'><static>true</static><pose>3 -6 0.25 0 0 0</pose><link name='l'><collision name='c'><geometry><box><size>1.6 1.0 0.5</size></box></geometry></collision><visual name='v'><geometry><box><size>1.6 1.0 0.5</size></box></geometry><material><ambient>0.5 0.3 0.25 1</ambient><diffuse>0.5 0.3 0.25 1</diffuse></material></visual></link></model>
+    <model name='planter_3'><static>true</static><pose>-3 6 0.25 0 0 0</pose><link name='l'><collision name='c'><geometry><box><size>1.6 1.0 0.5</size></box></geometry></collision><visual name='v'><geometry><box><size>1.6 1.0 0.5</size></box></geometry><material><ambient>0.5 0.3 0.25 1</ambient><diffuse>0.5 0.3 0.25 1</diffuse></material></visual></link></model>
+    <include><name>oak_0</name><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Oak tree</uri><pose>6 6 0 0 0 0</pose><static>true</static></include>
+    <include><name>oak_1</name><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Oak tree</uri><pose>-9 5 0 0 0 0</pose><static>true</static></include>
+    <include><name>oak_2</name><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Oak tree</uri><pose>9 -5 0 0 0 0</pose><static>true</static></include>
+    <include><name>oak_3</name><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Oak tree</uri><pose>-6 -6.5 0 0 0 0</pose><static>true</static></include>
+    <include><name>oak_4</name><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Oak tree</uri><pose>-2 9 0 0 0 0</pose><static>true</static></include>
+    <include><name>oak_5</name><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Oak tree</uri><pose>2 -9.5 0 0 0 0</pose><static>true</static></include>
+    <include><name>oak_6</name><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Oak tree</uri><pose>-12 10 0 0 0 0</pose><static>true</static></include>
+    <include><name>oak_7</name><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Oak tree</uri><pose>12 -11 0 0 0 0</pose><static>true</static></include>
+    <include><name>pine_0</name><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Pine Tree</uri><pose>-12 -8 0 0 0 0</pose><static>true</static></include>
+    <include><name>pine_1</name><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Pine Tree</uri><pose>12 8 0 0 0 0</pose><static>true</static></include>
+    <include><name>pine_2</name><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Pine Tree</uri><pose>-7 12 0 0 0 0</pose><static>true</static></include>
+    <include><name>pine_3</name><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Pine Tree</uri><pose>7 -12 0 0 0 0</pose><static>true</static></include>
+    <include><name>pine_4</name><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Pine Tree</uri><pose>13 -2 0 0 0 0</pose><static>true</static></include>
+    <include><name>pine_5</name><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Pine Tree</uri><pose>-13 2 0 0 0 0</pose><static>true</static></include>
+    <include><name>bench_0</name><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/FoodCourtBenchLong</uri><pose>3 1.2 0 0 0 0</pose><static>true</static></include>
+    <include><name>bench_1</name><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/FoodCourtBenchLong</uri><pose>-3 -1.2 0 0 0 3.14159</pose><static>true</static></include>
+    <include><name>bench_2</name><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/FoodCourtBenchLong</uri><pose>1.2 -3 0 0 0 1.5708</pose><static>true</static></include>
+  </world>
+</sdf>

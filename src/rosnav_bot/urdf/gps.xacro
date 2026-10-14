@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!-- GNSS receiver. Only included when ROSNAV_GPS=1 (see robot.urdf.xacro). Bridged as /gps/fix
+       (sensor_msgs/NavSatFix) by config/gz_bridge_gps.yaml. The world needs <spherical_coordinates> and the
+       NavSat system plugin (outdoor.world has both). -->
+  <xacro:arg name="namespace" default=""/>
+  <xacro:property name="ns" value="$(arg namespace)"/>
+
+  <joint name="gps_joint" type="fixed">
+    <parent link="chassis"/>
+    <child link="gps_link"/>
+    <origin xyz="-0.15 0 0.12" rpy="0 0 0"/>
+  </joint>
+  <link name="gps_link">
+    <visual>
+      <geometry><cylinder radius="0.04" length="0.03"/></geometry>
+      <material name="gps_material"><color rgba="0.9 0.9 0.2 1.0"/></material>
+    </visual>
+    <xacro:inertial_cylinder mass="0.05" length="0.03" radius="0.04">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </xacro:inertial_cylinder>
+  </link>
+
+  <gazebo reference="gps_link">
+    <sensor name="gps_sensor" type="navsat">
+      <always_on>true</always_on>
+      <update_rate>5</update_rate>
+      <topic>${ns + '/gps' if ns else 'gps'}</topic>
+      <gz_frame_id>${ns + '/gps_link' if ns else 'gps_link'}</gz_frame_id>
+      <navsat>
+        <position_sensing>
+          <horizontal><noise type="gaussian"><mean>0.0</mean><stddev>0.5</stddev></noise></horizontal>
+          <vertical><noise type="gaussian"><mean>0.0</mean><stddev>1.0</stddev></noise></vertical>
+        </position_sensing>
+      </navsat>
+    </sensor>
+  </gazebo>
+</robot>

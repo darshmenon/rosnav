@@ -48,8 +48,8 @@
       <camera>
         <horizontal_fov>1.5708</horizontal_fov>
         <image>
-          <width>1280</width>
-          <height>960</height>
+          <width>$(optenv ROSNAV_CAM_W 1280)</width>
+          <height>$(optenv ROSNAV_CAM_H 960)</height>
           <format>R8G8B8</format>
         </image>
         <clip>

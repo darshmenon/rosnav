@@ -1,0 +1,6 @@
+# GNSS fix (only started when ROSNAV_GPS=1, see slam_nav.launch.py)
+- ros_topic_name: "/gps/fix"
+  gz_topic_name: "/gps"
+  ros_type_name: "sensor_msgs/msg/NavSatFix"
+  gz_type_name: "gz.msgs.NavSat"
+  direction: GZ_TO_ROS

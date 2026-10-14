@@ -27,6 +27,17 @@
             name="ignition::gazebo::systems::Sensors">
       <render_engine>ogre2</render_engine>
     </plugin>
+    <plugin filename="ignition-gazebo-navsat-system"
+            name="ignition::gazebo::systems::NavSat"/>
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <world_frame_orientation>ENU</world_frame_orientation>
+      <latitude_deg>47.3977</latitude_deg>
+      <longitude_deg>8.5456</longitude_deg>
+      <elevation>0</elevation>
+      <heading_deg>0</heading_deg>
+    </spherical_coordinates>
+
     <plugin filename="ignition-gazebo-contact-system"
             name="ignition::gazebo::systems::Contact"/>
     <plugin filename="ignition-gazebo-imu-system"
