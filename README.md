@@ -159,7 +159,7 @@ ros2 run nav2_map_server map_saver_cli -f src/rosnav_bot/maps/map_hospital
 ```
 
 Writes `map_hospital.yaml` + `map_hospital.pgm`. Then `Ctrl+C` the SLAM launch.  
-(With `explore:=true`, maps also autosave under `src/rosnav_bot/maps/map_<world>.*`.)
+(With `explore:=true`, maps autosave to `~/.ros/rosnav_maps/map_<world>.*`; copy into `src/rosnav_bot/maps/` to keep one.)
 
 ### C — Navigate on the saved map
 
@@ -363,6 +363,22 @@ ros2 launch rosnav_bot robot.launch.py world_name:=hospital \
   map:=src/rosnav_bot/maps/map_hospital.yaml drive_type:=ackermann safety:=true
 ```
 
+### Drive examples (mecanum / ackermann)
+
+Strafe (mecanum):
+```bash
+ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
+  "{linear: {x: 0.0, y: 0.3, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}"
+```
+
+Ackermann steer-while-driving:
+```bash
+ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
+  "{linear: {x: 0.4, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.3}}"
+```
+
+Deep dive → [concepts.md §18–20](concepts.md#18-mecanum-holonomic-drive) (mecanum / ackermann / MiR100 / Husky).
+
 ### Switch (fleet)
 
 ```bash
@@ -405,7 +421,107 @@ ros2 launch rosnav_bot slam_nav.launch.py slam_algo:=orbslam3 world_name:=cafe e
 docker compose up orb_slam3    # separate terminal
 ```
 
-**Live demo** — all four windows at once: Gazebo (top-left), RViz's `/map` + costmap (bottom-left),
+**All SLAM backends in this repo**, at a glance (full comparison → `concepts.md` §3):
+
+| `slam_algo:=` | Package | Sensors | Native / sidecar |
+|---|---|---|---|
+| `2d` (default) | slam_toolbox | 2D lidar | Native (apt) |
+| `cartographer` | Cartographer | 2D lidar + IMU | Native (apt) |
+| `3d` | RTAB-Map | 3D lidar + RGB | Native (apt) |
+| `vslam` | RTAB-Map | RGB-D | Native (apt) |
+| `multisensor` | RTAB-Map | RGB-D + lidar | Native (apt) |
+| `cslam` | Swarm-SLAM | 3D lidar (fleet) | Native (`link_third_party.sh --cslam`) |
+| `orbslam3` | ORB-SLAM3 | RGB-D | Tracker: Docker sidecar / bare-metal (`docker/orb_slam3/`); grid: native bridge node |
+
+In RViz (`slam_explore.rviz`): "Local Plan" shows whichever controller's selected
+path; enable "MPPI Candidate Trajectories" (off by default) when `controller:=mppi`
+to see the sampled velocity rollouts it's scoring; "SLAM Pose Graph" shows
+slam_toolbox's nodes + loop-closure constraints live; "Fused Odom (EKF/UKF)" vs
+"Wheel Odom (raw)" (off by default) lets you watch the localization filter correct
+drift, with its position-covariance ellipse on.
+
+### SLAM screenshots
+
+#### RTAB-Map and slam_toolbox
+
+<table align="center">
+  <tr>
+    <td align="center"><b>RTAB-Map (<code>slam_algo:=vslam vslam_variant:=C</code>) · simple_rooms</b></td>
+    <td align="center"><b>slam_toolbox · hospital, live exploration</b></td>
+  </tr>
+  <tr>
+    <td><img src="images/rtabmap_simple_rooms_rviz.png" alt="RTAB-Map occupancy grid of simple_rooms in RViz" width="420"/></td>
+    <td><img src="images/slam_toolbox_hospital_rviz.png" alt="slam_toolbox map and planned path of the hospital in RViz" width="420"/></td>
+  </tr>
+</table>
+
+#### RTAB-Map views in RViz (`vslam.rviz`, simple_rooms)
+
+<table align="center">
+  <tr>
+    <td align="center"><b>Start, no goal yet</b></td>
+    <td align="center"><b>Goal sent (11.1 m to go)</b></td>
+  </tr>
+  <tr>
+    <td><img src="images/rtabmap/rtabmap.png" alt="RTAB-Map vslam.rviz start, no goal yet" width="420"/></td>
+    <td><img src="images/rtabmap/rtabmap2.png" alt="RTAB-Map vslam.rviz goal sent, 11.1 m remaining" width="420"/></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Approaching a doorway (6.2 m left)</b></td>
+    <td align="center"><b>Later goal across the mapped room (8.9 m)</b></td>
+  </tr>
+  <tr>
+    <td><img src="images/rtabmap/rtabmap3.png" alt="RTAB-Map vslam.rviz approaching a doorway, 6.2 m remaining" width="420"/></td>
+    <td><img src="images/rtabmap/rtabmap4.png" alt="RTAB-Map vslam.rviz later goal, 8.9 m remaining" width="420"/></td>
+  </tr>
+</table>
+
+#### RTAB-Map RGB-D · cafe
+
+<table align="center">
+  <tr>
+    <td align="center"><b>Coloured cloud and Nav2 path</b></td>
+    <td align="center"><b>After more exploration (furniture and door)</b></td>
+  </tr>
+  <tr>
+    <td><img src="images/rtabmap_vslam_cafe_rviz.png" alt="RTAB-Map RGB-D coloured cloud and path in RViz, cafe" width="420"/></td>
+    <td><img src="images/rtabmap_vslam_cafe_rviz_3.png" alt="RTAB-Map RGB-D map with furniture and door after more exploration, cafe" width="420"/></td>
+  </tr>
+</table>
+
+`slam_algo:=vslam world_name:=cafe` — coloured RGB-D map cloud and Nav2 path in RViz.
+
+#### RTAB-Map OctoMap layer
+
+OctoMap voxel layer (blue voxels) live during frontier exploration of the single-room
+`coverage_100` world (same session as the coverage screenshots in §10):
+
+<table align="center">
+  <tr>
+    <td align="center"><b>Frontier just starting</b></td>
+    <td align="center"><b>Dense scan coverage</b></td>
+  </tr>
+  <tr>
+    <td><img src="images/rtabmap_octomap_frontier_start.png" alt="OctoMap frontier exploration just starting in RViz" width="420"/></td>
+    <td><img src="images/rtabmap_octomap_explore_dense.png" alt="OctoMap dense scan coverage during frontier exploration in RViz" width="420"/></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Goal sent across the map</b></td>
+    <td align="center"><b>Final local frontier pass</b></td>
+  </tr>
+  <tr>
+    <td><img src="images/rtabmap_octomap_explore_3.png" alt="OctoMap goal sent across the partially mapped area" width="420"/></td>
+    <td><img src="images/rtabmap_octomap_explore_6.png" alt="OctoMap final local frontier pass" width="420"/></td>
+  </tr>
+</table>
+
+#### 3D lidar
+
+![3D lidar point cloud, SLAM map, and costmap in RViz](images/gs_3d_slam_view.png)
+
+#### ORB-SLAM3 live demo
+
+All four windows at once: Gazebo (top-left), RViz's `/map` + costmap (bottom-left),
 ORB-SLAM3's Map Viewer top-down point cloud (top-right), and Current Frame tracked-feature overlay
 (bottom). Needs GTK-enabled OpenCV for the viewer windows — see
 `docker/orb_slam3/params/rosnav_rgbd_ros_params.yaml`.
@@ -443,78 +559,16 @@ ORB-SLAM3's Map Viewer top-down point cloud (top-right), and Current Frame track
 
 </details>
 
-**All SLAM backends in this repo**, at a glance (full comparison → `concepts.md` §3):
+### Benchmarks
 
-| `slam_algo:=` | Package | Sensors | Native / sidecar |
-|---|---|---|---|
-| `2d` (default) | slam_toolbox | 2D lidar | Native (apt) |
-| `cartographer` | Cartographer | 2D lidar + IMU | Native (apt) |
-| `3d` | RTAB-Map | 3D lidar + RGB | Native (apt) |
-| `vslam` | RTAB-Map | RGB-D | Native (apt) |
-| `multisensor` | RTAB-Map | RGB-D + lidar | Native (apt) |
-| `cslam` | Swarm-SLAM | 3D lidar (fleet) | Native (`link_third_party.sh --cslam`) |
-| `orbslam3` | ORB-SLAM3 | RGB-D | Tracker: Docker sidecar / bare-metal (`docker/orb_slam3/`); grid: native bridge node |
-
-In RViz (`slam_explore.rviz`): "Local Plan" shows whichever controller's selected
-path; enable "MPPI Candidate Trajectories" (off by default) when `controller:=mppi`
-to see the sampled velocity rollouts it's scoring; "SLAM Pose Graph" shows
-slam_toolbox's nodes + loop-closure constraints live; "Fused Odom (EKF/UKF)" vs
-"Wheel Odom (raw)" (off by default) lets you watch the localization filter correct
-drift, with its position-covariance ellipse on.
-
-### Controller / localization-filter / SLAM-mode benchmark
-
-`benchmark.py mode:=nav|accuracy|slam` + `mode:=report` compares any of the
+**Controller / localization-filter / SLAM-mode:** `benchmark.py mode:=nav|accuracy|slam` + `mode:=report` compares any of the
 above numerically and writes a self-contained HTML dashboard. Local chart
 generation is available from the reporting scripts but is intentionally kept
 out of this README — see concepts.md §3/§6b/§7 for the full run/compare
 walkthrough (controller: dwb/mppi/rpp via `mode:=nav`; EKF/UKF via
 `mode:=accuracy`; slam_toolbox_mode via `mode:=slam`).
 
-<table align="center">
-  <tr>
-    <td align="center"><b>RTAB-Map (<code>slam_algo:=vslam vslam_variant:=C</code>) · simple_rooms</b></td>
-    <td align="center"><b>slam_toolbox · hospital, live exploration</b></td>
-  </tr>
-  <tr>
-    <td><img src="images/rtabmap_simple_rooms_rviz.png" alt="RTAB-Map occupancy grid of simple_rooms in RViz" width="420"/></td>
-    <td><img src="images/slam_toolbox_hospital_rviz.png" alt="slam_toolbox map and planned path of the hospital in RViz" width="420"/></td>
-  </tr>
-</table>
-
-![3D lidar point cloud, SLAM map, and costmap in RViz](images/gs_3d_slam_view.png)
-
-OctoMap voxel layer (blue voxels) live during frontier exploration of the single-room
-`coverage_100` world (same session as the coverage screenshots in §10):
-
-<table align="center">
-  <tr>
-    <td align="center"><b>Frontier just starting</b></td>
-    <td align="center"><b>Dense scan coverage</b></td>
-  </tr>
-  <tr>
-    <td><img src="images/rtabmap_octomap_frontier_start.png" alt="OctoMap frontier exploration just starting in RViz" width="420"/></td>
-    <td><img src="images/rtabmap_octomap_explore_dense.png" alt="OctoMap dense scan coverage during frontier exploration in RViz" width="420"/></td>
-  </tr>
-  <tr>
-    <td align="center"><b>Wall frontier selected</b></td>
-    <td align="center"><b>Goal sent across the map</b></td>
-  </tr>
-  <tr>
-    <td><img src="images/rtabmap_octomap_explore_2.png" alt="OctoMap frontier selected along the wall" width="420"/></td>
-    <td><img src="images/rtabmap_octomap_explore_3.png" alt="OctoMap goal sent across the partially mapped area" width="420"/></td>
-  </tr>
-  <tr>
-    <td align="center"><b>Later — map boundary closing</b></td>
-    <td align="center"><b>Final local frontier pass</b></td>
-  </tr>
-  <tr>
-    <td><img src="images/rtabmap_octomap_explore_5.png" alt="OctoMap later exploration with map boundary closing" width="420"/></td>
-    <td><img src="images/rtabmap_octomap_explore_6.png" alt="OctoMap final local frontier pass" width="420"/></td>
-  </tr>
-</table>
-
-### SLAM benchmark (headless compare)
+**SLAM backends (headless compare)**
 
 ```bash
 # Default matrix: 2d | cartographer | vslam | multisensor | 3d  (maze, 120s explore)
@@ -526,21 +580,7 @@ WORLD=hospital DURATION_S=90 ALGOS="2d cartographer multisensor" ./src/rosnav_bo
 Install Cartographer once if you want that row:
 `sudo apt install ros-${ROS_DISTRO}-cartographer-ros`
 
-Strafe example (mecanum):
-```bash
-ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
-  "{linear: {x: 0.0, y: 0.3, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}"
-```
-
-Ackermann steer-while-driving:
-```bash
-ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
-  "{linear: {x: 0.4, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.3}}"
-```
-
-Deep dive → [concepts.md §18–20](concepts.md#18-mecanum-holonomic-drive) (mecanum / ackermann / MiR100 / Husky).
-
-### Headless smoke (all AMRs map + move)
+**Headless smoke (all AMRs map + move)**
 
 ```bash
 # Gazebo server only — no GUI. Checks /odom /scan /map and a short drive per platform.

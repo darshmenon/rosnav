@@ -372,6 +372,37 @@ Visualization Manager:
       Use Fixed Frame: true
       Use rainbow: false
       Value: false
+    - Class: rtabmap_rviz_plugins/MapCloud
+      Enabled: true
+      Name: MapCloud
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /mapData
+      Alpha: 1
+      Cloud decimation: 4
+      Cloud max depth (m): 4
+      Cloud voxel size (m): 0.03
+      Download map: false
+      Download graph: false
+      Node filtering radius (m): 0.1
+      Node filtering angle (degrees): 30
+      Size (Pixels): 3
+      Style: Points
+      Value: true
+    - Class: rtabmap_rviz_plugins/MapGraph
+      Enabled: true
+      Name: MapGraph
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /mapGraph
+      Alpha: 1
+      Value: true
     - Class: rviz_default_plugins/Image
       Enabled: true
       Max Value: 1

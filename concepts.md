@@ -74,7 +74,7 @@ ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
 
 # Navigate on the saved map (SLAM off → AMCL)
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital slam:=false
-# Maps autosave under src/rosnav_bot/maps/map_<world> when explore:=true
+# Maps autosave to ~/.ros/rosnav_maps/map_<world> when explore:=true (copy into src/rosnav_bot/maps/ to keep)
 ```
 
 Fleet equivalent: `multi_robot.launch.py` uses `explore:=true/false` and optional
@@ -2646,3 +2646,21 @@ First transport test (hospital): `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` gave 0 
 All three produce accurate maps when they run (RPP 3.6-4.1 cm, MPPI 2.4 cm). MPPI is slower; DWB left the start
 in none of the house runs. Best default for exploration so far: RPP + `frontier`; MPPI + `builtin` is the
 accurate-but-slow alternative.
+
+## 40. Overnight benchmark results (2026-10-13/14)
+
+One headless run per cell, one sim at a time; full tables, thumbnails and charts in `local/overnight/REPORT.md` (gitignored).
+Wall error is measured against the ground-truth-pose reference; a run with more than 500 controller TF errors is "frozen" (§39) and not representative.
+
+| Question | Result |
+|---|---|
+| Best 2D SLAM | slam_toolbox and Cartographer are close: simple_rooms 98-99k cells, 3.3-3.7 cm; hospital 113-128k cells, 4.3-4.6 cm |
+| Visual / visual+lidar SLAM | RTAB-Map C maps accurately (3-6 cm) but never drove (0.0 m, the TF freeze); visual+lidar is 26-58 cm off |
+| 3D lidar | hospital slam_toolbox 96k cells but 21.7 cm; RTAB-Map 3D 34-50 cm and not driving. Wide 3D (30 deg, 0.4 m mount) needed a scan-band fix (see bugs below) |
+| Explorers | `builtin` best: simple_rooms 84.9k cells / 3.0 cm, hospital 57.9k / 2.7 cm; `explore_lite` fails on hospital (1.1k cells) |
+| Controllers | RPP is the only one that finished cleanly; DWB and MPPI froze or stalled in 3 of 4 runs |
+| Worlds mapped | cafe, coverage_100, aws_warehouse, small bench room map; office, empty_room, cluttered bench room gave 0 cells; maze, warehouse, depot, tugbot froze |
+| Multi-terrain drive types | mecanum travelled 51 m (319k cells, 90 cm error), diff 9 m (79k, 46 cm), ackermann 0 m |
+| TF-freeze tests | Cyclone DDS, Fast DDS without shared memory, split bridge, slower TF, 640x480 camera: none fixed RTAB-Map; single clean hospital runs on these settings proved nothing, the freeze is intermittent |
+
+Bugs found by these runs: multi_terrain spawn faced the ramp (collision stop) and the start point lay outside the SLAM map (no frontiers) - fixed with a new spawn and marker pillars; the 3D lidar scan band was relative to the sensor, so a taller mount projected an all-NaN scan - the band now follows the mount height; benchmark runs overwrote the ready-made maps in `src/rosnav_bot/maps/` - runs now save to `local/work/automaps/`.

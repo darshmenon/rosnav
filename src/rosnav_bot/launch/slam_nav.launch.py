@@ -68,7 +68,10 @@ def _resolve_world_path(world_name_arg: str, world_arg: str, pkg_share: str) -> 
 def _resolve_map_prefix(map_prefix_arg: str, world_name: str, pkg_share: str) -> str:
     if map_prefix_arg:
         return os.path.expanduser(map_prefix_arg)
-    return os.path.join(pkg_share, 'maps', f'map_{world_name}')
+    # Default is OUTSIDE the package maps/ dir so an explore run can never overwrite a ready-made map.
+    out_dir = os.path.expanduser('~/.ros/rosnav_maps')
+    os.makedirs(out_dir, exist_ok=True)
+    return os.path.join(out_dir, f'map_{world_name}')
 
 
 def _resolve_map_yaml(world_name: str, pkg_share: str) -> str:
@@ -1318,7 +1321,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             name='map_prefix',
             default_value='',
-            description='Output prefix for map_saver_cli. If empty, uses <package_share>/maps/map_<world_name>'),
+            description='Output prefix for map_saver_cli. If empty, uses ~/.ros/rosnav_maps/map_<world_name> (copy into src/rosnav_bot/maps/ to make it a ready-made map)'),
         DeclareLaunchArgument(
             name='map_override',
             default_value='',

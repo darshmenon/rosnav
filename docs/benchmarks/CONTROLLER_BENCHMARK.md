@@ -1,6 +1,6 @@
 # Controller benchmark: DWB vs MPPI vs RPP
 
-Generated 2026-10-03 20:46. **Status: 16 / 27 trials complete** (sweep still running, partial results).
+Generated 2026-10-03 21:29. **Status: 24 / 27 trials complete** (sweep still running, partial results).
 
 ## Setup
 - World: cafe, headless, Nav2 on the pre-built map, AMCL on, single robot (diff drive, Humble).
@@ -14,19 +14,19 @@ Generated 2026-10-03 20:46. **Status: 16 / 27 trials complete** (sweep still run
 | controller | goal (m) | n | success | mean time (s) | mean goal err (m) | mean path (m, gt) | recoveries | invalid |
 |---|---|---|---|---|---|---|---|---|
 | dwb | 1.55 | 3 | 3/3 | 9.87 | 0.31 | 1.20 | 0 | 0 |
-| mppi | 1.55 | 2 | 2/2 | 109.86 | 0.26 | 1.29 | 0 | 0 |
-| rpp | 1.55 | 1 | 1/1 | 10.07 | 0.26 | 1.26 | 0 | 1 |
-| dwb | 2.55 | 2 | 2/2 | 17.54 | 0.28 | 2.28 | 0 | 0 |
-| mppi | 2.55 | 1 | 0/1 | - | - | - | 0 | 0 |
-| rpp | 2.55 | 2 | 2/2 | 16.79 | 0.27 | 2.28 | 0 | 0 |
-| dwb | 3.5 | 1 | 0/1 | - | - | - | 5 | 0 |
-| mppi | 3.5 | 1 | 0/1 | - | - | - | 1 | 0 |
-| rpp | 3.5 | 2 | 0/2 | - | - | - | 16 | 0 |
+| mppi | 1.55 | 3 | 3/3 | 77.88 | 0.27 | 1.27 | 0 | 0 |
+| rpp | 1.55 | 2 | 2/2 | 10.12 | 0.25 | 1.26 | 0 | 1 |
+| dwb | 2.55 | 3 | 3/3 | 17.55 | 0.28 | 2.27 | 0 | 0 |
+| mppi | 2.55 | 2 | 0/2 | - | - | - | 0 | 0 |
+| rpp | 2.55 | 3 | 3/3 | 16.83 | 0.27 | 2.29 | 0 | 0 |
+| dwb | 3.5 | 2 | 0/2 | - | - | - | 12 | 0 |
+| mppi | 3.5 | 2 | 0/2 | - | - | - | 10 | 0 |
+| rpp | 3.5 | 3 | 0/3 | - | - | - | 27 | 0 |
 
 INVALID/FLAGGED:
   rpp 1.55 t1 success but err 1.55m
 
-launch attempts needed: Counter({1: 9, 2: 5, 3: 1, 4: 1})
+launch attempts needed: Counter({1: 13, 2: 8, 4: 2, 3: 1})
 
 ## Bugs found while benchmarking
 1. **Wheel parameters wrong in `urdf/gazebo_control.xacro`** (fixed, uncommitted). The DiffDrive plugin had `wheel_radius 0.1` and `wheel_separation 0.35`, but the URDF wheels have radius 0.075 and sit 0.45 m apart. The robot moved at about 75% of the commanded speed and odometry overstated distance by about 33%. Measured before the fix: 1.31 m odom vs 0.93 m true. After: 1.30 m vs 1.24 m.
