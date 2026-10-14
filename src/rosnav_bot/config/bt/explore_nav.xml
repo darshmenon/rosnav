@@ -16,7 +16,7 @@
   repeated failed BackUp/Spin cycles on one bad goal (each aborting early
   with "Pose Goes Off Grid" from behavior_server, i.e. jerky/incomplete
   motion) correlating with the SLAM map_odom yaw correction climbing
-  continuously (146.1deg -> 166.1deg over ~15s) instead of settling -- a
+  continuously (146.1deg -> 166.1deg over ~15s) instead of settling - a
   sign the repeated oscillating recovery motion was degrading scan-matching
   confidence. Fewer retries means a genuinely bad goal fails and gets
   blacklisted sooner, instead of grinding through more oscillation cycles
