@@ -29,7 +29,7 @@
       <gz_frame_id>${ns + '/gps_link' if ns else 'gps_link'}</gz_frame_id>
       <navsat>
         <position_sensing>
-          <horizontal><noise type="gaussian"><mean>0.0</mean><stddev>0.5</stddev></noise></horizontal>
+          <horizontal><noise type="gaussian"><mean>0.0</mean><stddev>0.000005</stddev></noise></horizontal><!-- degrees (gz navsat horizontal noise is in deg): 5e-6 deg = ~0.55 m -->
           <vertical><noise type="gaussian"><mean>0.0</mean><stddev>1.0</stddev></noise></vertical>
         </position_sensing>
       </navsat>
