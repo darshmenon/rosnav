@@ -413,6 +413,12 @@ def _make_robot_params(
         amcl_params = params.setdefault('amcl', {}).setdefault('ros__parameters', {})
         amcl_params['set_initial_pose'] = True
         amcl_params['initial_pose'] = initial_pose
+    # Fleet has no filter mask publishers: inert filter plugins freeze the controller's
+    # map->odom TF view (see _common.strip_inert_filters), so drop them from both costmaps.
+    for cm in ('local_costmap', 'global_costmap'):
+        cm_params = params.get(cm, {}).get(cm, {}).get('ros__parameters', {})
+        if 'plugins' in cm_params:
+            cm_params['plugins'] = [p for p in cm_params['plugins'] if p not in _common._FILTER_PLUGINS]
     static_layer = (
         params.setdefault('global_costmap', {})
         .setdefault('global_costmap', {})
