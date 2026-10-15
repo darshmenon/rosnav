@@ -446,11 +446,9 @@ drift, with its position-covariance ellipse on.
 
 <table align="center">
   <tr>
-    <td align="center"><b>RTAB-Map (<code>slam_algo:=vslam vslam_variant:=C</code>) · simple_rooms</b></td>
     <td align="center"><b>slam_toolbox · hospital, live exploration</b></td>
   </tr>
   <tr>
-    <td><img src="images/rtabmap_simple_rooms_rviz.png" alt="RTAB-Map occupancy grid of simple_rooms in RViz" width="420"/></td>
     <td><img src="images/slam_toolbox_hospital_rviz.png" alt="slam_toolbox map and planned path of the hospital in RViz" width="420"/></td>
   </tr>
 </table>
