@@ -365,6 +365,105 @@ Visualization Manager:
       Reliability Policy: Reliable
       Filter size: 10
     Value: true
+  - Alpha: 1
+    Autocompute Intensity Bounds: true
+    Autocompute Value Bounds:
+      Max Value: 0.3
+      Min Value: 0
+      Value: false
+    Axis: Z
+    Channel Name: intensity
+    Class: rviz_default_plugins/PointCloud2
+    Color: 255; 255; 255
+    Color Transformer: AxisColor
+    Decay Time: 0.5
+    Enabled: true
+    Invert Rainbow: true
+    Max Color: 255; 255; 255
+    Max Intensity: 0
+    Min Color: 0; 0; 0
+    Min Intensity: 0
+    Name: Traversability (red=blocked, blue=ground)
+    Position Transformer: XYZ
+    Selectable: true
+    Size (Pixels): 3
+    Size (m): 0.1
+    Style: Flat Squares
+    Topic:
+      Depth: 5
+      Durability Policy: Volatile
+      Filter size: 10
+      History Policy: Keep Last
+      Reliability Policy: Best Effort
+      Value: /points_traversability
+    Use Fixed Frame: true
+    Use rainbow: true
+    Value: true
+  - Alpha: 0.7
+    Class: rviz_default_plugins/Map
+    Color Scheme: costmap
+    Draw Behind: false
+    Enabled: true
+    Name: LocalCostmap
+    Topic:
+      Depth: 5
+      Durability Policy: Volatile
+      Filter size: 10
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /local_costmap/costmap
+    Update Topic:
+      Depth: 5
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /local_costmap/costmap_updates
+    Use Timestamp: false
+    Value: true
+  - Class: rviz_default_plugins/MarkerArray
+    Name: GoalFlags (green=goal, grey=visited, red=failed)
+    Enabled: true
+    Namespaces:
+      {}
+    Topic:
+      Value: /exploration_goal_flags
+      Depth: 5
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+    Value: true
+  - Class: rviz_default_plugins/Path
+    Name: GlobalPlan
+    Enabled: true
+    Color: 0; 255; 0
+    Line Style: Lines
+    Line Width: 0.12
+    Alpha: 1
+    Buffer Length: 1
+    Topic:
+      Value: /plan
+      Depth: 5
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Filter size: 10
+    Value: true
+  - Class: rviz_default_plugins/Path
+    Name: LocalPlan
+    Enabled: true
+    Color: 255; 0; 255
+    Line Style: Lines
+    Line Width: 0.04
+    Alpha: 1
+    Buffer Length: 1
+    Topic:
+      Value: /local_plan
+      Depth: 5
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Filter size: 10
+    Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -426,7 +525,7 @@ Visualization Manager:
       Name: Current View
       Near Clip Distance: 0.009999999776482582
       Pitch: 0.9
-      Target Frame: <Fixed Frame>
+      Target Frame: base_link
       Value: Orbit (rviz_default_plugins)
       Yaw: 0.8
     Saved:

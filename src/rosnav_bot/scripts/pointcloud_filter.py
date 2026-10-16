@@ -12,7 +12,7 @@ Topics: `cloud_in` (PointCloud2) -> `cloud_out` (PointCloud2, same frame/stamp, 
 Parameters: voxel_size (0.10, 0 = off), min_range (0.3), max_range (30), z_min (-1.0), z_max (3.0),
             ground_z (-99 = off), min_pts (1 = off)
   ros2 run rosnav_bot pointcloud_filter.py --ros-args -r cloud_in:=/lidar/points -r cloud_out:=/lidar/points_filtered
-Not wired into launch files. Offline test: python3 pointcloud_filter.py --selftest
+Wired (optional, off by default) via slam_nav.launch.py cloud_filter:=true -> RTAB-Map scan_cloud. Offline test: python3 pointcloud_filter.py --selftest
 """
 import sys
 

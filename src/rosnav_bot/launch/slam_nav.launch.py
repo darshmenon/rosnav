@@ -110,8 +110,12 @@ def _resolve_slam_params_file(raw_value: str, pkg_share: str) -> str:
 # corresponding spawn_* argument is left at its 'auto' sentinel, so an
 # explicit spawn_x/y/z/yaw override always wins.
 _WORLD_SPAWN_DEFAULTS = {
-    'outdoor': {'x': '40.0', 'y': '0.0', 'z': '9.0', 'yaw': '0.0'},
-    'multi_terrain': {'x': '2.2', 'y': '-2.0', 'z': '0.3', 'yaw': '0.0'},
+    'outdoor': {'x': '40.0', 'y': '0.0', 'z': '8.4', 'yaw': '0.0'},
+    'outdoor_arena': {'x': '40.0', 'y': '0.0', 'z': '8.4', 'yaw': '0.0'},
+    'outdoor_rocks': {'x': '40.0', 'y': '0.0', 'z': '8.4', 'yaw': '0.0'},
+    'multi_terrain': {'x': '0.0', 'y': '0.0', 'z': '0.3', 'yaw': '0.0'},
+    # Generated all-rough heightmap world (scripts/gen_rough_terrain.py); pad height 0.88 + 0.3 clearance
+    'rough_terrain': {'x': '0.0', 'y': '0.0', 'z': '1.18', 'yaw': '0.0'},
     # Open aisle near west wall of OpenRobotics Depot (~30×15 m)
     'warehouse_depot': {'x': '-11.0', 'y': '0.0', 'z': '0.3', 'yaw': '0.0'},
     # Living-room floor of Lake House (interior ~z=6.90)
@@ -129,6 +133,9 @@ _WORLD_SPAWN_DEFAULTS = {
     # walls (house.world's generic-default spawn wedged the robot against
     # the 1.2m-wide hallway wall near the bathroom doorway).
     'house': {'x': '-2.5', 'y': '3.0', 'z': '0.3', 'yaw': '0.0'},
+    'house_nolive': {'x': '-2.5', 'y': '3.0', 'z': '0.3', 'yaw': '0.0'},   # house.world minus staircase and living-room furniture
+    'house_nostair': {'x': '-2.5', 'y': '3.0', 'z': '0.3', 'yaw': '0.0'},   # house.world minus the staircase blocking the living-room doorway
+    'house_clear': {'x': '-2.5', 'y': '3.0', 'z': '0.3', 'yaw': '0.0'},   # house.world without furniture
     # Corridor west end — matches office.world's documented spawn zone
     # (x=-9..-3, y=-0.5..+0.5); generic default landed the robot ~0.2m from
     # the north corridor wall (ncw_3).
@@ -296,7 +303,9 @@ def _build_runtime_actions(context, pkg_share: str):
     # the same depth stream for camera_terrain_speed_mask.py (see concepts.md §37).
     enable_rgbd = 'true' if (
         slam_algo in ('vslam', 'multisensor', 'orbslam3') or _common.truthy(enable_rgbd_arg)
-        or terrain_live_camera) else 'false'
+        or terrain_live_camera
+        # visual_reloc:=true runs RTAB-Map localization next to AMCL — needs the depth camera
+        or _common.truthy(LaunchConfiguration('visual_reloc').perform(context))) else 'false'
     enable_camera = 'true' if (
         _common.truthy(enable_camera_arg) or _common.truthy(enable_yolo_arg)
         or slam_algo in ('3d', 'multisensor') or enable_rgbd == 'true') else 'false'
@@ -347,20 +356,48 @@ def _build_runtime_actions(context, pkg_share: str):
     )
 
     bridge_yaml = _common.gz_bridge_yaml(lidar_type, enable_rgbd == 'true')
+    bridge_cfg = os.path.join(pkg_share, 'config', bridge_yaml)
     ros_gz_bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
-        arguments=[
-            '--ros-args',
-            '-p',
-            f'config_file:={os.path.join(pkg_share, "config", bridge_yaml)}',
-        ],
+        arguments=['--ros-args', '-p', f'config_file:={bridge_cfg}'],
     )
+    # ROSNAV_GPS=1: GNSS sensor on the robot (urdf/gps.xacro) -> /gps/fix through a small extra bridge.
+    gps_bridges = []
+    if os.environ.get('ROSNAV_GPS') == '1':
+        gps_bridges.append(Node(package='ros_gz_bridge', executable='parameter_bridge', name='ros_gz_bridge_gps',
+                                arguments=['--ros-args', '-p', f'config_file:={os.path.join(pkg_share, "config", "gz_bridge_gps.yaml")}']))
+    # BRIDGE_SPLIT=1 (experiment): the single-threaded bridge also carries camera images (~15 MB/s) and was seen
+    # delivering /clock, /odom, /imu in bursts with multi-second gaps; put the images in a second bridge process.
+    extra_bridges = []
+    if os.environ.get('BRIDGE_SPLIT') == '1':
+        import tempfile
+        import yaml
+        entries = yaml.safe_load(open(bridge_cfg)) or []
+        heavy = [e for e in entries if 'Image' in e.get('gz_type_name', '') or 'CameraInfo' in e.get('gz_type_name', '')
+                 or e.get('ros_topic_name', '').startswith('/camera')]
+        core = [e for e in entries if e not in heavy]
+        tmp = tempfile.mkdtemp(prefix='rosnav_bridge_split_')
+        for nm, ents in (('core', core), ('images', heavy)):
+            with open(os.path.join(tmp, nm + '.yaml'), 'w') as f:
+                yaml.safe_dump(ents, f)
+        ros_gz_bridge = Node(package='ros_gz_bridge', executable='parameter_bridge', name='ros_gz_bridge_core',
+                             arguments=['--ros-args', '-p', f'config_file:={tmp}/core.yaml'])
+        if heavy:
+            extra_bridges.append(Node(package='ros_gz_bridge', executable='parameter_bridge', name='ros_gz_bridge_images',
+                                      arguments=['--ros-args', '-p', f'config_file:={tmp}/images.yaml']))
+        print(f'[slam_nav] BRIDGE_SPLIT: {len(core)} core topics + {len(heavy)} image topics in separate bridge processes')
 
     # Lidar filter chain: raw Gazebo scan (/scan_raw) in, cleaned /scan out.
     # With lidar_type:=3d, pointcloud_to_scan projects /points → /scan_raw first.
     # Optional scan_quality_gate drops malformed frames before SLAM/Nav2 see them.
     scan_gate = _common.truthy(LaunchConfiguration('scan_gate').perform(context))
+    if scan_gate and lidar_type == '3d':
+        # The 2D scan is a thin slice of the 3D cloud: in open terrain it is legitimately ~100% empty, the
+        # gate rejects it, /scan goes stale and collision_monitor latches STOP ("sensor_dead") -> robot never
+        # moves. 3D SLAM uses /points, not /scan, so the gate protects nothing here.
+        print('[slam_nav] lidar_type=3d: scan_gate disabled (empty slice scans are valid in open terrain)')
+        scan_gate = False
     laser_filter = _common.laser_filter_node(
         pkg_share, filtered_out=('scan_pre' if scan_gate else 'scan'))
     scan_quality_gate = (
@@ -371,7 +408,24 @@ def _build_runtime_actions(context, pkg_share: str):
     localization_filter = LaunchConfiguration('localization_filter').perform(context).strip().lower()
     ekf_filter = _common.localization_filter_node(pkg_share, filter_type=localization_filter)
     points_to_scan = (
-        _common.pointcloud_to_scan_node() if lidar_type == '3d' else None)
+        _common.pointcloud_to_scan_node(
+            # keep the same WORLD-height band (0.30-0.80 m) when the 3D lidar mount height changes; the band is
+            # relative to the sensor, so a taller mount with the old fixed band projected nothing (100% NaN scans)
+            min_height=0.05 + (0.25 - float(lidar3d_height or 0.25)),
+            max_height=0.55 + (0.25 - float(lidar3d_height or 0.25)),
+            ground_segment=_common.truthy(LaunchConfiguration('ground_segment').perform(context)))
+        if lidar_type == '3d' else None)
+    # Optional: /points -> /points_filtered (crop + sensor-frame ground removal + voxel) for RTAB-Map's cloud input only.
+    cloud_filter_on = _common.truthy(LaunchConfiguration('cloud_filter').perform(context))
+    cloud_filter = (
+        _common.cloud_filter_node(ground_z=-(float(lidar3d_height or 0.25) - 0.08))
+        if (cloud_filter_on and lidar_type == '3d') else None)
+    rtab_cloud_topic = '/points_filtered' if cloud_filter is not None else '/points'
+    # Slope-aware /points -> /points_traversability (costmap marks steep slopes/steps, not the ground)
+    terrain_trav = (
+        Node(package='rosnav_bot', executable='terrain_traversability.py', name='terrain_traversability',
+             output='screen', parameters=[{'use_sim_time': True}])
+        if lidar_type == '3d' else None)
 
     # Patch the BT path placeholder before passing params to nav2.
     nav2_params_name = _common.nav2_params_filename(controller, drive_type, ROS_DISTRO)
@@ -379,6 +433,8 @@ def _build_runtime_actions(context, pkg_share: str):
     _params_file = _common.patch_pkg_share_placeholder(_raw_params, pkg_share)
     _params_file = _common.apply_planner(
         _params_file, LaunchConfiguration('planner').perform(context))
+    if not use_slam:
+        _params_file = _common.apply_spawn_initial_pose(_params_file, spawn_x, spawn_y, spawn_yaw)
     _enabled_filters = set()
     if LaunchConfiguration('gs_keepout_mask').perform(context).strip():
         _enabled_filters.add('keepout_filter')
@@ -421,6 +477,8 @@ def _build_runtime_actions(context, pkg_share: str):
                 localization=False,
                 database_path=rtabmap_db,
                 octomap=octomap,
+                variant=LaunchConfiguration('vslam_variant').perform(context),
+                features=LaunchConfiguration('vslam_features').perform(context),
             )],
         )
     elif use_slam and slam_algo == 'multisensor':
@@ -464,7 +522,7 @@ def _build_runtime_actions(context, pkg_share: str):
                         # the image is only used to *recognize* a place, not to localize
                         # against it, so this doesn't need camera-lidar extrinsic calib
                         # beyond the URDF's static TF.
-                        'subscribe_rgb': True,
+                        'subscribe_rgb': False,  # RGB nodes had 0 stored features -> every loop closure rejected; use scan-only ICP closures
                         'subscribe_scan_cloud': True,
                         'approx_sync': True,
                         'wait_for_transform': 0.2,
@@ -475,6 +533,25 @@ def _build_runtime_actions(context, pkg_share: str):
                         # RTAB-Map's internal parameters are strings:
                         'Reg/Strategy': '1',           # ICP registration; RGB is loop-closure-only
                         'Icp/PointToPlane': 'true',
+                        'Icp/PointToPlaneMinComplexity': '0.005',  # default 0.02 disables point-to-plane in room-like scans
+                        'RGBD/ProximityBySpace': 'true',
+                        # Values from introlab/rtabmap_ros rtabmap_examples/lidar3d.launch.py
+                        'Reg/Force3DoF': os.environ.get('RTAB_FORCE3DOF', 'true'),  # planar ground robot; 'false' for slopes
+                        'Icp/Iterations': '10',
+                        'Icp/Epsilon': '0.001',
+                        'Icp/PointToPlaneK': '20',
+                        'Icp/PointToPlaneRadius': '0',
+                        'Icp/MaxTranslation': '3',
+                        'Icp/Strategy': '1',
+                        'Icp/VoxelSize': '0.1',
+                        'Icp/MaxCorrespondenceDistance': '1.0',
+                        'Icp/OutlierRatio': '0.7',
+                        'Icp/CorrespondenceRatio': '0.2',  # min overlap to accept a loop closure
+                        'RGBD/AngularUpdate': '0.05',
+                        'RGBD/LinearUpdate': '0.05',
+                        'RGBD/ProximityMaxGraphDepth': '0',
+                        'Mem/NotLinkedNodesKept': 'false',
+                        'Mem/STMSize': '30',
                         'Grid/Sensor': '0',             # occupancy grid from the lidar cloud, not depth
                         # RTAB-Map still projects a 2D nav_msgs/OccupancyGrid onto /map for
                         # Nav2 either way; Grid/3D only switches whether it *also* assembles
@@ -501,9 +578,7 @@ def _build_runtime_actions(context, pkg_share: str):
                         'Grid/MinClusterSize': '20',
                         'Mem/IncrementalMemory': 'true',  # mapping mode (vs. localization)
                     }],
-                    remappings=[('odom', '/odom'), ('scan_cloud', '/points'),
-                                ('rgb/image', '/camera/image_raw'),
-                                ('rgb/camera_info', '/camera/camera_info')],
+                    remappings=[('odom', '/odom'), ('scan_cloud', rtab_cloud_topic)],
                     arguments=['-d'],  # fresh database each run — no stale map from a previous session
                 )
             ],
@@ -601,6 +676,8 @@ def _build_runtime_actions(context, pkg_share: str):
                     localization=True,
                     database_path=rtabmap_db,
                     octomap=octomap,
+                    variant=LaunchConfiguration('vslam_variant').perform(context),
+                features=LaunchConfiguration('vslam_features').perform(context),
                 ),
             ],
         )
@@ -835,7 +912,9 @@ def _build_runtime_actions(context, pkg_share: str):
     # SlamToolboxPlugin panel and the Navigation 2 panel are docked at once
     # (confirmed via gdb — crash is in RenderWindowImpl::resize during the
     # initial dock-layout resize storm), so no config may combine them.
-    if slam_algo != '2d':
+    if slam_algo == '3d' or lidar_type == '3d':
+        rviz_config_name = 'lidar3d.rviz'  # coloured 3D cloud (/points) + octomap + pose-graph path
+    elif slam_algo != '2d':
         rviz_config_name = 'vslam.rviz'
     elif use_slam:
         rviz_config_name = 'slam_explore.rviz'
@@ -868,7 +947,7 @@ def _build_runtime_actions(context, pkg_share: str):
                     name='collision_monitor',
                     output='screen',
                     parameters=[{
-                        'stop_distance':     0.55,
+                        'stop_distance':     0.42,
                         'slowdown_distance': 0.6,
                         'front_angle_deg':   120.0,
                         'watch_all_around':  False,
@@ -883,6 +962,18 @@ def _build_runtime_actions(context, pkg_share: str):
             ),
         ]
     )
+
+    # The gz bridge only forwards /cmd_vel_safe to the robot (config/gz_bridge.yaml) and the
+    # collision monitor is the only thing publishing it, so safety:=false used to leave a robot
+    # that could not move. Plain relay keeps Nav2 / teleop working without the monitor.
+    safety_bypass_relay = GroupAction(
+        condition=UnlessCondition(safety),
+        actions=[
+            LogInfo(msg='[slam_nav] safety:=false -> relaying /cmd_vel straight to /cmd_vel_safe (no collision monitor)'),
+            Node(package='topic_tools', executable='relay', name='cmd_vel_bypass_relay',
+                 output='screen', arguments=['/cmd_vel', '/cmd_vel_safe'],
+                 parameters=[{'use_sim_time': True}]),
+        ])
 
     # ── Mission Layer: Mission Server ──────────────────────────────────────
     mission_server = TimerAction(
@@ -912,6 +1003,7 @@ def _build_runtime_actions(context, pkg_share: str):
                     'info_gain_weight': LaunchConfiguration('info_gain_weight'),
                     'potential_scale': LaunchConfiguration('potential_scale'),
                     'gain_scale': LaunchConfiguration('gain_scale'),
+                    'min_frontier_size': LaunchConfiguration('min_frontier_size'),
                     'behavior_tree': LaunchConfiguration('explore_bt'),
                     'validate_on_costmap': LaunchConfiguration('validate_on_costmap'),
                     'costmap_max_cost': LaunchConfiguration('costmap_max_cost'),
@@ -1139,6 +1231,38 @@ def _build_runtime_actions(context, pkg_share: str):
     else:
         tf_watchdog = LogInfo(msg='[slam_nav] tf_freeze_watchdog disabled (tf_watchdog:=false).')
 
+    # ── Visual relocalization alongside AMCL (nav-on-map) ───────────────────
+    # RTAB-Map localization (pose only, no TF) vs AMCL; fusion node re-seeds
+    # AMCL via /initialpose when it is lost. See concepts.md visual relocalization.
+    visual_reloc = LaunchConfiguration('visual_reloc').perform(context).strip().lower() in ('true', '1')
+    if visual_reloc and not use_slam and not use_vslam_localize and not use_orbslam3:
+        if not _common.package_available('rtabmap_slam'):
+            print('[slam_nav] visual_reloc needs ros-humble-rtabmap-ros — disabled')
+            visual_reloc = False
+        elif not rtabmap_db or not os.path.isfile(rtabmap_db):
+            print(f'[slam_nav] visual_reloc needs an existing rtabmap_db:=… (got "{rtabmap_db}") — disabled')
+            visual_reloc = False
+    else:
+        visual_reloc = False
+    if visual_reloc:
+        visual_reloc_group = TimerAction(
+            period=10.0,
+            actions=[
+                LogInfo(msg=f'[slam_nav] visual relocalization ENABLED — RTAB-Map pose-only from {rtabmap_db}, AMCL stays map->odom owner'),
+                _common.rtabmap_vslam_node(
+                    localization=True, database_path=rtabmap_db, publish_tf=False),
+                Node(
+                    package='rosnav_bot',
+                    executable='visual_amcl_fusion.py',
+                    name='visual_amcl_fusion',
+                    output='screen',
+                    parameters=[{'use_sim_time': True}],
+                ),
+            ],
+        )
+    else:
+        visual_reloc_group = LogInfo(msg='[slam_nav] visual relocalization disabled (visual_reloc:=false or no rtabmap_db).')
+
     # ── Dynamic obstacles (optional) ───────────────────────────────────────
     dynamic_obstacles = int(LaunchConfiguration('dynamic_obstacles').perform(context).strip())
     dynamic_obstacle_actions = []
@@ -1236,7 +1360,11 @@ def _build_runtime_actions(context, pkg_share: str):
         gazebo_server,
         gazebo_client,
         ros_gz_bridge,
+        *extra_bridges,
+        *gps_bridges,
         *([points_to_scan] if points_to_scan is not None else []),
+        *([terrain_trav] if terrain_trav is not None else []),
+        *([cloud_filter] if cloud_filter is not None else []),
         laser_filter,
         *([scan_quality_gate] if scan_quality_gate is not None else []),
         ekf_filter,
@@ -1250,6 +1378,7 @@ def _build_runtime_actions(context, pkg_share: str):
         gs_speed_group,
         rviz2,
         collision_monitor,
+        safety_bypass_relay,
         mission_server,
         frontier_node,
         yolo_detector,
@@ -1258,6 +1387,7 @@ def _build_runtime_actions(context, pkg_share: str):
         tf_watchdog,
         slam_watchdog,
         posegraph_autosave_group,
+        visual_reloc_group,
     ] + dynamic_obstacle_actions
 
 
@@ -1340,12 +1470,10 @@ def generate_launch_description():
                         'persist path (created if missing). Localization (slam:=false): '
                         'required existing .db.'),
         DeclareLaunchArgument(
-            name='planner', default_value='navfn',
-            description='Nav2 global planner: navfn (A*, default), navfn_dijkstra, navfn_known '
-                        '(A*, no planning through unknown), smac2d, thetastar.'),
-        DeclareLaunchArgument(
-            name='posegraph_autosave', default_value='true',
-            description='slam_algo:=2d: save the slam_toolbox pose graph every 30 s to '
+            name='posegraph_autosave', default_value='false',
+            description='slam_algo:=2d, OFF by default: save the slam_toolbox pose graph every 30 s to '
+                        '(runs with it on froze far more often — see concepts.md; only needed for '
+                        'the slam watchdog restore) '
                         '<map_prefix>_posegraph.{posegraph,data} so a stalled/crashed run can be '
                         'continued (see scripts/slam_posegraph_autosave.py).'),
         DeclareLaunchArgument(
@@ -1372,9 +1500,9 @@ def generate_launch_description():
                         'gftt_brief, gftt_freak, fast_brief, fast_freak, superpoint '
                         '(needs an RTAB-Map built with libtorch; the apt build is not).'),
         DeclareLaunchArgument(
-            name='vslam_variant', default_value='A',
+            name='vslam_variant', default_value='H',
             description='slam_algo:=vslam tuning: A baseline RGB-D, B +planar constraint/faster '
-                        'updates, C +lidar grid & visual+ICP, E B+denoise/range 4, F E+height filter. See scripts/benchmark_vslam_variants.sh'),
+                        'updates, C +lidar grid & visual+ICP, E B+denoise/range 4, F E+height filter, H F with range 6 + looser filters (default: clean grid, full coverage). See scripts/benchmark_vslam_variants.sh'),
         DeclareLaunchArgument(
             name='explore', default_value='false',
             description='Auto-start frontier explorer (only valid when slam:=true)'),
@@ -1387,7 +1515,8 @@ def generate_launch_description():
                         'first runs), explore_lite (m-explore-ros2; previously the default, '
                         'reliable headless on some worlds but quits early near the cafe spawn), '
                         'frontier (frontier_exploration_ros2 MRTSP), or rrt (rrt_explore, '
-                        'multi-robot only). Falls back to builtin if the package is not built.'),
+                        'multi-robot only; rrt.cpp get_ros_parameters() does not support '
+                        'single-robot/no-namespace). Falls back to builtin if a package is not built.'),
         DeclareLaunchArgument(
             name='frontier_detector', default_value='wfd',
             description='Frontier detector: wfd (reachable wavefront), classic, or rrt (sampling-based)'),
@@ -1406,6 +1535,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             name='potential_scale', default_value='3.0',
             description='Utility scorer distance penalty'),
+        DeclareLaunchArgument(
+            name='min_frontier_size', default_value='5',
+            description='explorer:=builtin: ignore frontiers narrower than this many cells (0.05 m each). '
+                        'Default 5 = 0.25 m. A frontier narrower than the robot (~0.5 m = 10+ cells) is a '
+                        'lidar ray leak, not a passable opening; in the house the explorer burned all its '
+                        'goals on such slits. Try 12 (0.6 m).'),
         DeclareLaunchArgument(
             name='gain_scale', default_value='1.0',
             description='Utility scorer frontier-size reward'),
@@ -1488,6 +1623,18 @@ def generate_launch_description():
                         'husky_description) — all scaled to the same footprint/wheelbase, visual '
                         'only, same physics/nav2 tuning. mir100/husky only supported with '
                         'drive_type:=diff.'),
+        DeclareLaunchArgument(
+            name='ground_segment',
+            default_value='false',
+            description='lidar_type:=3d only: build /scan from points sitting above the LOCAL '
+                        'ground (per-cell lowest point) instead of a fixed height band — '
+                        'stops slopes on rough terrain reading as walls.'),
+        DeclareLaunchArgument(
+            name='cloud_filter',
+            default_value='false',
+            description='lidar_type:=3d only: run pointcloud_filter.py (/points -> /points_filtered: crop, '
+                        'sensor-frame ground removal, 10 cm voxel grid) and feed RTAB-Map\'s scan_cloud from it. '
+                        'Costmaps and the 2D scan projection keep using /points. Default off.'),
         DeclareLaunchArgument(
             name='scan_gate',
             default_value='true',

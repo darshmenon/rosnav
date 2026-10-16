@@ -51,6 +51,8 @@ import tf2_ros
 
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import Point
+from visualization_msgs.msg import Marker, MarkerArray
 from nav_msgs.msg import OccupancyGrid
 from nav2_msgs.action import NavigateToPose
 
@@ -122,6 +124,11 @@ class FrontierExplorer(Node):
         self.declare_parameter('min_viable_goal_distance', 0.30)
         self.declare_parameter('map_save_path', '')
         self.declare_parameter('max_frontier_retries', 2)
+        # a 'succeeded' goal with the robot farther than this from the goal is treated as a failure
+        self.declare_parameter('success_max_dist', 1.5)
+        # a 'succeeded' goal must also have moved the robot >= min(this, half the start->goal distance);
+        # 0 disables. Catches success reported while the robot never left (frozen controller TF).
+        self.declare_parameter('min_progress_for_success', 0.3)
         self.declare_parameter('empty_frontier_max_wait', 15)
         self.declare_parameter('max_visited_relax_streak', 8)
         self.declare_parameter('goal_timeout', 60.0)
@@ -205,6 +212,8 @@ class FrontierExplorer(Node):
         self._min_viable_dist = float(self.get_parameter('min_viable_goal_distance').value)
         self._map_save_path = self.get_parameter('map_save_path').value.strip()
         self._max_retries = self.get_parameter('max_frontier_retries').value
+        self._success_max_dist = float(self.get_parameter('success_max_dist').value)
+        self._min_progress = float(self.get_parameter('min_progress_for_success').value)
         self._max_empty_wait = int(self.get_parameter('empty_frontier_max_wait').value)
         self._max_visited_relax_streak = int(
             self.get_parameter('max_visited_relax_streak').value)
@@ -312,6 +321,7 @@ class FrontierExplorer(Node):
         self._current_goal_handle = None
         self._ignore_next_result = False
         self._goal_sent_time: float = 0.0
+        self._goal_start_pos = None
         self._iteration = 0
         self._map_saved = False
         self._logged_init_wait = False
@@ -368,6 +378,11 @@ class FrontierExplorer(Node):
         self.get_logger().info('Waiting for map...')
 
         self.create_timer(poll_period, self._explore)
+        # RViz goal flags: green = current goal, grey = visited, red = failed/suppressed frontier.
+        self.declare_parameter('publish_goal_flags', True)
+        if self.get_parameter('publish_goal_flags').value:
+            self._flag_pub = self.create_publisher(MarkerArray, 'exploration_goal_flags', 1)
+            self.create_timer(1.0, self._publish_goal_flags)
 
     # ------------------------------------------------------------------
     # Map / costmap callbacks
@@ -1339,6 +1354,46 @@ class FrontierExplorer(Node):
     # ------------------------------------------------------------------
     # Nav2 goal
     # ------------------------------------------------------------------
+    def _flag_markers(self, ns: str, pts, rgba, height: float, mid: int):
+        """A flag = thin pole (CYLINDER) + triangular pennant (TRIANGLE_LIST) per point."""
+        frame = self.get_parameter('goal_frame').value
+        out = []
+        for i, (x, y) in enumerate(pts):
+            pole = Marker()
+            pole.header.frame_id = frame
+            pole.ns, pole.id, pole.type, pole.action = ns + '_pole', mid + i, Marker.CYLINDER, Marker.ADD
+            pole.pose.position.x, pole.pose.position.y, pole.pose.position.z = float(x), float(y), height / 2
+            pole.pose.orientation.w = 1.0
+            pole.scale.x = pole.scale.y = 0.04
+            pole.scale.z = height
+            pole.color.r, pole.color.g, pole.color.b, pole.color.a = 0.8, 0.8, 0.8, 1.0
+            flag = Marker()
+            flag.header.frame_id = frame
+            flag.ns, flag.id, flag.type, flag.action = ns + '_flag', mid + i, Marker.TRIANGLE_LIST, Marker.ADD
+            flag.pose.orientation.w = 1.0
+            flag.scale.x = flag.scale.y = flag.scale.z = 1.0
+            flag.color.r, flag.color.g, flag.color.b, flag.color.a = rgba
+            w = height * 0.5
+            for dx, dy, dz in ((0.0, 0.0, height), (0.0, 0.0, height - w * 0.7), (w, 0.0, height - w * 0.35)):
+                flag.points.append(Point(x=float(x) + dx, y=float(y) + dy, z=dz))
+            out += [pole, flag]
+        return out
+
+    def _publish_goal_flags(self):
+        stamp = self.get_clock().now().to_msg()
+        clear = Marker()
+        clear.action = Marker.DELETEALL
+        msg = MarkerArray()
+        msg.markers.append(clear)
+        goal = [self._current_goal] if self._current_goal is not None and self._navigating else []
+        msg.markers += self._flag_markers('goal', goal, (0.1, 0.9, 0.2, 1.0), 1.2, 0)
+        msg.markers += self._flag_markers('visited', self._visited[-200:], (0.6, 0.6, 0.6, 0.8), 0.5, 1000)
+        failed = [tuple(f['point']) for f in self._failed_frontiers][-100:]
+        msg.markers += self._flag_markers('failed', failed, (0.95, 0.15, 0.1, 0.9), 0.8, 2000)
+        for mk in msg.markers:
+            mk.header.stamp = stamp
+        self._flag_pub.publish(msg)
+
     def _send_goal(self, x: float, y: float):
         self._navigating = True
         self._reset_navigation_progress()
@@ -1353,6 +1408,7 @@ class FrontierExplorer(Node):
             goal_msg.behavior_tree = self._bt_xml
 
         self._goal_sent_time = time.monotonic()
+        self._goal_start_pos = self._robot_position()
         future = self._nav_client.send_goal_async(goal_msg)
         future.add_done_callback(self._goal_response_cb)
 
@@ -1442,11 +1498,20 @@ class FrontierExplorer(Node):
         elapsed = time.monotonic() - self._goal_sent_time
         status = future.result().status
         gx, gy = self._current_goal or (0.0, 0.0)
+        pos = self._robot_position() if status == GoalStatus.STATUS_SUCCEEDED else None
+        far = pos is not None and math.hypot(pos[0] - gx, pos[1] - gy) > self._success_max_dist
+        start = self._goal_start_pos
+        moved = math.hypot(pos[0] - start[0], pos[1] - start[1]) if pos and start else None
+        need = min(self._min_progress, 0.5 * math.hypot(gx - start[0], gy - start[1])) if start else 0.0
+        stayed = self._min_progress > 0 and moved is not None and moved < need
         if status == GoalStatus.STATUS_SUCCEEDED:
-            if elapsed < 0.5:
+            if elapsed < 0.5 or far or stayed:
+                # Nav2 can report success without the robot arriving (e.g. controller TF check failing)
                 self.get_logger().warn(
-                    f'Spurious success at ({gx:.2f}, {gy:.2f}) in {elapsed:.2f}s '
-                    f'— not counting as visited.')
+                    f'Spurious success at ({gx:.2f}, {gy:.2f}) in {elapsed:.2f}s'
+                    + (f', robot still {math.hypot(pos[0] - gx, pos[1] - gy):.1f} m away' if far else '')
+                    + (f', robot moved only {moved:.2f} m (< {need:.2f} m)' if stayed else '')
+                    + ' — not counting as visited.')
                 if self._current_goal is not None:
                     self._register_failure(*self._current_goal, self._current_frontier_meta)
             else:

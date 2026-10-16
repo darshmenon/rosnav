@@ -176,6 +176,26 @@ def apply_planner(params_path: str, planner: str) -> str:
     return out_path
 
 
+def apply_spawn_initial_pose(params_path: str, x, y, yaw) -> str:
+    """Point AMCL's static initial pose at the robot's actual spawn pose (the file's
+    default is one fixed point, wrong for every world/spawn that differs from it)."""
+    import yaml
+    with open(params_path) as f:
+        data = yaml.safe_load(f)
+    amcl = data.get('amcl', {}).get('ros__parameters')
+    if amcl is None:
+        return params_path
+    # nav2 AMCL reads the nested `initial_pose.{x,y,z,yaw}` — the flat `initial_pose_x`
+    # keys in nav2_params.yaml are ignored (AMCL then starts at 0,0,0).
+    amcl['set_initial_pose'] = True
+    amcl['initial_pose'] = dict(x=float(x), y=float(y), z=0.0, yaw=float(yaw))
+    out_path = params_path.replace('.yaml', '_spawnpose.yaml')
+    with open(out_path, 'w') as f:
+        yaml.safe_dump(data, f)
+    print(f'[nav2_params] AMCL initial pose -> spawn ({float(x):.2f}, {float(y):.2f}, yaw {float(yaw):.2f})')
+    return out_path
+
+
 _FILTER_PLUGINS = ('keepout_filter', 'speed_filter', 'binary_filter', 'dynobs_keepout_filter')
 
 
@@ -436,8 +456,30 @@ def gz_bridge_yaml(lidar_type: str = '2d', enable_rgbd: bool = False) -> str:
     return 'gz_bridge.yaml'
 
 
+def cloud_filter_node(namespace: str = '', *, voxel_size=0.10, min_range=0.3, max_range=30.0,
+                      z_min=-1.0, z_max=3.0, ground_z=-99.0, min_pts=1):
+    """Optional 3D-lidar preprocessing: /points -> /points_filtered (crop box, ground removal, voxel grid).
+
+    Uses rosnav_bot's numpy pointcloud_filter.py. Heights are in the sensor frame (z=0 at the lidar).
+    Only RTAB-Map's scan_cloud input is switched to /points_filtered (slam_nav.launch.py cloud_filter:=true);
+    costmaps/pointcloud_to_scan keep reading /points.
+    """
+    ns = namespace.strip('/') if namespace else ''
+    prefix = f'/{ns}' if ns else ''
+    return Node(
+        package='rosnav_bot', executable='pointcloud_filter.py', name='pointcloud_filter',
+        namespace=ns, output='screen',
+        parameters=[{
+            'use_sim_time': True,
+            'voxel_size': float(voxel_size), 'min_range': float(min_range), 'max_range': float(max_range),
+            'z_min': float(z_min), 'z_max': float(z_max), 'ground_z': float(ground_z), 'min_pts': int(min_pts),
+        }],
+        remappings=[('cloud_in', f'{prefix}/points'), ('cloud_out', f'{prefix}/points_filtered')],
+    )
+
+
 def pointcloud_to_scan_node(namespace: str = '', *, min_height=0.05, max_height=0.55,
-                            range_max=30.0):
+                            range_max=30.0, ground_segment=False):
     """Project /points (3D lidar) → scan_raw so laser_filters + Nav2 keep /scan.
 
     Prefers ros-humble-pointcloud-to-laserscan when installed; otherwise uses
@@ -456,7 +498,12 @@ def pointcloud_to_scan_node(namespace: str = '', *, min_height=0.05, max_height=
         'scan_time': 0.1,
         'use_inf': True,
     }
+    if ground_segment:
+        params['ground_segment'] = True
+        # needs rosnav_bot's own node (pointcloud_to_laserscan has no such param)
     try:
+        if ground_segment:
+            raise RuntimeError('ground_segment needs rosnav_bot node')
         get_package_share_directory('pointcloud_to_laserscan')
         return Node(
             package='pointcloud_to_laserscan',
@@ -699,6 +746,12 @@ def rtabmap_multisensor_node(*, namespace='', lidar_type='2d', octomap=False,
         'qos_image': 1,
         'qos_camera_info': 1,
         'qos': 1,
+        # scan_quality_gate publishes /scan BEST_EFFORT (2); 10 Hz scan vs 30 Hz camera
+        # needs a wider approx-sync window (see rtabmap_vslam_node variant C).
+        'qos_scan': 2,
+        'approx_sync_max_interval': 0.1,
+        'topic_queue_size': 30,
+        'sync_queue_size': 30,
         'Rtabmap/TimeThr': '700',
         'Reg/Strategy': '1',       # ICP (lidar); RGB for loop-closure cues
         'Icp/PointToPlane': 'true',
@@ -952,8 +1005,14 @@ def multi_robot_rgbd_bridge_args(namespace: str):
     return arguments, remappings
 
 
+# RTAB-Map Vis/FeatureType enum
+_RTAB_FEATURES = {'surf': 0, 'sift': 1, 'orb': 2, 'fast_freak': 3, 'fast_brief': 4,
+                  'gftt_freak': 5, 'gftt_brief': 6, 'gftt_orb': 7, 'superpoint': 8}
+
+
 def rtabmap_vslam_node(*, namespace='', localization=False, database_path='',
-                       wait_for_transform=0.2, octomap=False):
+                       wait_for_transform=0.2, octomap=False, publish_tf=True,
+                       variant='A', features='default'):
     """RTAB-Map RGB-D visual SLAM / localization (slam_algo:=vslam).
 
     Uses wheel odom TF (no visual odometry node) so ekf_filter_node (fusing
@@ -965,6 +1024,7 @@ def rtabmap_vslam_node(*, namespace='', localization=False, database_path='',
     prefix = f'/{ns}' if ns else ''
     frame_prefix = f'{ns}/' if ns else ''
     database_path = os.path.expanduser(database_path) if database_path else ''
+    variant = (variant or 'A').strip().upper()
 
     if localization and not database_path:
         raise ValueError('rtabmap_vslam localization requires database_path')
@@ -987,6 +1047,10 @@ def rtabmap_vslam_node(*, namespace='', localization=False, database_path='',
         # Without a time budget, RTAB-Map's per-cycle cost grows unbounded as
         # working memory grows (observed: 0.04s -> 2.2s over ~45 nodes),
         # falling behind real time and smearing the map->odom correction.
+        # Without this RTAB-Map republishes /map only when it adds a node, i.e. only when the robot moves; the
+        # frontier explorer needs map updates to pick goals, so a stationary robot deadlocks (maze: map_msgs=1
+        # for 25 min, 0 goals). Keep updating the map while stationary.
+        'map_always_update': True,
         'Rtabmap/TimeThr': '700',
         'Reg/Strategy': '0',       # visual (RGB-D) registration
         'Grid/Sensor': '1',        # occupancy from depth camera
@@ -994,9 +1058,80 @@ def rtabmap_vslam_node(*, namespace='', localization=False, database_path='',
         'Grid/CellSize': '0.05',
         'Grid/RangeMax': '8.0',
         'Grid/RayTracing': 'true',
+        # False = pose-only (visual_reloc alongside AMCL): AMCL stays the map->odom owner.
+        'publish_tf': bool(publish_tf),
+        # map->odom publish period (s). 0.05 = 20 Hz default; RTAB_TF_DELAY env lets benchmarks test a slower rate
+        'tf_delay': float(os.environ.get('RTAB_TF_DELAY', '0.05')),
         'Mem/IncrementalMemory': 'false' if localization else 'true',
         'Mem/InitWMWithAllNodes': 'true' if localization else 'false',
     }
+    # Tuning variants (benchmark_vslam_variants.sh compares them):
+    #   A  baseline RGB-D (depth-camera grid)
+    #   B  A + planar-robot constraint (no z/pitch/roll drift warping the map)
+    #      + denser node creation / faster detection so the grid grows while moving
+    #   C  B + lidar scan grid and visual+ICP registration (what the 3d/multisensor
+    #      modes do) — fixes the tiny narrow-FOV depth-only map
+    if variant in ('B', 'C'):
+        params.update({
+            'Reg/Force3DoF': 'true',
+            'Optimizer/Slam2D': 'true',
+            'Rtabmap/DetectionRate': '2',
+            'RGBD/LinearUpdate': '0.05',
+            'RGBD/AngularUpdate': '0.05',
+        })
+    # E/F: B + fixes for the depth-grid scribble near walls (camera is pitched 5 deg down, so
+    # the default normals segmentation reads far floor as obstacle; depth noise grows with range)
+    #   E  B + denoise (speckle/cluster filters) + shorter range, keep normals segmentation
+    #   F  E + rtabmap_demos height-filter recipe (no normals segmentation)
+    if variant in ('E', 'F', 'H'):
+        params.update({
+            'Reg/Force3DoF': 'true',
+            'Optimizer/Slam2D': 'true',
+            'Rtabmap/DetectionRate': '2',
+            'RGBD/LinearUpdate': '0.05',
+            'RGBD/AngularUpdate': '0.05',
+            'Grid/RangeMax': '4.0',
+            'Grid/NoiseFilteringRadius': '0.1',
+            'Grid/NoiseFilteringMinNeighbors': '4',
+            'Grid/MinClusterSize': '20',
+        })
+    if variant in ('F', 'H'):
+        params.update({
+            'Grid/NormalsSegmentation': 'false',
+            'Grid/MaxGroundHeight': '0.08',
+            'Grid/MaxObstacleHeight': '1.0',
+        })
+    if variant == 'H':   # F with longer range + looser cluster filter (F mapped only half the cafe)
+        params.update({
+            'Grid/RangeMax': '6.0',
+            'Grid/NoiseFilteringMinNeighbors': '3',
+            'Grid/MinClusterSize': '10',
+        })
+    if variant == 'C':
+        params.update({
+            'subscribe_scan': True,
+            # scan_quality_gate publishes /scan BEST_EFFORT; RTAB-Map defaults to RELIABLE and
+            # silently receives nothing -> force best-effort (2).
+            'qos_scan': 2,
+            # 10 Hz scan vs 30 Hz camera never lined up under the default 10 ms
+            # approx-sync window ("Did not receive data since 5 seconds").
+            'approx_sync_max_interval': 0.1,
+            'topic_queue_size': 30,
+            'sync_queue_size': 30,
+            'Reg/Strategy': '2',        # visual + ICP refinement
+            'Grid/Sensor': '0',         # occupancy from the 2D lidar
+            'Grid/RangeMax': '12.0',
+            'Icp/VoxelSize': '0.05',
+            'Icp/MaxCorrespondenceDistance': '0.2',
+        })
+    feat = (features or 'default').strip().lower()
+    if feat != 'default':
+        if feat not in _RTAB_FEATURES:
+            raise ValueError(f"vslam_features:={feat} unknown; choose from {sorted(_RTAB_FEATURES)}")
+        params['Vis/FeatureType'] = str(_RTAB_FEATURES[feat])
+        params['Vis/MaxFeatures'] = '1000'
+    print(f'[rtabmap_vslam_node] features={feat} variant={variant} Reg/Strategy={params["Reg/Strategy"]} '
+          f'Grid/Sensor={params["Grid/Sensor"]} Force3DoF={params.get("Reg/Force3DoF", "false")}')
     if database_path:
         params['database_path'] = database_path
 
@@ -1007,6 +1142,7 @@ def rtabmap_vslam_node(*, namespace='', localization=False, database_path='',
          f'{prefix}/camera/camera_info' if ns else '/camera/camera_info'),
         ('depth/image',
          f'{prefix}/camera/depth/image_raw' if ns else '/camera/depth/image_raw'),
+        ('scan', f'{prefix}/scan' if ns else '/scan'),
     ]
     if ns:
         remappings.extend([
@@ -1015,6 +1151,9 @@ def rtabmap_vslam_node(*, namespace='', localization=False, database_path='',
             ('map', f'/{ns}/map'),
             ('/map', f'/{ns}/map'),
         ])
+    elif not publish_tf:
+        # Pose-only mode runs next to map_server — keep RTAB-Map's grid off /map.
+        remappings.extend([('map', '/rtabmap/map'), ('/map', '/rtabmap/map')])
 
     # Fresh DB each mapping run when no persist path; otherwise open/create
     # database_path. Localization never uses -d (would wipe the map).

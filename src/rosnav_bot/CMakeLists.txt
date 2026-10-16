@@ -33,6 +33,8 @@ install(
 install(
   PROGRAMS
     scripts/navigation.py
+    scripts/orb_pose_to_amcl.py
+    scripts/kidnap_eval.py
     scripts/pid_controller.py
     scripts/llm_nav.py
     scripts/bt_server.py
@@ -41,6 +43,8 @@ install(
     scripts/frontier_explorer.py
     scripts/check_odometry.py
     scripts/reset_pose.py
+    scripts/visual_amcl_fusion.py
+    scripts/summarize_vslam_variants.py
     scripts/odom_tf_broadcaster.py
     scripts/tf_static_relay.py
     scripts/tf_map_relay.py
@@ -86,14 +90,16 @@ install(
     scripts/dynamic_obstacle_predictor.py
     scripts/pointcloud_to_scan.py
     scripts/scan_quality_gate.py
+    scripts/terrain_traversability.py
+    scripts/pointcloud_filter.py
     scripts/slam_accuracy_monitor.py
     scripts/slam_debug_monitor.py
     scripts/tf_freeze_watchdog.py
     scripts/slam_stall_watchdog.py
     scripts/slam_posegraph_autosave.py
+    scripts/slam_bootstrap_motion.py
     scripts/costmap_ghost_clear.py
     scripts/orb_slam3_occupancy_bridge.py
-    scripts/slam_bootstrap_motion.py
     scripts/benchmark.py
     scripts/gen_terrain_speed_mask.py
     scripts/camera_terrain_speed_mask.py

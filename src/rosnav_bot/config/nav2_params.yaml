@@ -103,14 +103,16 @@ controller_server:
     FollowPath:
       plugin: "dwb_core::DWBLocalPlanner"
       debug_trajectory_details: false
+      # Floors: on the outdoor heightmap the drive stalls below ~0.08 m/s / ~0.3 rad/s (wheels spin, robot doesn't
+      # move), so DWB's near-zero samples left the robot spinning in place until "Failed to make progress".
       min_vel_x: 0.0
       min_vel_y: 0.0
       max_vel_x: 0.15
       max_vel_y: 0.0
       max_vel_theta: 0.4
-      min_speed_xy: 0.0
+      min_speed_xy: 0.08
       max_speed_xy: 0.15
-      min_speed_theta: 0.0
+      min_speed_theta: 0.3
       acc_lim_x: 0.5
       acc_lim_y: 0.0
       acc_lim_theta: 0.6
@@ -226,7 +228,7 @@ local_costmap:
           obstacle_max_range: 2.5
           obstacle_min_range: 0.0
         points:
-          topic: /points
+          topic: /points_traversability
           clearing: True
           marking: True
           data_type: "PointCloud2"
@@ -311,7 +313,7 @@ global_costmap:
           obstacle_max_range: 2.5
           obstacle_min_range: 0.0
         points:
-          topic: /points
+          topic: /points_traversability
           clearing: True
           marking: True
           data_type: "PointCloud2"
@@ -337,8 +339,8 @@ global_costmap:
         map_subscribe_transient_local: True
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.5
+        cost_scaling_factor: 5.0
+        inflation_radius: 0.40
       always_send_full_costmap: True
 
 map_server:

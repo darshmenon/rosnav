@@ -564,6 +564,7 @@ ros2 launch rosnav_bot slam_nav.launch.py world_name:=maze explore:=true frontie
 **`rrt` detector** — genuinely different discovery mechanism from `wfd`/`classic` (both of which flood-fill the full occupancy grid). Grows a random tree (RRT) through known-free space from the robot's pose; any sampled step that lands on a frontier cell becomes a cluster seed instead of being extended further. Seeds are flood-filled into full clusters using the exact same code as `wfd`/`classic`, so scoring, goal-safety pullback, and BT/Nav2 handoff are unchanged — only *how frontiers are found* differs. Cheaper than `wfd` on large maps (no full-grid connected-component scan), at the cost of being probabilistic — it can miss a frontier on a given poll cycle and pick it up on the next. Tunable via `rrt_iterations` (default 300) and `rrt_step_size` (default 0.5m). Verified in sim on `maze` (`slam_nav.launch.py`): drove multiple successful goal hops and grew the map from ~1.1k to ~38k free cells with no stalls.
 
 Recent reliability fixes in `frontier_explorer.py`:
+- Spurious-success guard: a Nav2 "succeeded" goal is not counted as visited (it goes down the failed/blacklist path) if it returned in <0.5 s, the robot is still > `success_max_dist` (1.5 m) from the goal, or the robot moved less than `min(min_progress_for_success, 0.5 × start→goal distance)` (default 0.3 m; 0 disables). Catches the frozen-controller-TF case where `NavigateToPose` reports "Reached the goal!" while the robot never left.
 - Removed SciPy runtime dependency (frontier adjacency + clustering implemented with NumPy + BFS).
 - Added configurable `base_frame` and `goal_frame` TF lookup (`map -> base_link` by default).
 - Added `min_goal_distance` filter so very near centroids are skipped (prevents no-op goals).
@@ -1049,6 +1050,8 @@ ros2 run rosnav_bot scan_quality_gate.py --ros-args -p use_sim_time:=true
 ```
 
 ---
+**Optional cloud filter (`cloud_filter:=true`, 3D lidar, default off).** Runs `scripts/pointcloud_filter.py` (numpy): crop box, sensor-frame ground removal (`ground_z` = -(lidar3d_height - 0.08)), 10 cm voxel grid, `/points` -> `/points_filtered`. Only RTAB-Map's `scan_cloud` (`slam_algo:=3d`) reads the filtered cloud; costmaps and the 2D scan projection keep `/points`. Launch-checked only (arg parses, py_compile); not yet compared against the unfiltered map quality/CPU.
+
 
 ## 13. Adding a Camera Sensor (RGB / Depth)
 
@@ -2647,6 +2650,8 @@ All three produce accurate maps when they run (RPP 3.6-4.1 cm, MPPI 2.4 cm). MPP
 in none of the house runs. Best default for exploration so far: RPP + `frontier`; MPPI + `builtin` is the
 accurate-but-slow alternative.
 
+**TF freeze fix (2026-10-15):** slam_toolbox `transform_publish_period` 0.02 -> 0.1 in `mapper_params_online_async.yaml`. Same house world, one sim alone: 0.02 gave 9081 "Transform data too old" errors and the robot never left the start; 0.1 gave 0 errors and the robot explored. Inert costmap filter plugins are now also stripped in `multi_robot.launch.py`.
+
 ## 40. Overnight benchmark results (2026-10-13/14)
 
 One headless run per cell, one sim at a time; full tables, thumbnails and charts in `local/overnight/REPORT.md` (gitignored).
@@ -2668,3 +2673,25 @@ Bugs found by these runs: multi_terrain spawn faced the ramp (collision stop) an
 ## 41. RTAB-Map cafe map from the `.db` (2026-10-14)
 
 `slam_algo:=vslam` run on cafe → `~/.ros/rtabmap_cafe.db` (231 nodes, 20 loop-closure links). The 2D map needs no live run: the db's `Admin.opt_map` is a zlib'd int8 grid (386×211, origin `opt_map_x_min/y_min`, res `opt_map_resolution`; `<0` unknown, `>=50` occupied) → `maps/map_cafe_rtab.*`. It covers only the 86 nodes in working memory at shutdown. Versus slam_toolbox `map_cafe`: 111 vs 59 m² free, more speckle (248 vs 77 isolated ≤3-cell blobs); wall accuracy vs ground truth not yet measured. Coloured cloud: `rtabmap-export --cloud --voxel 0.02 --max_range 6 --output cafe cafe.db` (682k points).
+
+**`vslam_variant:=H` (2026-10-14, now the default).** The depth-camera grid of variant A (normals segmentation, 8 m range, no denoise) leaves streaks of floor-grazing obstacle points. Headless benchmark, `scripts/benchmark_vslam_variants.sh`:
+
+| world | variant | free m² | isolated specks | pose RMSE |
+|---|---|---|---|---|
+| cafe | A | 107 | 178 | 0.18 m |
+| cafe | F (range 4) | 56 | 33 | 0.024 m |
+| cafe | H | 104 | 2 | 0.019 m |
+| maze | A | 117 | 365 | 0.007 m |
+| maze | H | 80 | 1 | 0.015 m |
+
+H = F (height filter, no normals segmentation) with `Grid/RangeMax` 6, `NoiseFilteringMinNeighbors` 3, `MinClusterSize` 10. C (lidar grid) leaks through the cafe's glass windows (467 m² free, 3.8 m RMSE). Caveat: single runs; Nav2 goals were 0 on maze (TF freeze, §39), so maze coverage is not a fair comparison.
+
+## 42. Outdoor terrain navigation (2026-10-16)
+
+`outdoor.world` is a Fuel heightmap bowl (gentle, max ~6.8 deg), driven with `lidar_type:=3d slam_algo:=3d`. What had to change for the robot to move at all:
+
+- **Slope layer** (`scripts/terrain_traversability.py`): a 2D obstacle layer marks anything above `min_obstacle_height`, so on a slope the ground itself became lethal (rings of ground hits). The node levels `/points` with the IMU roll/pitch, bins it into a 0.25 m height grid and marks a cell blocked if the neighbour slope is > 25 deg or the in-cell height spread is > 0.25 m (the uphill cell is the wall). It publishes `/points_traversability` in `base_link`: blocked points at z 0.3 (marked), ground points flattened to z 0 (raytrace clearing only). The costmap `points` source reads that topic. Untested on a steep slope.
+- **Wheels**: cylinder wheel collisions against the heightmap gave almost no traction (diff and mecanum); `robot_core.xacro` now uses sphere collisions. Even then the drive stalls below ~0.08 m/s / 0.3 rad/s, so DWB has `min_speed_xy: 0.08`, `min_speed_theta: 0.3`.
+- **Scan gate**: the 2D scan is a thin slice of the 3D cloud and is legitimately ~100% NaN in open ground; `scan_quality_gate` rejected it, `/scan` went stale and `collision_monitor` latched STOP (`sensor_dead`). The gate is now disabled for `lidar_type:=3d` (3D SLAM uses `/points`).
+- **Maps**: an open bowl has nothing to map (~99.7% free); RTAB `/cloud_map` came out flat (z = 0) and the RTAB grid marks slope ground as obstacles. Details and open items: `docs/TODO.md`, "Outdoor navigation session".
+- The controller TF freeze (§39) still appears here when another sim shares the machine; run one sim at a time.
