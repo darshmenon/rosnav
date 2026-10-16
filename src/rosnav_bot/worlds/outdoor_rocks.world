@@ -1,0 +1,165 @@
+<?xml version="1.0" ?>
+<!--
+  Outdoor world with a real heightmap terrain (Fuel-hosted "Heightmap Bowl"
+  by chapulina, auto-downloaded and cached by gz-sim at runtime).
+
+  KNOWN RISK: Ogre2's heightmap-terrain shader has been observed to fail to
+  compile alongside a GPU-based sensor (camera, gpu_lidar) under this kind
+  of headless/software-EGL rendering fallback. If Gazebo crashes or the
+  terrain fails to render on launch, fall back to a primitive-based outdoor
+  world (ground plane + simple prop shapes) instead of a real heightmap.
+-->
+<sdf version="1.6">
+  <world name="outdoor">
+
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system"
+            name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system"
+            name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system"
+            name="ignition::gazebo::systems::SceneBroadcaster"/>
+    <plugin filename="ignition-gazebo-sensors-system"
+            name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="ignition-gazebo-navsat-system"
+            name="ignition::gazebo::systems::NavSat"/>
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <world_frame_orientation>ENU</world_frame_orientation>
+      <latitude_deg>47.3977</latitude_deg>
+      <longitude_deg>8.5456</longitude_deg>
+      <elevation>0</elevation>
+      <heading_deg>0</heading_deg>
+    </spherical_coordinates>
+
+    <plugin filename="ignition-gazebo-contact-system"
+            name="ignition::gazebo::systems::Contact"/>
+    <plugin filename="ignition-gazebo-imu-system"
+            name="ignition::gazebo::systems::Imu"/>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <include>
+      <uri>
+        https://fuel.gazebosim.org/1.0/chapulina/models/Heightmap Bowl
+      </uri>
+    </include>
+
+    <!-- Open bowl with scattered rocks/crates/barrels/trunks, no fence -->
+    <model name='rock_a'><static>true</static><pose>37.00 2.50 8.70 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><box><size>1.0 1.0 1.1</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>1.0 1.0 1.1</size></box></geometry><material><ambient>0.45 0.42 0.4 1</ambient><diffuse>0.45 0.42 0.4 1</diffuse></material></visual></link></model>
+    <model name='rock_b'><static>true</static><pose>43.00 -2.00 8.70 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><box><size>1.4 0.8 1.1</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>1.4 0.8 1.1</size></box></geometry><material><ambient>0.45 0.42 0.4 1</ambient><diffuse>0.45 0.42 0.4 1</diffuse></material></visual></link></model>
+    <model name='rock_c'><static>true</static><pose>40.50 -3.50 8.70 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><cylinder><radius>0.6</radius><length>1.1</length></cylinder></geometry></collision>
+        <visual name='v'><geometry><cylinder><radius>0.6</radius><length>1.1</length></cylinder></geometry><material><ambient>0.4 0.4 0.42 1</ambient><diffuse>0.4 0.4 0.42 1</diffuse></material></visual></link></model>
+    <model name='rock_d'><static>true</static><pose>42.50 3.00 8.70 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><cylinder><radius>0.5</radius><length>1.1</length></cylinder></geometry></collision>
+        <visual name='v'><geometry><cylinder><radius>0.5</radius><length>1.1</length></cylinder></geometry><material><ambient>0.4 0.4 0.42 1</ambient><diffuse>0.4 0.4 0.42 1</diffuse></material></visual></link></model>
+    <model name='crate_a'><static>true</static><pose>36.00 -3.00 8.70 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><box><size>0.7 0.7 0.7</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>0.7 0.7 0.7</size></box></geometry><material><ambient>0.6 0.4 0.2 1</ambient><diffuse>0.6 0.4 0.2 1</diffuse></material></visual></link></model>
+    <model name='barrel_a'><static>true</static><pose>44.00 4.00 8.70 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><cylinder><radius>0.3</radius><length>0.9</length></cylinder></geometry></collision>
+        <visual name='v'><geometry><cylinder><radius>0.3</radius><length>0.9</length></cylinder></geometry><material><ambient>0.1 0.3 0.7 1</ambient><diffuse>0.1 0.3 0.7 1</diffuse></material></visual></link></model>
+    <model name='barrel_c'><static>true</static><pose>35.50 4.30 8.70 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><cylinder><radius>0.3</radius><length>0.9</length></cylinder></geometry></collision>
+        <visual name='v'><geometry><cylinder><radius>0.3</radius><length>0.9</length></cylinder></geometry><material><ambient>0.7 0.1 0.1 1</ambient><diffuse>0.7 0.1 0.1 1</diffuse></material></visual></link></model>
+    <model name='trunk_a'><static>true</static><pose>38.50 -1.80 9.00 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><cylinder><radius>0.18</radius><length>2.0</length></cylinder></geometry></collision>
+        <visual name='v'><geometry><cylinder><radius>0.18</radius><length>2.0</length></cylinder></geometry><material><ambient>0.35 0.22 0.1 1</ambient><diffuse>0.35 0.22 0.1 1</diffuse></material></visual></link></model>
+    <model name='trunk_b'><static>true</static><pose>41.80 1.60 9.00 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><cylinder><radius>0.18</radius><length>2.0</length></cylinder></geometry></collision>
+        <visual name='v'><geometry><cylinder><radius>0.18</radius><length>2.0</length></cylinder></geometry><material><ambient>0.35 0.22 0.1 1</ambient><diffuse>0.35 0.22 0.1 1</diffuse></material></visual></link></model>
+    <model name='rock_e'><static>true</static><pose>45.00 -1.00 8.70 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><box><size>1.2 1.2 1.1</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>1.2 1.2 1.1</size></box></geometry><material><ambient>0.45 0.42 0.4 1</ambient><diffuse>0.45 0.42 0.4 1</diffuse></material></visual></link></model>
+    <model name='rock_f'><static>true</static><pose>34.00 -1.00 8.70 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><cylinder><radius>0.7</radius><length>1.1</length></cylinder></geometry></collision>
+        <visual name='v'><geometry><cylinder><radius>0.7</radius><length>1.1</length></cylinder></geometry><material><ambient>0.4 0.4 0.42 1</ambient><diffuse>0.4 0.4 0.42 1</diffuse></material></visual></link></model>
+    <model name='rock_g'><static>true</static><pose>41.00 6.00 8.70 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><box><size>1.0 1.6 1.1</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>1.0 1.6 1.1</size></box></geometry><material><ambient>0.45 0.42 0.4 1</ambient><diffuse>0.45 0.42 0.4 1</diffuse></material></visual></link></model>
+
+    <!-- Extra obstacles (2026-10-16) -->
+    <model name='rock_h'><static>true</static><pose>33.50 -5.00 8.70 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><box><size>1.3 0.9 1.1</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>1.3 0.9 1.1</size></box></geometry><material><ambient>0.45 0.42 0.4 1</ambient><diffuse>0.45 0.42 0.4 1</diffuse></material></visual></link></model>
+    <model name='rock_i'><static>true</static><pose>45.50 5.50 8.70 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><cylinder><radius>0.8</radius><length>1.2</length></cylinder></geometry></collision>
+        <visual name='v'><geometry><cylinder><radius>0.8</radius><length>1.2</length></cylinder></geometry><material><ambient>0.4 0.4 0.42 1</ambient><diffuse>0.4 0.4 0.42 1</diffuse></material></visual></link></model>
+    <model name='rock_j'><static>true</static><pose>38.00 -6.50 8.70 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><box><size>0.9 1.5 1.0</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>0.9 1.5 1.0</size></box></geometry><material><ambient>0.45 0.42 0.4 1</ambient><diffuse>0.45 0.42 0.4 1</diffuse></material></visual></link></model>
+    <model name='rock_k'><static>true</static><pose>46.50 -5.00 8.70 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><cylinder><radius>0.55</radius><length>1.0</length></cylinder></geometry></collision>
+        <visual name='v'><geometry><cylinder><radius>0.55</radius><length>1.0</length></cylinder></geometry><material><ambient>0.4 0.4 0.42 1</ambient><diffuse>0.4 0.4 0.42 1</diffuse></material></visual></link></model>
+    <model name='crate_b'><static>true</static><pose>34.00 3.00 8.70 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><box><size>0.8 0.8 0.8</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>0.8 0.8 0.8</size></box></geometry><material><ambient>0.6 0.4 0.2 1</ambient><diffuse>0.6 0.4 0.2 1</diffuse></material></visual></link></model>
+    <model name='crate_c'><static>true</static><pose>34.60 3.70 8.70 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><box><size>0.8 0.8 0.8</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>0.8 0.8 0.8</size></box></geometry><material><ambient>0.6 0.4 0.2 1</ambient><diffuse>0.6 0.4 0.2 1</diffuse></material></visual></link></model>
+    <model name='crate_d'><static>true</static><pose>43.50 -6.00 8.70 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><box><size>0.7 0.7 0.7</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>0.7 0.7 0.7</size></box></geometry><material><ambient>0.6 0.4 0.2 1</ambient><diffuse>0.6 0.4 0.2 1</diffuse></material></visual></link></model>
+    <model name='barrel_d'><static>true</static><pose>37.00 6.00 8.70 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><cylinder><radius>0.3</radius><length>0.9</length></cylinder></geometry></collision>
+        <visual name='v'><geometry><cylinder><radius>0.3</radius><length>0.9</length></cylinder></geometry><material><ambient>0.1 0.3 0.7 1</ambient><diffuse>0.1 0.3 0.7 1</diffuse></material></visual></link></model>
+    <model name='barrel_e'><static>true</static><pose>37.60 6.50 8.70 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><cylinder><radius>0.3</radius><length>0.9</length></cylinder></geometry></collision>
+        <visual name='v'><geometry><cylinder><radius>0.3</radius><length>0.9</length></cylinder></geometry><material><ambient>0.7 0.1 0.1 1</ambient><diffuse>0.7 0.1 0.1 1</diffuse></material></visual></link></model>
+    <model name='barrel_f'><static>true</static><pose>47.00 1.00 8.70 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><cylinder><radius>0.3</radius><length>0.9</length></cylinder></geometry></collision>
+        <visual name='v'><geometry><cylinder><radius>0.3</radius><length>0.9</length></cylinder></geometry><material><ambient>0.1 0.3 0.7 1</ambient><diffuse>0.1 0.3 0.7 1</diffuse></material></visual></link></model>
+    <model name='trunk_d'><static>true</static><pose>33.20 0.50 9.00 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><cylinder><radius>0.25</radius><length>2.2</length></cylinder></geometry></collision>
+        <visual name='v'><geometry><cylinder><radius>0.25</radius><length>2.2</length></cylinder></geometry><material><ambient>0.35 0.22 0.1 1</ambient><diffuse>0.35 0.22 0.1 1</diffuse></material></visual></link></model>
+    <model name='trunk_e'><static>true</static><pose>44.20 1.50 9.00 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><cylinder><radius>0.2</radius><length>2.0</length></cylinder></geometry></collision>
+        <visual name='v'><geometry><cylinder><radius>0.2</radius><length>2.0</length></cylinder></geometry><material><ambient>0.35 0.22 0.1 1</ambient><diffuse>0.35 0.22 0.1 1</diffuse></material></visual></link></model>
+    <model name='trunk_f'><static>true</static><pose>36.00 -5.50 9.00 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><cylinder><radius>0.2</radius><length>2.0</length></cylinder></geometry></collision>
+        <visual name='v'><geometry><cylinder><radius>0.2</radius><length>2.0</length></cylinder></geometry><material><ambient>0.35 0.22 0.1 1</ambient><diffuse>0.35 0.22 0.1 1</diffuse></material></visual></link></model>
+    <model name='wall_a'><static>true</static><pose>42.00 -4.50 8.90 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><box><size>2.8 0.15 1.2</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>2.8 0.15 1.2</size></box></geometry><material><ambient>0.7 0.7 0.7 1</ambient><diffuse>0.7 0.7 0.7 1</diffuse></material></visual></link></model>
+    <model name='wall_b'><static>true</static><pose>35.00 -1.50 8.90 0 0 0</pose>
+      <link name='link'><collision name='c'><geometry><box><size>0.15 3.0 1.2</size></box></geometry></collision>
+        <visual name='v'><geometry><box><size>0.15 3.0 1.2</size></box></geometry><material><ambient>0.7 0.7 0.7 1</ambient><diffuse>0.7 0.7 0.7 1</diffuse></material></visual></link></model>
+
+    <!-- Overview camera (generic placement — see hospital.world's
+         world_monitor_cam for the hand-tuned original). -->
+    <model name='world_monitor_cam'>
+      <static>true</static>
+      <pose>48.0 8.0 15.0 0 0.55 -2.356</pose>
+      <link name='link'>
+        <sensor name='monitor_camera' type='camera'>
+          <always_on>true</always_on>
+          <update_rate>10</update_rate>
+          <topic>world_monitor/image_raw</topic>
+          <camera>
+            <horizontal_fov>1.3</horizontal_fov>
+            <image><width>960</width><height>540</height><format>R8G8B8</format></image>
+            <clip><near>0.05</near><far>80.0</far></clip>
+          </camera>
+        </sensor>
+      </link>
+    </model>
+
+  </world>
+</sdf>

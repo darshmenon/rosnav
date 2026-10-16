@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<robot name="rosnav_bot" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+    <xacro:include filename="robot_core_outdoor.xacro" />
+
+    <xacro:include filename="gazebo_control_outdoor.xacro" />
+
+    <xacro:arg name="lidar_type" default="2d"/>
+    <xacro:if value="${'$(arg lidar_type)' == '3d'}">
+        <xacro:include filename="lidar3d.xacro" />
+    </xacro:if>
+    <xacro:unless value="${'$(arg lidar_type)' == '3d'}">
+        <xacro:include filename="lidar.xacro" />
+    </xacro:unless>
+
+    <xacro:include filename="imu.xacro" />
+    <xacro:if value="${'$(optenv ROSNAV_GPS 0)' == '1'}">
+        <xacro:include filename="gps.xacro" />
+    </xacro:if>
+
+    <xacro:arg name="enable_camera" default="false"/>
+    <xacro:arg name="enable_rgbd" default="false"/>
+    <!-- RGBD replaces RGB so YOLO/ArUco and VSLAM share one camera_link. -->
+    <xacro:if value="${'$(arg enable_rgbd)' == 'true'}">
+        <xacro:include filename="rgbd_camera.xacro" />
+    </xacro:if>
+    <xacro:unless value="${'$(arg enable_rgbd)' == 'true'}">
+        <xacro:if value="${'$(arg enable_camera)' == 'true'}">
+            <xacro:include filename="camera.xacro" />
+        </xacro:if>
+    </xacro:unless>
+
+</robot>
