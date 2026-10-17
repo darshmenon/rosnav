@@ -1,0 +1,476 @@
+<?xml version='1.0' encoding='utf-8'?>
+<sdf version="1.8">
+  <world name="house">
+
+    <physics name="4ms" type="ignored">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system" name="ignition::gazebo::systems::Physics" />
+    <plugin filename="ignition-gazebo-user-commands-system" name="ignition::gazebo::systems::UserCommands" />
+    <plugin filename="ignition-gazebo-scene-broadcaster-system" name="ignition::gazebo::systems::SceneBroadcaster" />
+    <plugin filename="ignition-gazebo-sensors-system" name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="ignition-gazebo-contact-system" name="ignition::gazebo::systems::Contact" />
+    <plugin filename="ignition-gazebo-imu-system" name="ignition::gazebo::systems::Imu" />
+
+    <light name="sun" type="directional">
+      <pose>0 0 12 0 0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>-0.3 0.1 -0.9</direction>
+      <diffuse>1.0 0.97 0.90 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+    </light>
+    <light name="ceiling_living" type="point">
+      <pose>-4 3 3 0 0 0</pose>
+      <diffuse>0.9 0.85 0.75 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>12</range><linear>0.08</linear></attenuation>
+    </light>
+    <light name="ceiling_kitchen" type="point">
+      <pose>4 4 3 0 0 0</pose>
+      <diffuse>0.9 0.9 0.85 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>10</range><linear>0.1</linear></attenuation>
+    </light>
+    <light name="ceiling_hall" type="point">
+      <pose>0 0.5 3 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>12</range><linear>0.1</linear></attenuation>
+    </light>
+    <light name="ceiling_garage" type="point">
+      <pose>0 -8.5 3 0 0 0</pose>
+      <diffuse>0.75 0.75 0.78 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>16</range><linear>0.08</linear></attenuation>
+    </light>
+    <light name="ceiling_loft" type="point">
+      <pose>-6 4 2.7 0 0 0</pose>
+      <diffuse>0.85 0.82 0.72 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>8</range><linear>0.15</linear></attenuation>
+    </light>
+
+    
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="c">
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+        </collision>
+        <visual name="v">
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+          <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+            <pbr><metal><albedo_map>model://textures/concrete.png</albedo_map><roughness>0.9</roughness></metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    
+    
+    <model name="floor_living">
+      <static>true</static><pose>-4 2.7 0.003 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>7.8 11 0.004</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>7.8 11 0.004</size></box></geometry>
+          <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+            <pbr><metal><albedo_map>model://textures/wood_plank.png</albedo_map><roughness>0.7</roughness></metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    
+    <model name="floor_kitchen">
+      <static>true</static><pose>4 3.7 0.003 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>7.8 4.4 0.004</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>7.8 4.4 0.004</size></box></geometry>
+          <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+            <pbr><metal><albedo_map>model://textures/tile_kitchen.png</albedo_map><roughness>0.5</roughness></metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    
+    <model name="floor_bed1">
+      <static>true</static><pose>5 -3.2 0.003 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>5.8 5.2 0.004</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>5.8 5.2 0.004</size></box></geometry>
+          <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+            <pbr><metal><albedo_map>model://textures/carpet_blue.png</albedo_map><roughness>0.95</roughness></metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    
+    <model name="floor_bed2">
+      <static>true</static><pose>-4.5 -3.2 0.003 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>6.8 5.2 0.004</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>6.8 5.2 0.004</size></box></geometry>
+          <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+            <pbr><metal><albedo_map>model://textures/carpet_green.png</albedo_map><roughness>0.95</roughness></metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    
+    <model name="floor_bath">
+      <static>true</static><pose>0.5 -3.2 0.003 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>3 5.2 0.004</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>3 5.2 0.004</size></box></geometry>
+          <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+            <pbr><metal><albedo_map>model://textures/tile_bath.png</albedo_map><roughness>0.5</roughness></metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+    
+    <model name="floor_garage">
+      <static>true</static><pose>0 -8.5 0.003 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>16 4.8 0.004</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>16 4.8 0.004</size></box></geometry>
+          <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+            <pbr><metal><albedo_map>model://textures/concrete.png</albedo_map><roughness>0.9</roughness></metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    
+    
+    <model name="wall_n"><static>true</static><pose>0  6 1.25 0 0 0</pose><link name="link">
+      <collision name="c"><geometry><box><size>16.4 0.2 2.5</size></box></geometry></collision>
+      <visual name="v"><geometry><box><size>16.4 0.2 2.5</size></box></geometry>
+        <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+          <pbr><metal><albedo_map>model://textures/drywall.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+        </material>
+      </visual></link></model>
+    
+    <model name="wall_garage_n_a"><static>true</static><pose>-6.75 -6 1.25 0 0 0</pose><link name="link">
+      <collision name="c"><geometry><box><size>2.5 0.2 2.5</size></box></geometry></collision>
+      <visual name="v"><geometry><box><size>2.5 0.2 2.5</size></box></geometry>
+        <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+          <pbr><metal><albedo_map>model://textures/drywall.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+        </material>
+      </visual></link></model>
+    <model name="wall_garage_n_b"><static>true</static><pose>1.75 -6 1.25 0 0 0</pose><link name="link">
+      <collision name="c"><geometry><box><size>11.5 0.2 2.5</size></box></geometry></collision>
+      <visual name="v"><geometry><box><size>11.5 0.2 2.5</size></box></geometry>
+        <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+          <pbr><metal><albedo_map>model://textures/drywall.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+        </material>
+      </visual></link></model>
+    
+    <model name="wall_s"><static>true</static><pose>0 -11 1.3 0 0 0</pose><link name="link">
+      <collision name="c"><geometry><box><size>16.4 0.2 2.6</size></box></geometry></collision>
+      <visual name="v"><geometry><box><size>16.4 0.2 2.6</size></box></geometry>
+        <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+          <pbr><metal><albedo_map>model://textures/concrete.png</albedo_map><roughness>0.9</roughness></metal></pbr>
+        </material>
+      </visual></link></model>
+    
+    <model name="wall_e"><static>true</static><pose>8  -2.5 1.25 0 0 0</pose><link name="link">
+      <collision name="c"><geometry><box><size>0.2 17 2.5</size></box></geometry></collision>
+      <visual name="v"><geometry><box><size>0.2 17 2.5</size></box></geometry>
+        <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+          <pbr><metal><albedo_map>model://textures/drywall.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+        </material>
+      </visual></link></model>
+    
+    <model name="wall_w"><static>true</static><pose>-8  -2.5 1.25 0 0 0</pose><link name="link">
+      <collision name="c"><geometry><box><size>0.2 17 2.5</size></box></geometry></collision>
+      <visual name="v"><geometry><box><size>0.2 17 2.5</size></box></geometry>
+        <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+          <pbr><metal><albedo_map>model://textures/drywall.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+        </material>
+      </visual></link></model>
+
+    
+    
+
+    
+    
+    <model name="wall_A1"><static>true</static><pose>-5.5 0 1.2 0 0 0</pose><link name="link">
+      <collision name="c"><geometry><box><size>5 0.15 2.4</size></box></geometry></collision>
+      <visual name="v"><geometry><box><size>5 0.15 2.4</size></box></geometry>
+        <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+          <pbr><metal><albedo_map>model://textures/drywall.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+        </material>
+      </visual></link></model>
+    
+    
+    <model name="wall_A2"><static>true</static><pose>-0.5 0 1.2 0 0 0</pose><link name="link">
+      <collision name="c"><geometry><box><size>2 0.15 2.4</size></box></geometry></collision>
+      <visual name="v"><geometry><box><size>2 0.15 2.4</size></box></geometry>
+        <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+          <pbr><metal><albedo_map>model://textures/drywall.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+        </material>
+      </visual></link></model>
+    
+    
+    <model name="wall_A4"><static>true</static><pose>5 0 1.2 0 0 0</pose><link name="link">
+      <collision name="c"><geometry><box><size>6 0.15 2.4</size></box></geometry></collision>
+      <visual name="v"><geometry><box><size>6 0.15 2.4</size></box></geometry>
+        <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+          <pbr><metal><albedo_map>model://textures/drywall.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+        </material>
+      </visual></link></model>
+
+    
+    
+    <model name="wall_B1"><static>true</static><pose>-6.75 1.5 1.2 0 0 0</pose><link name="link">
+      <collision name="c"><geometry><box><size>2.5 0.15 2.4</size></box></geometry></collision>
+      <visual name="v"><geometry><box><size>2.5 0.15 2.4</size></box></geometry>
+        <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+          <pbr><metal><albedo_map>model://textures/drywall.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+        </material>
+      </visual></link></model>
+    
+    
+    <model name="wall_B2"><static>true</static><pose>-2 1.5 1.2 0 0 0</pose><link name="link">
+      <collision name="c"><geometry><box><size>4 0.15 2.4</size></box></geometry></collision>
+      <visual name="v"><geometry><box><size>4 0.15 2.4</size></box></geometry>
+        <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+          <pbr><metal><albedo_map>model://textures/drywall.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+        </material>
+      </visual></link></model>
+    
+    <model name="wall_B3"><static>true</static><pose>2.5 1.5 1.2 0 0 0</pose><link name="link">
+      <collision name="c"><geometry><box><size>5 0.15 2.4</size></box></geometry></collision>
+      <visual name="v"><geometry><box><size>5 0.15 2.4</size></box></geometry>
+        <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+          <pbr><metal><albedo_map>model://textures/drywall.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+        </material>
+      </visual></link></model>
+    
+    
+    <model name="wall_B5"><static>true</static><pose>7.25 1.5 1.2 0 0 0</pose><link name="link">
+      <collision name="c"><geometry><box><size>1.5 0.15 2.4</size></box></geometry></collision>
+      <visual name="v"><geometry><box><size>1.5 0.15 2.4</size></box></geometry>
+        <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+          <pbr><metal><albedo_map>model://textures/drywall.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+        </material>
+      </visual></link></model>
+
+    
+    <model name="wall_C"><static>true</static><pose>0 3.75 1.2 0 0 0</pose><link name="link">
+      <collision name="c"><geometry><box><size>0.15 4.5 2.4</size></box></geometry></collision>
+      <visual name="v"><geometry><box><size>0.15 4.5 2.4</size></box></geometry>
+        <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+          <pbr><metal><albedo_map>model://textures/drywall.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+        </material>
+      </visual></link></model>
+
+    
+    <model name="wall_D"><static>true</static><pose>-1 -3 1.2 0 0 0</pose><link name="link">
+      <collision name="c"><geometry><box><size>0.15 6 2.4</size></box></geometry></collision>
+      <visual name="v"><geometry><box><size>0.15 6 2.4</size></box></geometry>
+        <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+          <pbr><metal><albedo_map>model://textures/drywall.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+        </material>
+      </visual></link></model>
+
+    
+    <model name="wall_E"><static>true</static><pose>2 -3 1.2 0 0 0</pose><link name="link">
+      <collision name="c"><geometry><box><size>0.15 6 2.4</size></box></geometry></collision>
+      <visual name="v"><geometry><box><size>0.15 6 2.4</size></box></geometry>
+        <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>1 1 1 1</diffuse>
+          <pbr><metal><albedo_map>model://textures/drywall.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+        </material>
+      </visual></link></model>
+
+    
+
+    
+    <model name="sofa">
+      <static>true</static><pose>-5.5 4.5 0.4 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>2.2 0.8 0.8</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>2.2 0.8 0.8</size></box></geometry>
+          <material><ambient>0.45 0.38 0.55 1</ambient><diffuse>0.45 0.38 0.55 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    
+    <model name="coffee_table">
+      <static>true</static><pose>-5.5 3.2 0.22 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>1.0 0.55 0.44</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>1.0 0.55 0.44</size></box></geometry>
+          <material><ambient>0.55 0.40 0.28 1</ambient><diffuse>0.55 0.40 0.28 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    
+    <model name="tv_stand">
+      <static>true</static><pose>-7.4 1.8 0.3 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>0.4 1.5 0.6</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.4 1.5 0.6</size></box></geometry>
+          <material><ambient>0.2 0.2 0.2 1</ambient><diffuse>0.2 0.2 0.2 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    
+    <model name="counter_n">
+      <static>true</static><pose>4 5.4 0.45 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>7.5 0.6 0.9</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>7.5 0.6 0.9</size></box></geometry>
+          <material><ambient>0.88 0.82 0.78 1</ambient><diffuse>0.88 0.82 0.78 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    
+    <model name="island">
+      <static>true</static><pose>4 3.0 0.45 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>2.2 0.9 0.9</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>2.2 0.9 0.9</size></box></geometry>
+          <material><ambient>0.92 0.88 0.82 1</ambient><diffuse>0.92 0.88 0.82 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    
+    <model name="bed_1">
+      <static>true</static><pose>5.5 -4.2 0.3 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>2.0 1.6 0.6</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>2.0 1.6 0.6</size></box></geometry>
+          <material><ambient>0.72 0.78 0.88 1</ambient><diffuse>0.72 0.78 0.88 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    
+    <model name="ns_1">
+      <static>true</static><pose>7.0 -3.5 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>0.5 0.5 0.5</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.5 0.5 0.5</size></box></geometry>
+          <material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    
+    <model name="bed_2">
+      <static>true</static><pose>-4.8 -4.2 0.3 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>2.0 1.6 0.6</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>2.0 1.6 0.6</size></box></geometry>
+          <material><ambient>0.75 0.88 0.78 1</ambient><diffuse>0.75 0.88 0.78 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    
+    <model name="wardrobe">
+      <static>true</static><pose>-7.4 -3.5 0.7 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>0.6 2.0 1.4</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.6 2.0 1.4</size></box></geometry>
+          <material><ambient>0.65 0.50 0.38 1</ambient><diffuse>0.65 0.50 0.38 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    
+    
+    <model name="bathtub">
+      <static>true</static><pose>0.5 -4.8 0.2 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>1.6 0.7 0.4</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>1.6 0.7 0.4</size></box></geometry>
+          <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    
+    <model name="toilet">
+      <static>true</static><pose>0.5 -1.2 0.2 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>0.5 0.5 0.4</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.5 0.5 0.4</size></box></geometry>
+          <material><ambient>0.90 0.90 0.90 1</ambient><diffuse>0.90 0.90 0.90 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    
+    <model name="hall_picture_1"><static>true</static><pose>-6 1.42 1.5 0 0 0</pose><link name="link"><collision name="c"><geometry><box><size>0.4 0.05 0.3</size></box></geometry></collision><visual name="v"><geometry><box><size>0.4 0.05 0.3</size></box></geometry><material><ambient>0.35 0.28 0.2 1</ambient><diffuse>0.35 0.28 0.2 1</diffuse></material></visual></link></model>
+    <model name="hall_console"><static>true</static><pose>3 1.4 0.4 0 0 0</pose><link name="link"><collision name="c"><geometry><box><size>1.0 0.3 0.8</size></box></geometry></collision><visual name="v"><geometry><box><size>1.0 0.3 0.8</size></box></geometry><material><ambient>0.5 0.4 0.3 1</ambient><diffuse>0.5 0.4 0.3 1</diffuse></material></visual></link></model>
+    <model name="hall_picture_2"><static>true</static><pose>6 -0.02 1.5 0 0 0</pose><link name="link"><collision name="c"><geometry><box><size>0.4 0.05 0.3</size></box></geometry></collision><visual name="v"><geometry><box><size>0.4 0.05 0.3</size></box></geometry><material><ambient>0.35 0.28 0.2 1</ambient><diffuse>0.35 0.28 0.2 1</diffuse></material></visual></link></model>
+
+    
+    <model name="loft_pole_1"><static>true</static><pose>-7.5 2.3 1.05 0 0 0</pose><link name="link"><collision name="c"><geometry><cylinder><radius>0.06</radius><length>2.1</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.06</radius><length>2.1</length></cylinder></geometry><material><ambient>0.4 0.35 0.3 1</ambient><diffuse>0.4 0.35 0.3 1</diffuse></material></visual></link></model>
+    <model name="loft_deck"><static>true</static><pose>-5.9 3.95 2.125 0 0 0</pose><link name="link"><collision name="c"><geometry><box><size>3.6 3.9 0.05</size></box></geometry></collision><visual name="v"><geometry><box><size>3.6 3.9 0.05</size></box></geometry><material><ambient>0.55 0.48 0.38 1</ambient><diffuse>0.55 0.48 0.38 1</diffuse></material></visual></link></model>
+    <model name="loft_rail"><static>true</static><pose>-5.9 2.05 2.4 0 0 0</pose><link name="link"><collision name="c"><geometry><box><size>3.6 0.05 0.5</size></box></geometry></collision><visual name="v"><geometry><box><size>3.6 0.05 0.5</size></box></geometry><material><ambient>0.4 0.35 0.3 1</ambient><diffuse>0.4 0.35 0.3 1</diffuse></material></visual></link></model>
+    
+    <model name="dining_table"><static>true</static><pose>2 3 0.375 0 0 0</pose><link name="link"><collision name="c"><geometry><box><size>1.6 1.0 0.75</size></box></geometry></collision><visual name="v"><geometry><box><size>1.6 1.0 0.75</size></box></geometry><material><ambient>0.6 0.48 0.35 1</ambient><diffuse>0.6 0.48 0.35 1</diffuse></material></visual></link></model>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/foldable_chair</uri>
+      <name>dining_chair_1</name>
+      <pose>2 2.2 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/foldable_chair</uri>
+      <name>dining_chair_2</name>
+      <pose>2 3.8 0 0 0 -1.5708</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/foldable_chair</uri>
+      <name>dining_chair_3</name>
+      <pose>1.1 3 0 0 0 0</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/foldable_chair</uri>
+      <name>dining_chair_4</name>
+      <pose>2.9 3 0 0 0 3.1416</pose>
+    </include>
+
+    
+    <model name="rug_living"><static>true</static><pose>-5.2 3.4 0.006 0 0 0</pose><link name="link"><collision name="c"><geometry><box><size>2.4 1.6 0.01</size></box></geometry></collision><visual name="v"><geometry><box><size>2.4 1.6 0.01</size></box></geometry><material><ambient>0.55 0.2 0.2 0.85</ambient><diffuse>0.55 0.2 0.2 0.85</diffuse></material></visual></link></model>
+    <model name="rug_bed1"><static>true</static><pose>5.5 -3.0 0.006 0 0 0</pose><link name="link"><collision name="c"><geometry><box><size>1.6 1.0 0.01</size></box></geometry></collision><visual name="v"><geometry><box><size>1.6 1.0 0.01</size></box></geometry><material><ambient>0.3 0.35 0.55 0.85</ambient><diffuse>0.3 0.35 0.55 0.85</diffuse></material></visual></link></model>
+
+    
+    
+    <model name="car_body"><static>true</static><pose>-3 -8.5 0.65 0 0 0</pose><link name="link"><collision name="c"><geometry><box><size>4.2 1.8 1.3</size></box></geometry></collision><visual name="v"><geometry><box><size>4.2 1.8 1.3</size></box></geometry><material><ambient>0.15 0.25 0.5 1</ambient><diffuse>0.15 0.25 0.5 1</diffuse></material></visual></link></model>
+    <model name="car_wheel_fl"><static>true</static><pose>-4.5 -7.5 0.35 1.5708 0 0</pose><link name="link"><collision name="c"><geometry><cylinder><radius>0.35</radius><length>0.25</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.35</radius><length>0.25</length></cylinder></geometry><material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual></link></model>
+    <model name="car_wheel_fr"><static>true</static><pose>-4.5 -9.5 0.35 1.5708 0 0</pose><link name="link"><collision name="c"><geometry><cylinder><radius>0.35</radius><length>0.25</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.35</radius><length>0.25</length></cylinder></geometry><material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual></link></model>
+    <model name="car_wheel_rl"><static>true</static><pose>-1.5 -7.5 0.35 1.5708 0 0</pose><link name="link"><collision name="c"><geometry><cylinder><radius>0.35</radius><length>0.25</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.35</radius><length>0.25</length></cylinder></geometry><material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual></link></model>
+    <model name="car_wheel_rr"><static>true</static><pose>-1.5 -9.5 0.35 1.5708 0 0</pose><link name="link"><collision name="c"><geometry><cylinder><radius>0.35</radius><length>0.25</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.35</radius><length>0.25</length></cylinder></geometry><material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual></link></model>
+
+    
+    <model name="garage_shelf"><static>true</static><pose>6.7 -6.4 0.9 0 0 0</pose><link name="link"><collision name="c"><geometry><box><size>2.0 0.5 1.8</size></box></geometry></collision><visual name="v"><geometry><box><size>2.0 0.5 1.8</size></box></geometry><material><ambient>0.4 0.32 0.22 1</ambient><diffuse>0.4 0.32 0.22 1</diffuse></material></visual></link></model>
+    <model name="garage_workbench"><static>true</static><pose>6.5 -9.7 0.45 0 0 0</pose><link name="link"><collision name="c"><geometry><box><size>1.5 0.6 0.9</size></box></geometry></collision><visual name="v"><geometry><box><size>1.5 0.6 0.9</size></box></geometry><material><ambient>0.55 0.4 0.25 1</ambient><diffuse>0.55 0.4 0.25 1</diffuse></material></visual></link></model>
+
+    
+    <model name="world_monitor_cam">
+      <static>true</static>
+      <pose>7.5 7.0 5.3 0 0.55 -2.356</pose>
+      <link name="link">
+        <sensor name="monitor_camera" type="camera">
+          <always_on>true</always_on>
+          <update_rate>10</update_rate>
+          <topic>world_monitor/image_raw</topic>
+          <camera>
+            <horizontal_fov>1.3</horizontal_fov>
+            <image><width>960</width><height>540</height><format>R8G8B8</format></image>
+            <clip><near>0.05</near><far>35.0</far></clip>
+          </camera>
+        </sensor>
+      </link>
+    </model>
+
+  </world>
+</sdf>
