@@ -18,11 +18,14 @@
     # fix, imu0 now reliably supplies clean absolute yaw below — fusing
     # wheel-integrated yaw here too was averaging it against the IMU's,
     # dragging in wheel-odom's larger heading drift. Wheel odom still
-    # contributes x/y/vx and yaw-rate (vyaw, row 4).
-    odom0_config: [true,  true,  false,
+    # contributes only forward velocity (vx): fusing its x/y POSE (integrated with its own
+    # under-counted heading, ~36 deg short per 360 deg spin) made position drift up to 3.4 m
+    # in a spin+drive test while the EKF yaw itself was exact; vx integrated along the IMU yaw
+    # fixes that. Its yaw-rate is off by the same ~10% scale, so the IMU gyro owns yaw-rate.
+    odom0_config: [false, false, false,
                    false, false, false,
                    true,  false, false,
-                   false, false, true,
+                   false, false, false,
                    false, false, false]
     odom0_differential: false
     odom0_relative: false

@@ -557,7 +557,7 @@ Visualization Manager:
           Scale: 1
           Value: true
         Value: true
-      Enabled: true
+      Enabled: false
       Keep: 100
       Name: Fused Odom (EKF/UKF)
       Position Tolerance: 0.1
