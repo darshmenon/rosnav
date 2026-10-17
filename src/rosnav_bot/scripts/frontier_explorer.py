@@ -1382,6 +1382,7 @@ class FrontierExplorer(Node):
     def _publish_goal_flags(self):
         stamp = self.get_clock().now().to_msg()
         clear = Marker()
+        clear.header.frame_id = self.get_parameter('goal_frame').value
         clear.action = Marker.DELETEALL
         msg = MarkerArray()
         msg.markers.append(clear)

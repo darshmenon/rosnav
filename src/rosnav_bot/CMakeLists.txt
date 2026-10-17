@@ -91,6 +91,8 @@ install(
     scripts/pointcloud_to_scan.py
     scripts/scan_quality_gate.py
     scripts/terrain_traversability.py
+    scripts/localization_accuracy_bench.py
+    scripts/scripted_drive.py
     scripts/pointcloud_filter.py
     scripts/slam_accuracy_monitor.py
     scripts/slam_debug_monitor.py

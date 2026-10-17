@@ -373,6 +373,7 @@ class NavBenchmark(Node):
             goal.pose.orientation.w = math.cos(yaw / 2.0)
 
             planned_len = None
+            planned_xy = []
             try:
                 start_pose = PoseStamped()
                 start_pose.header.frame_id = 'map'
@@ -382,6 +383,8 @@ class NavBenchmark(Node):
                     start_pose.pose.orientation.w = 1.0
                     path = nav.getPath(start_pose, goal)
                     if path and path.poses:
+                        planned_xy = [[round(q.pose.position.x, 3), round(q.pose.position.y, 3)]
+                                      for q in path.poses[::3]]
                         planned_len = sum(
                             _dist(path.poses[k].pose.position.x, path.poses[k].pose.position.y,
                                   path.poses[k + 1].pose.position.x, path.poses[k + 1].pose.position.y)
@@ -468,6 +471,7 @@ class NavBenchmark(Node):
                 'map_path_len_m': round(track_len, 3),
                 'gt_path_len_m': round(gt_len, 3),
                 'track': track,
+                'planned_path': planned_xy,
                 'goal_error_map_tf_m': (round(_dist(map_xy[0], map_xy[1], gx, gy), 3)
                                         if map_xy else None),
                 'straight_line_m': round(_dist(start_xy[0], start_xy[1], gx, gy), 3) if start_xy else None,

@@ -230,6 +230,17 @@ class ArucoDock(Node):
         self._collision_orig = None
         self._collision_restored = False
 
+        # Inflation must be zero while docking: the dock sits against a wall, so
+        # inflated cells around it would make Nav2 treat the target as blocked.
+        self._infl_nodes = [f'{pre}/local_costmap/local_costmap',
+                            f'{pre}/global_costmap/global_costmap']
+        self._infl_clients = {
+            n: (self.create_client(GetParameters, f'{n}/get_parameters'),
+                self.create_client(SetParameters, f'{n}/set_parameters'))
+            for n in self._infl_nodes}
+        self._infl_orig = {}
+        self._infl_restored = False
+
         self._pose = None
         self._speed = None
         self._last_log = None
@@ -271,6 +282,7 @@ class ArucoDock(Node):
         self.create_timer(1.0 / CONTROL_HZ, self._control_tick)
         if self._servo_enabled:
             self._shrink_collision_thresholds()
+            self._zero_inflation()
 
     def _shrink_collision_thresholds(self):
         if not self._collision_get_client.wait_for_service(timeout_sec=4.0):
@@ -314,7 +326,45 @@ class ArucoDock(Node):
         ]
         self._collision_set_client.call_async(req)
 
+    @staticmethod
+    def _radius_param(value: float) -> Parameter:
+        return Parameter(name='inflation_layer.inflation_radius', value=ParameterValue(
+            type=ParameterType.PARAMETER_DOUBLE, double_value=value))
+
+    def _zero_inflation(self):
+        for n, (get_c, _) in self._infl_clients.items():
+            if not get_c.wait_for_service(timeout_sec=2.0):
+                self.get_logger().warning(f'{n} not found — inflation left unchanged.')
+                continue
+            req = GetParameters.Request()
+            req.names = ['inflation_layer.inflation_radius']
+            get_c.call_async(req).add_done_callback(
+                lambda fut, n=n: self._on_inflation_read(n, fut))
+
+    def _on_inflation_read(self, n, future):
+        try:
+            orig = future.result().values[0].double_value
+        except Exception as e:
+            self.get_logger().warning(f'Could not read {n} inflation radius: {e}')
+            return
+        self._infl_orig[n] = orig
+        req = SetParameters.Request()
+        req.parameters = [self._radius_param(0.0)]
+        self._infl_clients[n][1].call_async(req)
+        self.get_logger().info(f'Inflation zeroed for docking on {n} (was {orig:.2f}m)')
+        if self._infl_restored:  # docking already finished before the read returned
+            self._restore_inflation()
+
+    def _restore_inflation(self):
+        self._infl_restored = True
+        for n, orig in self._infl_orig.items():
+            req = SetParameters.Request()
+            req.parameters = [self._radius_param(orig)]
+            self._infl_clients[n][1].call_async(req)
+            self.get_logger().info(f'Restored inflation on {n} to {orig:.2f}m')
+
     def _restore_collision_thresholds(self):
+        self._restore_inflation()
         if self._collision_restored or self._collision_orig is None:
             return
         self._collision_restored = True

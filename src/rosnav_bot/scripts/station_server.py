@@ -33,6 +33,8 @@ from nav2_msgs.action import BackUp, NavigateToPose, Spin
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
+from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
+from rcl_interfaces.srv import GetParameters, SetParameters
 from rclpy.node import Node
 from sensor_msgs.msg import BatteryState
 
@@ -53,6 +55,10 @@ UNDOCK_TIMEOUT = 15.0
 UNDOCK_SPIN_TIMEOUT = 20.0
 NAV_TIMEOUT = 120.0
 ARUCO_TIMEOUT = 120.0
+# The dock sits flush against the wall/charger, so any inflation around it
+# reads as lethal/inscribed to docking_server's collision check — force the
+# local costmap inflation to zero for the final approach, then restore it.
+INFLATION_PARAM = 'inflation_layer.inflation_radius'
 
 
 def _package_share() -> str:
@@ -281,6 +287,34 @@ class StationServer(Node):
 
     # ── action wait ───────────────────────────────────────────────────────────
 
+    def _set_inflation_radius(self, node: str, radius: float):
+        """Set <node>'s inflation radius; returns the previous value (None on failure)."""
+        get_cli = self.create_client(GetParameters, f'{node}/get_parameters')
+        set_cli = self.create_client(SetParameters, f'{node}/set_parameters')
+        try:
+            if not (get_cli.wait_for_service(timeout_sec=2.0)
+                    and set_cli.wait_for_service(timeout_sec=2.0)):
+                self.get_logger().warn(f'{node} param services unavailable — inflation unchanged')
+                return None
+            res = self._await_future(get_cli.call_async(
+                GetParameters.Request(names=[INFLATION_PARAM])), 3.0)
+            if res is None or not res.values or res.values[0].type != ParameterType.PARAMETER_DOUBLE:
+                self.get_logger().warn(f'{node} has no {INFLATION_PARAM} — inflation unchanged')
+                return None
+            prev = res.values[0].double_value
+            param = Parameter(name=INFLATION_PARAM, value=ParameterValue(
+                type=ParameterType.PARAMETER_DOUBLE, double_value=float(radius)))
+            res = self._await_future(set_cli.call_async(
+                SetParameters.Request(parameters=[param])), 3.0)
+            if res is None or not res.results or not res.results[0].successful:
+                self.get_logger().warn(f'{node} rejected inflation_radius={radius}')
+                return None
+            self.get_logger().info(f'{node} inflation_radius {prev:.2f} -> {radius:.2f}')
+            return prev
+        finally:
+            self.destroy_client(get_cli)
+            self.destroy_client(set_cli)
+
     def _await_future(self, future, timeout: float):
         deadline = time.time() + timeout
         while not future.done() and time.time() < deadline:
@@ -382,7 +416,13 @@ class StationServer(Node):
             docks = self._load_docks()
             if station in docks or station == DEFAULT_DOCK:
                 self._publish_dock_fb(goal_handle, 'visual', 'ArUco visual approach')
-                ok, msg = self._visual_dock(station, goal_handle)
+                costmap = _topic(self._ns, 'local_costmap/local_costmap')
+                prev_infl = self._set_inflation_radius(costmap, 0.0)
+                try:
+                    ok, msg = self._visual_dock(station, goal_handle)
+                finally:
+                    if prev_infl is not None:
+                        self._set_inflation_radius(costmap, prev_infl)
                 if not ok:
                     result.success = False
                     result.message = f'visual dock failed: {msg}'

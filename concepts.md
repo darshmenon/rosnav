@@ -2695,3 +2695,18 @@ H = F (height filter, no normals segmentation) with `Grid/RangeMax` 6, `NoiseFil
 - **Scan gate**: the 2D scan is a thin slice of the 3D cloud and is legitimately ~100% NaN in open ground; `scan_quality_gate` rejected it, `/scan` went stale and `collision_monitor` latched STOP (`sensor_dead`). The gate is now disabled for `lidar_type:=3d` (3D SLAM uses `/points`).
 - **Maps**: an open bowl has nothing to map (~99.7% free); RTAB `/cloud_map` came out flat (z = 0) and the RTAB grid marks slope ground as obstacles. Details and open items: `docs/TODO.md`, "Outdoor navigation session".
 - The controller TF freeze (§39) still appears here when another sim shares the machine; run one sim at a time.
+- **Localization accuracy bench** (`scripts/localization_accuracy_bench.py` + `scripts/scripted_drive.py`, outdoor_rocks, one sim, no explorer):
+  true pose from gz `/model/<m>/odometry_with_covariance` bridged to `/gt_odom`; each estimator is rigidly aligned to it at the first
+  sample, then position error is sampled at 2 Hz. A scripted open-loop square (4 m sides) drives the robot. Two runs, same loop:
+
+  | estimator | run 1 RMSE (4.4 m travelled) | run 2 RMSE (10.6 m travelled) |
+  |---|---|---|
+  | wheel odometry | 1.43 m | 0.38 m |
+  | EKF (`/odometry/filtered`) | 0.69 m | 0.14 m |
+  | RTAB-Map `map->base_link` | 0.69 m | 0.14 m |
+  | GPS-fused EKF (`/odometry/global`, ROSNAV_GPS=1, sim GPS 0.5 m noise) | n/a | 1.02 m |
+
+  Caveats: only two runs and the distance driven differs a lot between them (wheel slip on the heightmap), position error only (no yaw),
+  and the GPS EKF was still converging at the alignment sample, which inflates its number. What it does show: the EKF beats raw wheel
+  odometry by 2-3x, RTAB adds no correction on this short loop (it equals the EKF), and the GPS stack runs end to end (`/gps/fix` ->
+  navsat_transform -> `/odometry/gps` -> map-frame EKF; run it with `publish_tf:=false` next to RTAB so the two `map->odom` don't fight).

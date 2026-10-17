@@ -6,7 +6,7 @@ gs_semantic_fusion.py — lift yolo_detector.py's 2D image detections into real
 points land inside each detection's bounding box.
 
 This is the key advantage over a plain camera-only semantic costmap layer
-(see ROADMAP_CONCEPTS.md's "Semantic costmap layer from YOLO detections"):
+(see docs/ROADMAP_CONCEPTS.md's "Semantic costmap layer from YOLO detections"):
 that idea has no depth, so it must assume detections sit on a flat ground
 plane. Here the splat already carries real 3D geometry from GS training, so
 "this bounding box is a chair" becomes an actual 3D position/extent, not a

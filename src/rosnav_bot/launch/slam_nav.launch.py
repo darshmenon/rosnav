@@ -434,7 +434,9 @@ def _build_runtime_actions(context, pkg_share: str):
     _params_file = _common.apply_planner(
         _params_file, LaunchConfiguration('planner').perform(context))
     if not use_slam:
-        _params_file = _common.apply_spawn_initial_pose(_params_file, spawn_x, spawn_y, spawn_yaw)
+        # Saved maps are spawn-relative (SLAM's map origin = the robot's spawn, as in multi_robot), so the
+        # robot starts at map (0,0,0); passing the world spawn put AMCL 2.00 m off on cafe (docs/BUGS.md #3).
+        _params_file = _common.apply_spawn_initial_pose(_params_file, 0.0, 0.0, 0.0)
     _enabled_filters = set()
     if LaunchConfiguration('gs_keepout_mask').perform(context).strip():
         _enabled_filters.add('keepout_filter')

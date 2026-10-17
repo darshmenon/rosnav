@@ -24,6 +24,11 @@ from nav_msgs.msg import OccupancyGrid, Odometry
 from sensor_msgs.msg import LaserScan
 import tf2_ros
 
+try:  # only present with ros-humble-rtabmap-ros
+    from rtabmap_msgs.msg import Info as RtabInfo
+except ImportError:
+    RtabInfo = None
+
 
 def _yaw_deg(q) -> float:
     siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
@@ -81,6 +86,21 @@ class SlamDebugMonitor(Node):
 
         self._samples = deque()
 
+        # Map-stream / pose-graph diagnostics (why does the map jump or look broken?)
+        self._map_msgs = 0
+        self._map_times = deque(maxlen=20)
+        self._prev_map = None            # (width, height, ox, oy, data)
+        self._last_map_changed = 0
+        self._last_map_geom = ''
+        self._last_map_geom_change = ''
+        self._prev_map_odom = None
+        self._max_graph_jump = (0.0, 0.0)
+        self._graph_jumps = 0
+        self._rtab_nodes = set()
+        self._rtab_loop_closures = 0
+        self._rtab_proximity = 0
+        self._rtab_last_ref = -1
+
         self.create_subscription(
             OccupancyGrid,
             str(self.get_parameter('map_topic').value),
@@ -100,6 +120,9 @@ class SlamDebugMonitor(Node):
             qos_profile_sensor_data,
         )
 
+        if RtabInfo is not None:
+            self.create_subscription(RtabInfo, '/info', self._on_rtab_info, 5)
+
         period = max(0.5, float(self.get_parameter('report_period_sec').value))
         self.create_timer(period, self._report)
         self.get_logger().info(
@@ -113,6 +136,54 @@ class SlamDebugMonitor(Node):
         self._map_occ = int(np.count_nonzero(data > 50))
         self._map_unknown = int(np.count_nonzero(data < 0))
         self._last_map_stamp = time.monotonic()
+        self._map_msgs += 1
+        self._map_times.append(self._last_map_stamp)
+
+        geom = (msg.info.width, msg.info.height,
+                round(msg.info.origin.position.x, 3), round(msg.info.origin.position.y, 3))
+        self._last_map_geom = f'{geom[0]}x{geom[1]}@({geom[2]},{geom[3]})'
+        if self._prev_map is not None:
+            pgeom, pdata = self._prev_map
+            if pgeom == geom:
+                # cells whose state flipped free<->occupied (unknown->known is normal growth)
+                both = (pdata >= 0) & (data >= 0)
+                self._last_map_changed = int(np.count_nonzero(
+                    both & ((pdata > 50) != (data > 50))))
+            else:
+                self._last_map_changed = -1
+                self._last_map_geom_change = f'{pgeom}->{geom}'
+                self.get_logger().info(
+                    f'slam_debug MAP RESIZED/SHIFTED {pgeom} -> {geom}')
+        self._prev_map = (geom, data)
+
+        # map->odom step across consecutive map updates = pose-graph optimisation jump
+        tf = self._lookup(self._fixed_frame, self._odom_frame)
+        if tf is not None:
+            cur = (tf.transform.translation.x, tf.transform.translation.y,
+                   _yaw_deg(tf.transform.rotation))
+            if self._prev_map_odom is not None:
+                dpos = math.hypot(cur[0] - self._prev_map_odom[0], cur[1] - self._prev_map_odom[1])
+                dyaw = abs(_wrap_deg(cur[2] - self._prev_map_odom[2]))
+                if dpos > 0.15 or dyaw > 3.0:
+                    self._graph_jumps += 1
+                    if dpos > self._max_graph_jump[0]:
+                        self._max_graph_jump = (dpos, dyaw)
+                    self.get_logger().warn(
+                        f'slam_debug GRAPH JUMP map->odom moved {dpos:.2f}m / {dyaw:.1f}deg '
+                        f'between map updates (loop closure / graph optimisation?)')
+            self._prev_map_odom = cur
+
+    def _on_rtab_info(self, msg) -> None:
+        self._rtab_nodes.add(int(msg.ref_id))
+        self._rtab_last_ref = int(msg.ref_id)
+        if msg.loop_closure_id > 0:
+            self._rtab_loop_closures += 1
+            self.get_logger().info(
+                f'slam_debug RTAB LOOP CLOSURE node {msg.ref_id} <-> {msg.loop_closure_id}')
+        if msg.proximity_detection_id > 0:
+            self._rtab_proximity += 1
+            self.get_logger().info(
+                f'slam_debug RTAB PROXIMITY link node {msg.ref_id} <-> {msg.proximity_detection_id}')
 
     def _on_odom(self, msg: Odometry) -> None:
         self._last_odom = msg
@@ -207,6 +278,18 @@ class SlamDebugMonitor(Node):
             f'window yaw_span={yaw_span:.1f}deg trans_span={trans_span:.2f}m '
             f'known_growth={known_growth} coverage={coverage:.1f}% '
             f'vx={vx:.3f} wz={wz:.3f} nearest_scan={scan} map_age={map_age:.1f}s')
+        hz = 0.0
+        if len(self._map_times) >= 2 and self._map_times[-1] > self._map_times[0]:
+            hz = (len(self._map_times) - 1) / (self._map_times[-1] - self._map_times[0])
+        rtab = ''
+        if RtabInfo is not None:
+            rtab = (f' rtab_nodes={len(self._rtab_nodes)} loop_closures={self._rtab_loop_closures}'
+                    f' proximity={self._rtab_proximity}')
+        self.get_logger().info(
+            f'slam_debug_map msgs={self._map_msgs} rate={hz:.2f}Hz geom={self._last_map_geom} '
+            f'flipped_cells_last_update={self._last_map_changed} '
+            f'graph_jumps={self._graph_jumps} max_jump={self._max_graph_jump[0]:.2f}m/'
+            f'{self._max_graph_jump[1]:.1f}deg{rtab}')
 
 
 def main(args=None):
