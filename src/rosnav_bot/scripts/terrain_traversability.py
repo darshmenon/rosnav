@@ -56,7 +56,7 @@ def classify(p_base, R_level, cell, tan_slope, step):
                 continue
             dz = zmin[m] - zmin[n]
             if abs(dz) / (cell * math.hypot(da, db)) > tan_slope:
-                bad[n if dz > 0 else m] = True  # the uphill side is the "wall"
+                bad[m if dz > 0 else n] = True  # the uphill side is the "wall"
     return bad[inv], len(keys)
 
 

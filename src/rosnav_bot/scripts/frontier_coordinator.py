@@ -90,6 +90,9 @@ class FrontierCoordinator(Node):
         self.declare_parameter('robot_namespaces', 'robot1,robot2')
         self.declare_parameter('frontier_detector', 'wfd')
         self.declare_parameter('frontier_scorer', 'utility')
+        # greedy: each idle robot takes its best frontier in turn (order-biased).
+        # hungarian: optimal joint robot<->frontier assignment over total score.
+        self.declare_parameter('allocation', 'greedy')
         self.declare_parameter('rrt_iterations', 300)
         self.declare_parameter('rrt_step_size', 0.5)
         self.declare_parameter('min_frontier_size', 5)
@@ -135,6 +138,10 @@ class FrontierCoordinator(Node):
         self._min_size    = self.get_parameter('min_frontier_size').value
         self._revisit_r   = self.get_parameter('revisit_radius').value
         self._assign_r    = self.get_parameter('assign_radius').value
+        self._allocation  = str(self.get_parameter('allocation').value).strip().lower()
+        if self._allocation not in ('greedy', 'hungarian'):
+            self.get_logger().warn(f'Unknown allocation={self._allocation!r}; using greedy.')
+            self._allocation = 'greedy'
         self._min_goal_d  = self.get_parameter('min_goal_distance').value
         self._frontier_clearance = self.get_parameter('frontier_clearance_radius').value
         self._failed_goal_r = self.get_parameter('failed_goal_radius').value
@@ -294,11 +301,17 @@ class FrontierCoordinator(Node):
             if self._state[r] == _State.IDLE and self._nav_ready.get(r, False)
         ]
         if idle and frontiers:
+            plan = {}
+            if self._allocation == 'hungarian' and len(idle) > 1:
+                plan = self._hungarian_plan(idle, frontiers, robot_positions)
             for r in idle:
                 pos = robot_positions.get(r)
                 if pos is None:
                     continue
-                goal, pick = self._pick(frontiers, pos, r)
+                if r in plan:
+                    goal, pick = plan[r]
+                else:
+                    goal, pick = self._pick(frontiers, pos, r)
                 if goal is None:
                     self.get_logger().info(
                         f'[{r}] no usable frontier '
@@ -374,7 +387,7 @@ class FrontierCoordinator(Node):
         return (self.get_clock().now() - self._start_time).nanoseconds / 1e9
 
     # ------------------------------------------------------------------
-    def _pick(self, frontiers, robot_pos, ns):
+    def _pick(self, frontiers, robot_pos, ns, collect=None):
         """Pick a frontier through the selected scorer plugin.
 
         Returns (goal_xy | None, diagnostics dict).
@@ -412,6 +425,12 @@ class FrontierCoordinator(Node):
 
             n_ok += 1
             score = self._score_frontier(frontier, d, ns)
+            if collect is not None:
+                collect.append((score, (fx, fy), {
+                    'score': score, 'distance': d, 'size_m': frontier['size_m'],
+                    'info_gain': frontier['info_gain'],
+                    'clearance': frontier.get('clearance', 0.0),
+                    'suspicious_ratio': frontier.get('suspicious_ratio', 0.0)}))
             if score > best_score:
                 best_score = score
                 best = (fx, fy)
@@ -442,6 +461,59 @@ class FrontierCoordinator(Node):
             'suspicious_ratio': best_meta.get('suspicious_ratio', 0.0),
         }
         return best, diag
+
+    def _hungarian_plan(self, idle, frontiers, robot_positions):
+        """Jointly assign idle robots to distinct frontiers maximizing total score.
+
+        Returns {robot: (goal_xy, pick_diag)}. Frontiers within assign_radius of
+        each other can't both be used, so winners that conflict are dropped and
+        those robots fall back to the greedy pick.
+        """
+        import numpy as np
+        from scipy.optimize import linear_sum_assignment
+        cands, diags = {}, {}
+        for r in idle:
+            pos = robot_positions.get(r)
+            if pos is None:
+                continue
+            c = []
+            _, diags[r] = self._pick(frontiers, pos, r, collect=c)
+            if c:
+                cands[r] = c
+        robots = list(cands)
+        if len(robots) < 2:
+            return {}
+        # unique frontier columns across robots
+        cols = []
+        for r in robots:
+            for _, xy, _ in cands[r]:
+                if not any(math.hypot(xy[0] - q[0], xy[1] - q[1]) < 1e-6 for q in cols):
+                    cols.append(xy)
+        big = -1e6
+        gain = np.full((len(robots), len(cols)), big)
+        meta = {}
+        for i, r in enumerate(robots):
+            for score, xy, m in cands[r]:
+                j = next(k for k, q in enumerate(cols)
+                         if math.hypot(xy[0] - q[0], xy[1] - q[1]) < 1e-6)
+                gain[i, j] = score
+                meta[(i, j)] = m
+        rows, cs = linear_sum_assignment(-gain)
+        plan, used = {}, []
+        for i, j in sorted(zip(rows, cs), key=lambda t: -gain[t[0], t[1]]):
+            if gain[i, j] <= big / 2:
+                continue
+            xy = cols[j]
+            if _near_any(xy[0], xy[1], used, self._assign_r):
+                continue
+            used.append(xy)
+            pick = dict(diags[robots[i]])
+            pick.update(meta[(i, j)])
+            plan[robots[i]] = (xy, pick)
+        self.get_logger().info(
+            f'hungarian: {len(plan)}/{len(robots)} robots assigned over {len(cols)} frontiers '
+            f'total_score={sum(p[1]["score"] for p in plan.values()):.2f}')
+        return plan
 
     def _score_frontier(self, frontier, distance, ns):
         suspicious_ratio = self._suspicious_frontier_ratio(

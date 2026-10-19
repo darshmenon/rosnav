@@ -62,6 +62,13 @@ def test_tilted_robot_on_flat_ground_not_blocked():
     assert blocked(p_base, R_level) == 0
 
 
+def test_step_marks_uphill_side():
+    x, y = grid(0.5, 4.0, 1.0)
+    p = np.column_stack([x, y, np.where(x >= 2.0, 0.2, 0.0)])
+    mask = classify(p, np.eye(3), CELL, TAN, STEP)[0]
+    assert mask.any() and x[mask].min() >= 2.0 - CELL
+
+
 if __name__ == '__main__':
     for n, f in list(globals().items()):
         if n.startswith('test_'):

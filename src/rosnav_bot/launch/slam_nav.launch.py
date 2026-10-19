@@ -1023,6 +1023,10 @@ def _build_runtime_actions(context, pkg_share: str):
                     # is used otherwise.
                     **({'exploration_boundary': exploration_boundary}
                        if exploration_boundary else {}),
+                    # Ablation hook: arbitrary frontier_explorer params as JSON,
+                    # e.g. explorer_params:='{"hysteresis_gain": 0.0}'. Applied last.
+                    **_common.parse_param_overrides(
+                        LaunchConfiguration('explorer_params').perform(context)),
                 })
         else:
             explore_nodes = _common.explorer_nodes(explorer_backend, pkg_share, map_topic='/map')
@@ -1574,6 +1578,10 @@ def generate_launch_description():
                         '<map_prefix>_session.json instead of starting fresh. The checkpoint '
                         'is written automatically whenever map_prefix/map_save_path is set. '
                         '(builtin explorer only)'),
+        DeclareLaunchArgument(
+            name='explorer_params', default_value='',
+            description='JSON dict of extra frontier_explorer parameter overrides '
+                        '(ablations), e.g. \'{"hysteresis_gain": 0.0}\'. Builtin explorer only.'),
         DeclareLaunchArgument(
             name='info_gain_mode', default_value='ring',
             description='weighted/utility scorer info-gain estimate: "ring" (default, '

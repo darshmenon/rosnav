@@ -627,6 +627,7 @@ def _build_all(context, pkg_share: str):
     collab_loop_closure = _truthy(LaunchConfiguration('collab_loop_closure').perform(context))
     frontier_detector = LaunchConfiguration('frontier_detector').perform(context).strip()
     frontier_scorer = LaunchConfiguration('frontier_scorer').perform(context).strip()
+    allocation = LaunchConfiguration('allocation').perform(context).strip()
     explorer_backend = _common.resolve_explorer(LaunchConfiguration('explorer').perform(context))
     explore_bt = LaunchConfiguration('explore_bt').perform(context).strip()
     distance_weight = float(LaunchConfiguration('distance_weight').perform(context).strip())
@@ -1176,6 +1177,7 @@ def _build_all(context, pkg_share: str):
                         'map_topic': frontier_map_topic,
                         'frontier_detector': frontier_detector,
                         'frontier_scorer': frontier_scorer,
+                        'allocation': allocation,
                         'distance_weight': distance_weight,
                         'info_gain_weight': info_gain_weight,
                         'potential_scale': potential_scale,
@@ -1463,6 +1465,10 @@ def generate_launch_description():
             description='slam_algo:=3d|vslam. true sets RTAB-Map Grid/3D:=true per robot so '
                         'each /{ns}/octomap_binary and /{ns}/octomap_full actually populate, '
                         'on top of the same 2D /{ns}/map Nav2 always gets.'),
+        DeclareLaunchArgument(
+            'allocation', default_value='greedy',
+            description='frontier_coordinator robot<->frontier assignment: greedy (default) '
+                        'or hungarian (optimal joint assignment over total score).'),
         DeclareLaunchArgument(
             'explorer', default_value='builtin',
             description='When explore:=true: builtin (frontier_coordinator), explore_lite, '

@@ -1174,3 +1174,16 @@ def rtabmap_vslam_node(*, namespace='', localization=False, database_path='',
     if ns:
         kwargs['namespace'] = ns
     return Node(**kwargs)
+
+
+def parse_param_overrides(raw: str) -> dict:
+    """Parse a JSON object of node-parameter overrides ('' -> {}). Raises on bad JSON
+    so a typo'd ablation fails loudly instead of silently running the baseline."""
+    import json
+    raw = (raw or '').strip()
+    if not raw:
+        return {}
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError(f'explorer_params must be a JSON object, got {type(data).__name__}')
+    return data

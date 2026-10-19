@@ -4,6 +4,7 @@
 # Usage: scripts/benchmark_nav_matrix.sh [world] [combo...]   combo = <planner>:<controller>
 #   e.g. scripts/benchmark_nav_matrix.sh cafe navfn:dwb smac2d:dwb navfn:mppi
 # Env: ROS_DOMAIN_ID (default 204, isolated), OUT (default /tmp/nav_matrix_<world>)
+#      EXTRA_LAUNCH  extra launch args, e.g. EXTRA_LAUNCH='dynamic_obstacles:=2' (moving obstacles)
 set -u
 WORLD=${1:-cafe}; shift 1 2>/dev/null || true
 COMBOS=${*:-navfn:dwb navfn_dijkstra:dwb smac2d:dwb thetastar:dwb navfn:mppi navfn:rpp}
@@ -27,7 +28,7 @@ for C in $COMBOS; do
   kill_domain; rm -f "$OUT/$L".*
   log "combo planner=$P controller=$K"
   setsid timeout 420 ros2 launch rosnav_bot slam_nav.launch.py world_name:=$WORLD slam:=false \
-      planner:=$P controller:=$K headless:=true rviz:=False > "$OUT/$L.launch.log" 2>&1 < /dev/null &
+      planner:=$P controller:=$K headless:=true rviz:=False ${EXTRA_LAUNCH:-} > "$OUT/$L.launch.log" 2>&1 < /dev/null &
   sleep 75
   timeout 300 ros2 run rosnav_bot benchmark.py --ros-args -p use_sim_time:=true -p mode:=nav -p label:=$L \
       -p goals_file:=$GOALS -p out_dir:=$OUT > "$OUT/$L.bench.log" 2>&1

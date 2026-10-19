@@ -103,11 +103,33 @@ def _declare_numeric(node, name, default):
     node.declare_parameter(name, default, ParameterDescriptor(dynamic_typing=True))
 
 
+def _provenance() -> dict:
+    """Git hash/dirty flag + ROS env, so any benchmark number is traceable to a run."""
+    import subprocess
+    here = os.path.dirname(os.path.realpath(__file__))
+
+    def _git(*args):
+        try:
+            return subprocess.check_output(
+                ['git', '-C', here, *args], stderr=subprocess.DEVNULL, timeout=5).decode().strip()
+        except Exception:
+            return None
+    dirty = _git('status', '--porcelain', '--', here)
+    return {
+        'git_commit': _git('rev-parse', 'HEAD'),
+        'git_dirty': bool(dirty) if dirty is not None else None,
+        'ros_distro': os.environ.get('ROS_DISTRO'),
+        'ros_domain_id': os.environ.get('ROS_DOMAIN_ID'),
+        'rmw': os.environ.get('RMW_IMPLEMENTATION'),
+    }
+
+
 def _write_report(out_dir: str, label: str, mode: str, data: dict, logger):
     path = os.path.join(out_dir, f'{label}_{mode}.json')
     data['label'] = label
     data['mode'] = mode
     data['generated_at'] = time.time()
+    data['provenance'] = _provenance()
     with open(path, 'w') as f:
         json.dump(data, f, indent=2)
     logger.info(f'Report written: {path}')
@@ -124,8 +146,10 @@ class SlamBenchmark(Node):
         _declare_numeric(self, 'duration_sec', 120.0)
         self.declare_parameter('out_dir', '~/rosnav_benchmarks')
         _declare_numeric(self, 'converge_threshold', 0.98)
+        self.declare_parameter('map_topic', '/map')  # /map_merged for multi-robot runs
 
         self._label = self.get_parameter('label').value
+        self._map_topic = self.get_parameter('map_topic').value
         self._duration = float(self.get_parameter('duration_sec').value)
         self._out_dir = _out_dir(self.get_parameter('out_dir').value)
         self._converge_threshold = float(self.get_parameter('converge_threshold').value)
@@ -138,7 +162,7 @@ class SlamBenchmark(Node):
         qos = QoSProfile(depth=5)
         qos.reliability = QoSReliabilityPolicy.RELIABLE
         qos.durability = QoSDurabilityPolicy.TRANSIENT_LOCAL
-        self.create_subscription(OccupancyGrid, '/map', self._map_cb, qos)
+        self.create_subscription(OccupancyGrid, self._map_topic, self._map_cb, qos)
 
         self.get_logger().info(
             f'[slam] label={self._label} duration={self._duration}s — '

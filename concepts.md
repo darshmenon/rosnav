@@ -356,6 +356,32 @@ Ran `mode:=nav` on `cafe` (`slam:=false`, AMCL) and found two real gotchas:
 
 ---
 
+### Statistical & stress benchmarks (scripts/)
+
+Single runs are noise; these add repeats, ablations and stress. All run headless in an
+isolated random `ROS_DOMAIN_ID` and kill only their own domain's processes. Helpers live in
+`scripts/common_bench.sh`. Every `benchmark.py` JSON now carries a `provenance` block
+(git commit, dirty flag, ROS env) so a number can be traced to a run.
+
+| Script | What it answers |
+|---|---|
+| `benchmark_explore_trials.sh` | N seeded trials per explorer arm (spawn yaw from seed) → coverage mean ± 95% CI |
+| `benchmark_ablation.sh` | Turns off hysteresis / suspicious-frontier penalty / clearance / failed-cooldown one at a time (via `explorer_params:='{"hysteresis_gain":0.0}'`) |
+| `benchmark_scaling.sh` | Coverage + peak load vs robot count (`SIZES="1 2 4 8"`), optionally × `ALLOC="greedy hungarian"` |
+| `benchmark_fault_injection.sh` | Kills controller/planner/SLAM/scan gate/coordinator mid-run; coverage vs no-fault baseline |
+| `benchmark_nav_matrix.sh` | Planner × controller; `EXTRA_LAUNCH='dynamic_obstacles:=2'` repeats it with moving obstacles |
+| `smoke_ci.sh` | Short pass/fail gate (exit code) for CI: boot + coverage ≥ `MIN_COVERAGE` |
+| `plot_run_paths.py` | Trajectory overlay + visit-density heatmap from logged odom CSVs |
+
+`multi_robot.launch.py allocation:=hungarian` makes `frontier_coordinator` assign idle robots
+to frontiers by optimal joint assignment (scipy `linear_sum_assignment`) instead of greedy
+per-robot order; conflicts within `assign_radius` are dropped and fall back to greedy.
+Unit-tested in `test/test_frontier_coordinator_allocation.py`.
+
+Caveat: `benchmark.py mode:=slam` coverage is relative to the *current* map grid, which grows
+with SLAM, so `time_to_converge_sec` can read tiny (a few seconds) even though the world is
+mostly unexplored — compare coverage across arms, not absolute percentages.
+
 ## 6b. Localization Filter — EKF vs UKF
 
 `slam_nav.launch.py localization_filter:=<ekf|ukf>` (default `ekf`). This is the

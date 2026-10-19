@@ -11,14 +11,6 @@
         <box size="0.65 0.4 0.01"/>
       </geometry>
     </collision>
-    <visual>
-      <geometry>
-        <box size="0.65 0.4 0.01"/>
-      </geometry>
-      <material name="footprint_material">
-        <color rgba="0.0 0.0 1.0 0.5"/>
-      </material>
-    </visual>
   </link>
 
   <joint name="base_footprint_joint" type="fixed">
@@ -36,13 +28,29 @@
 
   <link name="chassis">
     <visual>
-      <origin xyz="0.3 0 0.075"/>
-      <geometry>
-        <box size="0.65 0.35 0.15"/>
-      </geometry>
-      <material name="chassis_material">
-        <color rgba="0.72 0.23 0.10 1.0"/>
-      </material>
+      <origin xyz="0.3 0 0.05"/>
+      <geometry><box size="0.65 0.35 0.10"/></geometry>
+      <material name="skirt_material"><color rgba="0.16 0.16 0.18 1.0"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0.3 0 0.125"/>
+      <geometry><box size="0.63 0.33 0.05"/></geometry>
+      <material name="chassis_material"><color rgba="0.72 0.23 0.10 1.0"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0.27499999999999997 0 0.151"/>
+      <geometry><box size="0.50 0.25 0.004"/></geometry>
+      <material name="accent_material"><color rgba="0.62 0.50 0.88 1.0"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0.635 0 0.04"/>
+      <geometry><box size="0.02 0.35 0.05"/></geometry>
+      <material name="bumper_material"><color rgba="0.08 0.08 0.09 1.0"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0.616 0 0.125"/>
+      <geometry><box size="0.004 0.25 0.012"/></geometry>
+      <material name="led_material"><color rgba="0.1 0.9 1.0 1.0"/></material>
     </visual>
     <collision>
       <origin xyz="0.3 0 0.075"/>
@@ -69,8 +77,12 @@
         <cylinder radius="0.075" length="0.04"/>
       </geometry>
       <material name="wheel_material">
-        <color rgba="0 0 0 1.0"/>
+        <color rgba="0.05 0.05 0.05 1.0"/>
       </material>
+    </visual>
+    <visual>
+      <geometry><cylinder radius="0.045" length="0.044"/></geometry>
+      <material name="hub_material"><color rgba="0.70 0.70 0.74 1.0"/></material>
     </visual>
     <collision>
       <geometry>
@@ -95,8 +107,12 @@
         <cylinder radius="0.075" length="0.04"/>
       </geometry>
       <material name="wheel_material">
-        <color rgba="0 0 0 1.0"/>
+        <color rgba="0.05 0.05 0.05 1.0"/>
       </material>
+    </visual>
+    <visual>
+      <geometry><cylinder radius="0.045" length="0.044"/></geometry>
+      <material name="hub_material"><color rgba="0.70 0.70 0.74 1.0"/></material>
     </visual>
     <collision>
       <geometry>
@@ -151,8 +167,12 @@
         <cylinder radius="0.075" length="0.04"/>
       </geometry>
       <material name="wheel_material">
-        <color rgba="0 0 0 1.0"/>
+        <color rgba="0.05 0.05 0.05 1.0"/>
       </material>
+    </visual>
+    <visual>
+      <geometry><cylinder radius="0.045" length="0.044"/></geometry>
+      <material name="hub_material"><color rgba="0.70 0.70 0.74 1.0"/></material>
     </visual>
     <collision>
       <geometry>
@@ -204,8 +224,12 @@
         <cylinder radius="0.075" length="0.04"/>
       </geometry>
       <material name="wheel_material">
-        <color rgba="0 0 0 1.0"/>
+        <color rgba="0.05 0.05 0.05 1.0"/>
       </material>
+    </visual>
+    <visual>
+      <geometry><cylinder radius="0.045" length="0.044"/></geometry>
+      <material name="hub_material"><color rgba="0.70 0.70 0.74 1.0"/></material>
     </visual>
     <collision>
       <geometry>
