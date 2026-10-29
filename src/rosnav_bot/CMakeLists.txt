@@ -106,6 +106,9 @@ install(
     scripts/gen_terrain_speed_mask.py
     scripts/camera_terrain_speed_mask.py
     scripts/gen_privacy_zone_mask.py
+    scripts/mapf_gazebo.py
+    scripts/cbf_safety_filter.py
+    scripts/mapf_compare.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(

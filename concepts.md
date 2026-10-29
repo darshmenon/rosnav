@@ -942,15 +942,23 @@ If a mission fails, the task is retried up to the configured retry limit.
 
 ### Collision Avoidance vs CBS
 
-This repo does not implement Conflict-Based Search (CBS) or another centralized multi-agent path planner.
+Two coordination styles exist side by side.
 
-Instead, it uses:
+**Reactive (fleet default):**
 - independent Nav2 planners per robot
 - a shared global map
 - priority-based yielding for near conflicts
 - deadlock recovery when a robot stops making progress
 
-That means coordination here is reactive rather than globally optimal.
+**Centralized MAPF (offline, conflict-free by construction):**
+- `scripts/cbs_planner.py` — ROS node: CBS on a downsampled `/map`, paths sent to each robot's `navigate_through_poses`.
+- `scripts/mapf_compare.py` — standalone benchmark of independent A\*, prioritized planning (PP), CBS and ECBS (w=1.5) on a 4-connected grid; writes charts/GIF to `images/mapf/`.
+- `scripts/mapf_gazebo.py` + `launch/mapf_gazebo.launch.py` — generates a Gazebo grid world (colour-coded start tile / goal tile+post per robot) and runs the plan on 16 lightweight diff-drive robots with a lock-step follower (no Nav2, no sensors). Start/goal cells are always distinct and free; the solver forbids two robots sharing a cell or swapping.
+- `nav:=true` runs Nav2 (NavFn A\* + RPP, static map, ground-truth TF, no lidar) on robot1 only, using the generated `maps/map_mapf_grid.yaml`; verified reaching a goal. Multi-robot Nav2 with lidar is not built.
+
+Benchmark (24–32² grid, 12% obstacles, 5 seeds, 10 s CBS cap): PP and ECBS solved 100% up to 16 robots (PP ≈ 4–5% costlier than the independent lower bound at 12+ robots, ECBS ≈ 1–2%); optimal CBS solved 60% at 12 and 16 robots and took 4–6 s on average vs 0.1–0.25 s for ECBS/PP.
+
+The reactive path is not globally optimal; the centralized MAPF path is conflict-free up front but not wired into the fleet launch by default.
 
 ### Behavior Trees in Multi-Robot Mode
 
