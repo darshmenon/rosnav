@@ -59,11 +59,16 @@ class ScanNavEnv(gym.Env):
         v_max: float = 0.5,
         w_max: float = 1.0,
         goal_tol: float = 0.35,
+        n_obstacles: int = 6,
+        obstacle_radius: float = 0.25,
         seed: Optional[int] = None,
     ):
         super().__init__()
         occupied, free, resolution, origin = load_occupancy(map_yaml)
         self.occupied = occupied
+        self._base_occupied = occupied.copy()
+        self.n_obstacles = n_obstacles
+        self.obstacle_radius = obstacle_radius
         self.free = free
         self.resolution = resolution
         self.origin = origin  # (x, y, yaw)
@@ -151,9 +156,26 @@ class ScanNavEnv(gym.Env):
         scan = self._raycast() / self.max_range
         return np.concatenate([scan, self._goal_relative()]).astype(np.float32)
 
+    def _stamp_obstacles(self):
+        """Randomize discs on free space each episode so the policy learns to avoid unmapped obstacles."""
+        self.occupied = self._base_occupied.copy()
+        rad = max(1, int(self.obstacle_radius / self.resolution))
+        yy, xx = np.ogrid[-rad:rad + 1, -rad:rad + 1]
+        disc = (xx * xx + yy * yy) <= rad * rad
+        free_idx = np.argwhere(self.free & ~self._base_occupied)
+        for _ in range(self.n_obstacles):
+            if len(free_idx) == 0:
+                break
+            r, c = free_idx[self._rng.integers(0, len(free_idx))]
+            r0, r1 = max(0, r - rad), min(self.h, r + rad + 1)
+            c0, c1 = max(0, c - rad), min(self.w, c + rad + 1)
+            sub = disc[r0 - (r - rad):r1 - (r - rad), c0 - (c - rad):c1 - (c - rad)]
+            self.occupied[r0:r1, c0:c1] |= sub
+
     def reset(self, *, seed=None, options=None):
         if seed is not None:
             self._rng = np.random.default_rng(seed)
+        self._stamp_obstacles()
         self._xy = self._sample_free()
         self._yaw = float(self._rng.uniform(-math.pi, math.pi))
         self._goal = self._sample_free()
@@ -188,6 +210,10 @@ class ScanNavEnv(gym.Env):
         reward = progress * 2.0 - 0.01  # progress + small time cost
         if collided:
             reward -= 1.0
+        # clearance shaping: penalise hugging obstacles
+        min_rng = float(self._raycast().min())
+        if min_rng < 0.6:
+            reward -= 0.2 * (0.6 - min_rng) / 0.6
         terminated = dist < self.goal_tol
         if terminated:
             reward += 5.0
