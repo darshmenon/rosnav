@@ -36,20 +36,18 @@ Deep dive → [`concepts.md`](concepts.md) · launch args → `ros2 launch rosna
 - [1. Install](#1-install) (incl. [Docker](#docker-alternative-to-the-install-above))
 - [2. Map · save · navigate](#2-map--save--navigate)
 
-**Features**
-- [3. ArUco docking](#3-aruco-docking)
-
 **Platforms & tuning**
-- [4. Platforms — drive bases, chassis skins, how to switch](#4-platforms--drive-bases-chassis-skins-how-to-switch)
-- [5. Controllers, SLAM backends & benchmarking](#5-controllers-slam-backends--benchmarking)
-- [6. Worlds](#6-worlds)
-- [7. Update YAML (tuning)](#7-update-yaml-tuning)
+- [3. Platforms — drive bases, chassis skins, how to switch](#3-platforms--drive-bases-chassis-skins-how-to-switch)
+- [4. Controllers, SLAM backends & benchmarking](#4-controllers-slam-backends--benchmarking)
+- [5. Worlds](#5-worlds)
+- [6. Update YAML (tuning)](#6-update-yaml-tuning)
 
 **Fleet, explore & features**
-- [8. MAPF · CBF](#8-mapf--cbf)
-- [9. Fleet & explore](#9-fleet--explore)
-- [10. Dynamic obstacles](#10-dynamic-obstacles)
-- [11. YOLO object detection](#11-yolo-object-detection)
+- [7. MAPF · CBF](#7-mapf--cbf)
+- [8. Fleet & explore](#8-fleet--explore)
+- [9. Dynamic obstacles](#9-dynamic-obstacles)
+- [10. YOLO object detection](#10-yolo-object-detection)
+- [11. ArUco docking](#11-aruco-docking)
 - [12. LLM voice navigation](#12-llm-voice-navigation)
 
 **Fleet & multi-robot**
@@ -97,7 +95,7 @@ ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
 `docker-compose.yml` bind-mounts `src/` so host edits are picked up without a
 full image rebuild (just re-`colcon build` inside the container). See
 [`docker/orb_slam3/README.md`](docker/orb_slam3/README.md) for the separate
-ORB-SLAM3 visual-SLAM sidecar (§5 below has more on comparing SLAM backends).
+ORB-SLAM3 visual-SLAM sidecar (§4 below has more on comparing SLAM backends).
 
 ---
 
@@ -192,36 +190,13 @@ Goal accepted but no motion? Keep `safety:=true` (Nav2 `/cmd_vel` → Gazebo `/c
 Multi-SLAM (`slam_mode:=multi`): save `/map_merged` with `-t /map_merged` or `fleet_manager.py savemap`.
 
 <p align="center">
-  <img src="images/nav2spedup-ezgif.com-video-to-gif-converter.gif" alt="Nav2 autonomous navigation" width="720"/>
-  <br/><sub>Single-robot SLAM · Nav2 · frontier exploration</sub>
+  <img src="images/nav2_hospital_prebuilt_map.gif" alt="Nav2 autonomous navigation on the prebuilt hospital map" width="720"/>
+  <br/><sub>Nav2 patrol on the prebuilt hospital map (<code>slam:=false controller:=rpp</code>) · green = global plan</sub>
 </p>
 
 ---
 
-## 3. ArUco docking
-
-Needs: `enable_camera:=true` and `sudo apt install ros-humble-cv-bridge python3-opencv`. Hospital world has the dock marker.
-
-```bash
-ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital enable_camera:=true rviz:=true
-
-ros2 run rosnav_bot fleet_manager.py dock '' charging_dock
-ros2 run rosnav_bot fleet_manager.py undock '' 0.5 0.05
-
-# Visual approach only (skip Nav2 staging)
-ros2 run rosnav_bot aruco_dock.py --ros-args -p dock_name:=charging_dock
-```
-
-Dock poses / marker IDs → `config/docks.yaml`. Live view: `/tmp/aruco_dock_view.jpg` or RViz `Image` on `/camera/image_raw`.
-
-<p align="center">
-  <img src="images/docking.png" alt="ArUco visual docking" width="720"/>
-  <br/><sub>ArUco visual docking</sub>
-</p>
-
----
-
-## 4. Platforms — drive bases, chassis skins, how to switch
+## 3. Platforms — drive bases, chassis skins, how to switch
 
 Two independent launch args:
 
@@ -288,7 +263,7 @@ ros2 launch rosnav_bot multi_robot.launch.py robot_model:=husky
 
 ---
 
-## 5. Controllers, SLAM backends & benchmarking
+## 4. Controllers, SLAM backends & benchmarking
 
 ### Controllers & sensors (orthogonal)
 
@@ -397,7 +372,7 @@ drift, with its position-covariance ellipse on.
 #### RTAB-Map OctoMap layer
 
 OctoMap voxel layer (blue voxels) live during frontier exploration of the single-room
-`coverage_100` world (same session as the coverage screenshots in §6):
+`coverage_100` world (same session as the coverage screenshots in §5):
 
 <table align="center">
   <tr>
@@ -510,7 +485,7 @@ Stop other Gazebo/ROS sims first — parallel `gz sim` instances starve DDS and 
 
 ---
 
-## 6. Worlds
+## 5. Worlds
 
 | | |
 |---|---|
@@ -573,7 +548,7 @@ around.
 
 ---
 
-## 7. Update YAML (tuning)
+## 6. Update YAML (tuning)
 
 All configs live under `src/rosnav_bot/config/`. With `--symlink-install`, edit then **relaunch** (no rebuild).
 
@@ -605,7 +580,7 @@ More → [`concepts.md`](concepts.md).
 
 ---
 
-## 8. MAPF · CBF
+## 7. MAPF · CBF
 
 <p align="center"><img src="images/mapf/gazebo_16robots.gif" alt="16 diff-drive robots following a CBS/ECBS plan on a Gazebo grid" width="460"/></p>
 
@@ -622,7 +597,7 @@ ros2 run rosnav_bot cbf_safety_filter.py --ros-args -p self_ns:=robot1 -p neighb
 
 ---
 
-## 9. Fleet & explore
+## 8. Fleet & explore
 
 ```bash
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
@@ -640,7 +615,7 @@ ros2 run rosnav_bot coverage_planner.py
 
 ---
 
-## 10. Dynamic obstacles
+## 9. Dynamic obstacles
 
 Spawn a patrolling obstacle to test avoidance and [`obstacle_tracker.py`](concepts.md#25-moving-obstacle-tracking-obstacle_trackerpy) against a moving object, not just static walls.
 
@@ -655,7 +630,7 @@ Details → [concepts.md §26](concepts.md#26-dynamic-obstacles-dynamic_obstacle
 
 ---
 
-## 11. YOLO object detection
+## 10. YOLO object detection
 
 Needs: `pip install ultralytics`. Camera is enabled automatically with `enable_yolo:=true`.
 
@@ -682,6 +657,30 @@ python3 src/rosnav_bot/scripts/yolo_train.py --data $HOME/yolo_data/cafe_auto/da
 ```
 
 Details (why `map_frame:=odom`, not the default `map`) → [concepts.md §35-A](concepts.md#35-ai-training-pipelines-yolo--gs-keepout--rl).
+
+---
+
+## 11. ArUco docking
+
+Needs: `enable_camera:=true` and `sudo apt install ros-humble-cv-bridge python3-opencv`. Hospital world has the dock marker.
+
+```bash
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital enable_camera:=true rviz:=true
+
+ros2 run rosnav_bot fleet_manager.py dock '' charging_dock
+ros2 run rosnav_bot fleet_manager.py undock '' 0.5 0.05
+
+# Visual approach only (skip Nav2 staging)
+ros2 run rosnav_bot aruco_dock.py --ros-args -p dock_name:=charging_dock
+```
+
+Dock poses / marker IDs → `config/docks.yaml`. Live view: `/tmp/aruco_dock_view.jpg` or RViz `Image` on `/camera/image_raw`.
+
+<p align="center">
+  <img src="images/docking.png" alt="ArUco visual docking" width="720"/>
+  <br/><sub>ArUco visual docking</sub>
+</p>
+
 
 ---
 
