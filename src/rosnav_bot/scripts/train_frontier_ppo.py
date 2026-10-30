@@ -54,20 +54,23 @@ class _RotatingEnv:
     """Picks a new map from `map_yamls` each episode reset — same env API,
     keeps the network's input shape (k * n_features) fixed across maps."""
 
-    def __init__(self, map_yamls, k_candidates, max_steps, seed):
+    def __init__(self, map_yamls, k_candidates, max_steps, seed, sensor_range=3.5):
         from rosnav_bot.rl.frontier_env import FrontierSelectEnv
         self._cls = FrontierSelectEnv
         self.map_yamls = map_yamls
         self.k = k_candidates
         self.max_steps = max_steps
+        self.sensor_range = sensor_range
         self._rng = np.random.default_rng(seed)
-        self.env = self._cls(map_yamls[0], k_candidates=k_candidates, max_steps=max_steps)
+        self.env = self._cls(map_yamls[0], k_candidates=k_candidates, max_steps=max_steps,
+                              sensor_range=sensor_range)
         self.observation_space = self.env.observation_space
         self.action_space = self.env.action_space
 
     def reset(self, seed=None):
         map_yaml = self.map_yamls[self._rng.integers(0, len(self.map_yamls))]
-        self.env = self._cls(map_yaml, k_candidates=self.k, max_steps=self.max_steps, seed=seed)
+        self.env = self._cls(map_yaml, k_candidates=self.k, max_steps=self.max_steps, seed=seed,
+                              sensor_range=self.sensor_range)
         return self.env.reset(seed=seed)
 
     def step(self, action):
@@ -191,6 +194,8 @@ def main():
     ap.add_argument('--k-candidates', type=int, default=8)
     ap.add_argument('--max-steps', type=int, default=60)
     ap.add_argument('--seed', type=int, default=0)
+    ap.add_argument('--sensor-range', type=float, default=3.5,
+                    help='metres revealed per step; lower = harder exploration')
     ap.add_argument('--device', default='cpu')
     ap.add_argument('--smoke', action='store_true',
                     help='Short CPU run to verify the pipeline')
@@ -221,7 +226,8 @@ def main():
         maps = maps[:1]
         print(f'[train_frontier_ppo] smoke: timesteps={timesteps} map={maps[0]}', flush=True)
 
-    env = _RotatingEnv(maps, args.k_candidates, args.max_steps, args.seed)
+    env = _RotatingEnv(maps, args.k_candidates, args.max_steps, args.seed,
+                        args.sensor_range)
     path = train_torch(env, timesteps, out_dir, args.seed, args.device,
                         args.k_candidates, N_FEATURES)
     print(f'\n[train_frontier_ppo] saved {path}')

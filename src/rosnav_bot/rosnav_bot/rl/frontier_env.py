@@ -47,8 +47,10 @@ class FrontierSelectEnv(gym.Env):
         max_steps: int = 60,
         target_coverage: float = 0.95,
         seed: Optional[int] = None,
+        sensor_range: float = SENSOR_RANGE_M,
     ):
         super().__init__()
+        self.sensor_range = sensor_range
         occupied, free, resolution, origin = load_occupancy(map_yaml)
         self.occupied = occupied
         self.free = free
@@ -190,7 +192,7 @@ class FrontierSelectEnv(gym.Env):
             self._rng = np.random.default_rng(seed)
         self._known[:] = False
         self._pos_rc = self._sample_free_rc()
-        self._reveal(*self._pos_rc, SENSOR_RANGE_M)
+        self._reveal(*self._pos_rc, self.sensor_range)
         self._last_goal_rc = None
         self._steps = 0
         self._candidates = self._find_candidates()
@@ -203,7 +205,7 @@ class FrontierSelectEnv(gym.Env):
         while not self._candidates and retries < 20:
             self._known[:] = False
             self._pos_rc = self._sample_free_rc()
-            self._reveal(*self._pos_rc, SENSOR_RANGE_M)
+            self._reveal(*self._pos_rc, self.sensor_range)
             self._candidates = self._find_candidates()
             retries += 1
         obs, valid = self._obs_and_mask()
@@ -220,7 +222,7 @@ class FrontierSelectEnv(gym.Env):
         chosen = valid_candidates[action]
         gy, gx = chosen['goal_rc']
         traveled = chosen['distance']
-        gained = self._reveal(gy, gx, SENSOR_RANGE_M)
+        gained = self._reveal(gy, gx, self.sensor_range)
         self._pos_rc = (gy, gx)
         self._last_goal_rc = (gy, gx)
 

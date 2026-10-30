@@ -62,8 +62,12 @@ class ScanNavEnv(gym.Env):
         n_obstacles: int = 6,
         obstacle_radius: float = 0.25,
         seed: Optional[int] = None,
+        goal_max_dist: Optional[float] = None,
     ):
         super().__init__()
+        # When set, goals are sampled within this radius of the start with a
+        # clear straight line, so a reactive policy can actually solve them.
+        self.goal_max_dist = goal_max_dist
         occupied, free, resolution, origin = load_occupancy(map_yaml)
         self.occupied = occupied
         self._base_occupied = occupied.copy()
@@ -142,6 +146,10 @@ class ScanNavEnv(gym.Env):
                     break
         return ranges
 
+    def _line_free(self, a, b) -> bool:
+        n = max(2, int(np.linalg.norm(b - a) / (self.resolution * 2)))
+        return all(self._is_free(*(a + (b - a) * t)) for t in np.linspace(0, 1, n))
+
     def _goal_relative(self) -> np.ndarray:
         dx = self._goal[0] - self._xy[0]
         dy = self._goal[1] - self._xy[1]
@@ -184,6 +192,13 @@ class ScanNavEnv(gym.Env):
             if np.linalg.norm(self._goal - self._xy) > 1.0:
                 break
             self._goal = self._sample_free()
+        if self.goal_max_dist is not None:
+            for _ in range(500):
+                g = self._sample_free()
+                d = float(np.linalg.norm(g - self._xy))
+                if 1.0 < d <= self.goal_max_dist and self._line_free(self._xy, g):
+                    self._goal = g
+                    break
         self._steps = 0
         self._prev_dist = float(np.linalg.norm(self._goal - self._xy))
         return self._obs(), {}

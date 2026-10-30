@@ -162,6 +162,8 @@ def main():
     ap.add_argument('--out', default='runs/rl/ppo_scan_nav')
     ap.add_argument('--n-beams', type=int, default=36)
     ap.add_argument('--seed', type=int, default=0)
+    ap.add_argument('--goal-max-dist', type=float, default=None,
+                    help='sample goals within this radius with clear line of sight (curriculum)')
     ap.add_argument('--device', default='cpu')
     ap.add_argument('--backend', choices=('torch', 'sb3'), default='torch',
                     help='torch=pure PyTorch PPO (default); sb3=stable-baselines3')
@@ -188,7 +190,8 @@ def main():
         print(f'map not found: {map_yaml}', file=sys.stderr)
         sys.exit(2)
 
-    env = ScanNavEnv(map_yaml, n_beams=args.n_beams, seed=args.seed)
+    env = ScanNavEnv(map_yaml, n_beams=args.n_beams, seed=args.seed,
+                     goal_max_dist=args.goal_max_dist)
     if args.backend == 'sb3':
         path = train_sb3(env, timesteps, out_dir, args.seed)
     else:
