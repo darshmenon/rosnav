@@ -99,6 +99,7 @@ install(
     scripts/tf_freeze_watchdog.py
     scripts/mpc_core.py
     scripts/mpc_controller.py
+    scripts/tf_relay.py
     scripts/slam_stall_watchdog.py
     scripts/slam_posegraph_autosave.py
     scripts/slam_bootstrap_motion.py

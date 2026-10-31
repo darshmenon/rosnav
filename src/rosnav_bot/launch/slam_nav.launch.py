@@ -43,7 +43,7 @@ from launch.actions import (
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
+from launch_ros.actions import Node, SetRemap
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _common  # noqa: E402  (shared with multi_robot.launch.py)
@@ -688,9 +688,21 @@ def _build_runtime_actions(context, pkg_share: str):
 
     if use_slam or use_vslam_localize or use_orbslam3:
         # Nav2 navigation only — /map (+ map→odom) comes from SLAM or VSLAM localize.
+        # tf_relay:=true (experiment for the controller map->odom freeze): Nav2 listens to
+        # /tf_nav,/tf_static_nav fed by one local relay node instead of /tf directly.
+        tf_relay_on = LaunchConfiguration('tf_relay').perform(context).strip().lower() in ('true', '1')
+        relay_actions = []
+        if tf_relay_on:
+            print('[slam_nav] tf_relay ENABLED — Nav2 /tf -> /tf_nav, /tf_static -> /tf_static_nav')
+            relay_actions = [
+                Node(package='rosnav_bot', executable='tf_relay.py', name='tf_relay',
+                     output='screen', parameters=[{'use_sim_time': True}]),
+                SetRemap(src='/tf', dst='/tf_nav'),
+                SetRemap(src='/tf_static', dst='/tf_static_nav'),
+            ]
         nav2 = TimerAction(
-            period=8.0,
-            actions=[
+            period=8.0 if not tf_relay_on else 7.0,
+            actions=relay_actions[:1] + [GroupAction(relay_actions[1:] + [
                 IncludeLaunchDescription(
                     PythonLaunchDescriptionSource(
                         os.path.join(
@@ -704,7 +716,7 @@ def _build_runtime_actions(context, pkg_share: str):
                         'params_file': _params_file,
                     }.items(),
                 )
-            ],
+            ])],
         )
     else:
         nav2 = TimerAction(
@@ -1486,6 +1498,10 @@ def generate_launch_description():
             name='slam_watchdog', default_value='true',
             description='slam_algo:=2d (online_async/sync): restart slam_toolbox when map->odom goes '
                         'stale (it hangs ~30 s in on some runs). See scripts/slam_stall_watchdog.py.'),
+        DeclareLaunchArgument(
+            name='tf_relay', default_value='false',
+            description='EXPERIMENTAL: remap Nav2 onto /tf_nav,/tf_static_nav fed by scripts/tf_relay.py '
+                        '(slam / vslam / orbslam3 modes) to test the controller map->odom freeze.'),
         DeclareLaunchArgument(
             name='tf_watchdog', default_value='false',
             description='EXPERIMENTAL, off by default: restart Nav2 via the lifecycle manager on a '
