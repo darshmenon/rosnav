@@ -696,7 +696,11 @@ def _build_runtime_actions(context, pkg_share: str):
             print('[slam_nav] tf_relay ENABLED — Nav2 /tf -> /tf_nav, /tf_static -> /tf_static_nav')
             relay_actions = [
                 Node(package='rosnav_bot', executable='tf_relay.py', name='tf_relay',
-                     output='screen', parameters=[{'use_sim_time': True}]),
+                     output='screen',
+                     parameters=[{'use_sim_time': True,
+                                  'restamp': _common.truthy(
+                                      LaunchConfiguration('tf_relay_restamp').perform(context)),
+                                  'drop_regex': LaunchConfiguration('tf_relay_drop').perform(context)}]),
                 SetRemap(src='/tf', dst='/tf_nav'),
                 SetRemap(src='/tf_static', dst='/tf_static_nav'),
             ]
@@ -1513,6 +1517,12 @@ def generate_launch_description():
             name='tf_relay', default_value='false',
             description='EXPERIMENTAL: remap Nav2 onto /tf_nav,/tf_static_nav fed by scripts/tf_relay.py '
                         '(slam / vslam / orbslam3 modes) to test the controller map->odom freeze.'),
+        DeclareLaunchArgument(
+            name='tf_relay_restamp', default_value='false',
+            description='tf_relay:=true only: re-publish map->odom at 20 Hz with fresh monotonic stamps.'),
+        DeclareLaunchArgument(
+            name='tf_relay_drop', default_value='',
+            description='tf_relay:=true only: regex of child frames NOT forwarded to Nav2 (e.g. wheel|caster).'),
         DeclareLaunchArgument(
             name='tf_watchdog', default_value='false',
             description='EXPERIMENTAL, off by default: restart Nav2 via the lifecycle manager on a '
