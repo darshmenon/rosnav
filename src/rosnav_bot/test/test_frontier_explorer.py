@@ -276,3 +276,46 @@ def test_save_session_checkpoint_noop_when_path_empty(tmp_path):
     explorer = make_bare(_session_path='', _visited=[(1.0, 1.0)])
     explorer._save_session_checkpoint()
     assert list(tmp_path.iterdir()) == []
+
+
+# ----------------------------------------------------------------------
+# Cold-start spin (no frontiers in the first view)
+# ----------------------------------------------------------------------
+class _FakeProc:
+    def __init__(self, running):
+        self._running = running
+
+    def poll(self):
+        return None if self._running else 0
+
+
+def _spin_calls(monkeypatch):
+    calls = []
+    monkeypatch.setattr(frontier_explorer.subprocess, 'Popen',
+                        lambda cmd, **k: calls.append(cmd) or _FakeProc(True))
+    return calls
+
+
+def test_cold_start_spin_sends_one_spin_goal(monkeypatch):
+    calls = _spin_calls(monkeypatch)
+    ex = make_bare(_last_cold_spin=-1e9, _cold_spin_proc=None)
+    ex._cold_start_spin((0.0, 0.0))
+    assert len(calls) == 1 and '/spin' in calls[0]
+
+
+def test_cold_start_spin_is_throttled_and_skips_without_pose(monkeypatch):
+    calls = _spin_calls(monkeypatch)
+    ex = make_bare(_last_cold_spin=-1e9, _cold_spin_proc=None)
+    ex._cold_start_spin(None)                 # no TF yet: nothing to spin from
+    assert calls == []
+    ex._cold_start_spin((0.0, 0.0))
+    ex._cold_spin_proc = None
+    ex._cold_start_spin((0.0, 0.0))           # inside the 60 s window
+    assert len(calls) == 1
+
+
+def test_cold_start_spin_waits_for_running_spin(monkeypatch):
+    calls = _spin_calls(monkeypatch)
+    ex = make_bare(_last_cold_spin=-1e9, _cold_spin_proc=_FakeProc(True))
+    ex._cold_start_spin((0.0, 0.0))
+    assert calls == []

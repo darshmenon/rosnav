@@ -328,6 +328,12 @@ class FrontierExplorer(Node):
         self._empty_streak = 0
         self._last_map_update = 0.0
         self._last_goal_done = 0.0
+        # Spurious successes are Nav2's fault (controller TF), not the frontier's:
+        # back off instead of blacklisting, so exploration survives a TF stall.
+        self._spurious_streak = 0
+        self._hold_goals_until = 0.0
+        self._last_cold_spin = 0.0
+        self._cold_spin_proc = None
         self._visited_relax_streak = 0
         self._failed_frontiers: list[dict] = []
         self._last_free_cells = None
@@ -405,9 +411,28 @@ class FrontierExplorer(Node):
     # ------------------------------------------------------------------
     # Main exploration loop
     # ------------------------------------------------------------------
+    def _cold_start_spin(self, pos):
+        """Nothing to explore from the first view: spin in place (Nav2 /spin) to widen it."""
+        now = time.monotonic()
+        if pos is None or now - self._last_cold_spin < 60.0:
+            return
+        if self._cold_spin_proc is not None and self._cold_spin_proc.poll() is None:
+            return
+        self._last_cold_spin = now
+        self.get_logger().warn('No frontiers in the first view — spinning once in place to look around.')
+        try:
+            self._cold_spin_proc = subprocess.Popen(
+                ['ros2', 'action', 'send_goal', '/spin', 'nav2_msgs/action/Spin',
+                 '{target_yaw: 6.28}'],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as e:
+            self.get_logger().warn(f'Cold-start spin could not start: {e}')
+
     def _explore(self):
         if self._save_proc is not None and self._save_proc.poll() is not None:
             self._save_proc = None
+        if not self._navigating and time.monotonic() < self._hold_goals_until:
+            return
         if self._navigating:
             elapsed = time.monotonic() - self._goal_sent_time
             timed_out = elapsed > self._goal_timeout
@@ -461,6 +486,7 @@ class FrontierExplorer(Node):
                     self._logged_init_wait = True
                     self._last_status_log = now
                 elif now - self._last_status_log >= 10.0:
+                    self._cold_start_spin(pos)
                     reason = 'TF (map->base_link) unavailable' if pos is None else \
                         f'0 candidate cells (detector={self._detector}, robot at ' \
                         f'({pos[0]:.2f}, {pos[1]:.2f}))'
@@ -1513,9 +1539,15 @@ class FrontierExplorer(Node):
                     + (f', robot still {math.hypot(pos[0] - gx, pos[1] - gy):.1f} m away' if far else '')
                     + (f', robot moved only {moved:.2f} m (< {need:.2f} m)' if stayed else '')
                     + ' — not counting as visited.')
-                if self._current_goal is not None:
-                    self._register_failure(*self._current_goal, self._current_frontier_meta)
+                self._spurious_streak += 1
+                backoff = min(30.0, 2.0 * self._spurious_streak)
+                self._hold_goals_until = time.monotonic() + backoff
+                self.get_logger().warn(
+                    f'Nav2 reported {self._spurious_streak} spurious success(es) in a row — '
+                    f'not blacklisting the frontier; holding goals {backoff:.0f}s '
+                    f'(controller TF likely not ready).')
             else:
+                self._spurious_streak = 0
                 self.get_logger().info(
                     f'Reached ({gx:.2f}, {gy:.2f}) in {elapsed:.1f}s '
                     f'(visited={len(self._visited) + 1}). Searching next...')
