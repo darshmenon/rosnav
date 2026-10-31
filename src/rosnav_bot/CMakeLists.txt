@@ -97,6 +97,8 @@ install(
     scripts/slam_accuracy_monitor.py
     scripts/slam_debug_monitor.py
     scripts/tf_freeze_watchdog.py
+    scripts/mpc_core.py
+    scripts/mpc_controller.py
     scripts/slam_stall_watchdog.py
     scripts/slam_posegraph_autosave.py
     scripts/slam_bootstrap_motion.py
@@ -129,6 +131,7 @@ if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)
   ament_add_pytest_test(test_frontier_explorer test/test_frontier_explorer.py)
   ament_add_pytest_test(test_frontier_env test/test_frontier_env.py)
+  ament_add_pytest_test(test_mpc_core test/test_mpc_core.py)
 endif()
 
 ament_package()
