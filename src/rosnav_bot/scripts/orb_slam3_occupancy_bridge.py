@@ -28,6 +28,7 @@ Usage (started automatically by slam_nav.launch.py slam_algo:=orbslam3):
 from __future__ import annotations
 
 import math
+import time
 
 import numpy as np
 import rclpy
@@ -35,9 +36,24 @@ from nav_msgs.msg import MapMetaData, OccupancyGrid
 from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile
+from builtin_interfaces.msg import Time as TimeMsg
 from rclpy.time import Time
 from sensor_msgs.msg import CameraInfo, Image
 import tf2_ros
+from collections import deque
+from geometry_msgs.msg import TransformStamped
+from tf2_msgs.msg import TFMessage
+
+def hold_decision(now_s, last_rx_s, stale_after_s, max_hold_s):
+    """Keepalive policy for map->odom. 'fresh' = the tracker is publishing,
+    'hold' = re-publish the last correction, 'expired' = lost too long, stop (go stale on purpose)."""
+    if last_rx_s is None:
+        return 'fresh'
+    gap = now_s - last_rx_s
+    if gap <= stale_after_s:
+        return 'fresh'
+    return 'hold' if gap <= max_hold_s else 'expired'
+
 
 UNKNOWN = -1
 FREE = 0
@@ -181,20 +197,62 @@ class OrbSlam3OccupancyBridge(Node):
         self.declare_parameter('min_height', 0.05)      # base_link frame, matches pointcloud_to_scan.py
         self.declare_parameter('max_height', 0.55)
         self.declare_parameter('max_range', 8.0)        # matches rtabmap_vslam_node's Grid/RangeMax
-        self.declare_parameter('depth_stride', 6)        # subsample the depth image for speed
+        # subsample the depth image for speed. 3 @ 640 px keeps ~213 rays across the 90 deg FOV
+        # (0.07 m apart at 5 m); the old 6 was tuned for 1280 px and leaves gaps at 640.
+        self.declare_parameter('depth_stride', 3)
         self.declare_parameter('publish_period_sec', 0.5)
         self.declare_parameter('tf_timeout_sec', 0.2)
         self.declare_parameter('max_tf_wait_sec', 1.0)   # drop a depth frame if map->odom never reaches its stamp
         self.declare_parameter('queue_len', 5)
+        # ORB-SLAM3 stops publishing map->odom whenever tracking is LOST (log: "Tracking LOST",
+        # 0 frames/s), so Nav2's TF copy went stale ("Transform data too old"). Hold the last
+        # correction meanwhile: odom->base_link (EKF) stays live, so a constant map->odom is
+        # correct dead reckoning. 'hold_max_sec' bounds it so a dead tracker is not hidden.
+        self.declare_parameter('hold_map_odom', True)
+        # Re-publish the tracker's map->odom from this node. Nav2's controller_server was
+        # observed never (or only until the first stall) receiving the C++ sidecar's /tf
+        # publications while still receiving this node's, so its map frame stayed missing
+        # or froze and every goal "succeeded" instantly. Relaying makes this node the
+        # publisher controller_server hears.
+        self.declare_parameter('relay_map_odom', False)
+        self.declare_parameter('hold_stale_after_sec', 0.3)
+        self.declare_parameter('hold_max_sec', 30.0)
+        self.declare_parameter('odom_frame', 'odom')
         self.declare_parameter('fit_ground_plane', True)  # heights from a per-frame ground fit
+        # Loop closure / drift correction: scans are also stored (subsampled) in the odom frame,
+        # and the grid is rebuilt from them when map->odom shifts, so old walls move with the
+        # corrected map instead of being left smeared/doubled.
+        self.declare_parameter('rebuild_on_jump', True)
+        self.declare_parameter('jump_trans_m', 0.12)
+        self.declare_parameter('jump_rot_deg', 2.0)
+        self.declare_parameter('rebuild_min_interval_sec', 8.0)
+        self.declare_parameter('keyframe_max', 500)
+        self.declare_parameter('keyframe_every', 3)      # store 1 of N integrated frames
+        self.declare_parameter('keyframe_pts', 600)      # rays kept per stored frame
 
         self._resolution = float(self.get_parameter('resolution').value)
         self._min_h = float(self.get_parameter('min_height').value)
         self._max_h = float(self.get_parameter('max_height').value)
+        self._hold = bool(self.get_parameter('hold_map_odom').value)
+        self._relay = bool(self.get_parameter('relay_map_odom').value)
+        self._hold_stale = float(self.get_parameter('hold_stale_after_sec').value)
+        self._hold_max = float(self.get_parameter('hold_max_sec').value)
+        self._odom_frame = str(self.get_parameter('odom_frame').value)
         self._max_wait = float(self.get_parameter('max_tf_wait_sec').value)
         self._queue_len = int(self.get_parameter('queue_len').value)
         self._fit_ground = bool(self.get_parameter('fit_ground_plane').value)
         self._max_range = float(self.get_parameter('max_range').value)
+        self._rebuild_on = bool(self.get_parameter('rebuild_on_jump').value)
+        self._jump_t = float(self.get_parameter('jump_trans_m').value)
+        self._jump_r = math.radians(float(self.get_parameter('jump_rot_deg').value))
+        self._rebuild_gap = float(self.get_parameter('rebuild_min_interval_sec').value)
+        self._kf_every = max(1, int(self.get_parameter('keyframe_every').value))
+        self._kf_pts = max(50, int(self.get_parameter('keyframe_pts').value))
+        self._kf = deque(maxlen=max(10, int(self.get_parameter('keyframe_max').value)))
+        self._ref_mo = None           # (x, y, yaw) of map->odom the current grid was built with
+        self._last_rebuild = 0.0
+        self._rebuilds = 0
+        self._rng = np.random.default_rng(0)
         self._stride = max(1, int(self.get_parameter('depth_stride').value))
         self._map_frame = str(self.get_parameter('map_frame').value)
         self._base_frame = str(self.get_parameter('base_frame').value)
@@ -223,6 +281,15 @@ class OrbSlam3OccupancyBridge(Node):
         period = float(self.get_parameter('publish_period_sec').value)
         self._publish_timer = self.create_timer(period, self._publish_map)
         self._pending = []
+        self._last_mo = None          # last map->odom TransformStamped from the tracker
+        self._last_mo_rx = None       # node-clock seconds when it arrived
+        self._own_stamps = deque(maxlen=400)   # stamps we re-published, to ignore our own echo
+        self._holding = False
+        self._hold_count = 0
+        self._tf_pub = self.create_publisher(TFMessage, '/tf', 100)
+        if self._hold:
+            self.create_subscription(TFMessage, '/tf', self._on_tf, 100)
+            self.create_timer(0.05, self._hold_tick)
         self._dropped = 0
         self._dropped_logged = 0
         self._last_tf_err = ''
@@ -240,6 +307,59 @@ class OrbSlam3OccupancyBridge(Node):
 
     def _on_camera_info(self, msg: CameraInfo) -> None:
         self._camera_info = msg
+
+    def _on_tf(self, msg: TFMessage) -> None:
+        for t in msg.transforms:
+            if t.header.frame_id != self._map_frame or t.child_frame_id != self._odom_frame:
+                continue
+            key = (t.header.stamp.sec, t.header.stamp.nanosec)
+            if key in self._own_stamps:
+                continue          # our own keepalive coming back
+            self._last_mo = t
+            self._last_mo_rx = self.get_clock().now().nanoseconds * 1e-9
+            if self._relay:
+                out = TransformStamped()
+                out.header.frame_id = t.header.frame_id
+                out.child_frame_id = t.child_frame_id
+                # new stamp object: sharing t's would also bump the tracker's own stored copy
+                ns = t.header.stamp.nanosec
+                out.header.stamp = TimeMsg(
+                    sec=t.header.stamp.sec, nanosec=ns + 1000 if ns < 999_999_000 else ns)
+                out.transform = t.transform
+                self._own_stamps.append((out.header.stamp.sec, out.header.stamp.nanosec))
+                self._tf_pub.publish(TFMessage(transforms=[out]))
+            if self._holding:
+                self._holding = False
+                self.get_logger().info(
+                    f'tracker publishing {self._map_frame}->{self._odom_frame} again after '
+                    f'holding it for {self._hold_count} ticks')
+
+    def _hold_tick(self) -> None:
+        now_s = self.get_clock().now().nanoseconds * 1e-9
+        state = hold_decision(now_s, self._last_mo_rx, self._hold_stale, self._hold_max)
+        if state == 'fresh':
+            return
+        if state == 'expired':
+            if self._holding:
+                self._holding = False
+                self.get_logger().error(
+                    f'tracker silent for >{self._hold_max}s: no longer holding '
+                    f'{self._map_frame}->{self._odom_frame} (TF will go stale, Nav2 will stop)')
+            return
+        if not self._holding:
+            self._holding = True
+            self._hold_count = 0
+            self.get_logger().warn(
+                f'tracker stopped publishing {self._map_frame}->{self._odom_frame} (tracking '
+                f'lost?): holding the last correction for up to {self._hold_max}s')
+        out = TransformStamped()
+        out.header.frame_id = self._last_mo.header.frame_id
+        out.child_frame_id = self._last_mo.child_frame_id
+        out.header.stamp = self.get_clock().now().to_msg()
+        out.transform = self._last_mo.transform
+        self._own_stamps.append((out.header.stamp.sec, out.header.stamp.nanosec))
+        self._tf_pub.publish(TFMessage(transforms=[out]))
+        self._hold_count += 1
 
     def _on_depth(self, msg: Image) -> None:
         """Queue the frame; _drain() integrates it once map->odom has caught up.
@@ -281,6 +401,8 @@ class OrbSlam3OccupancyBridge(Node):
                 self._map_frame, self._base_frame, stamp)
             tf_map_cam = self._tf_buffer.lookup_transform(
                 self._map_frame, msg.header.frame_id, stamp)
+            tf_map_odom = (self._tf_buffer.lookup_transform(
+                self._map_frame, self._odom_frame, stamp) if self._rebuild_on else None)
         except (tf2_ros.LookupException, tf2_ros.ConnectivityException,
                 tf2_ros.ExtrapolationException) as e:
             self._last_tf_err = f'{type(e).__name__}: {str(e)[:120]}'
@@ -333,11 +455,73 @@ class OrbSlam3OccupancyBridge(Node):
         self._grid.center_on(t.x, t.y)
         self._grid.integrate(t.x, t.y, pts_map[floor_m, :2], pts_map[band_m, :2])
         self._frames += 1
+        if tf_map_odom is not None:
+            mo = self._mo_pose(tf_map_odom)
+            if self._ref_mo is None:
+                self._ref_mo = mo
+            if self._frames % self._kf_every == 0:
+                self._store_keyframe(mo, (t.x, t.y), pts_map[floor_m, :2], pts_map[band_m, :2])
+            self._maybe_rebuild(mo)
         if self._frames % 40 == 1:
             self.get_logger().info(
                 f'integrated frame {self._frames}: floor={int(floor_m.sum())} '
                 f'obstacle={int(band_m.sum())} pts, ground_plane={"fit" if plane else "none"}, grid={self._grid.l.shape}')
         return 'ok'
+
+    @staticmethod
+    def _mo_pose(tf) -> tuple:
+        q, tr = tf.transform.rotation, tf.transform.translation
+        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        return (tr.x, tr.y, yaw)
+
+    @staticmethod
+    def _map_to_odom(xy: np.ndarray, mo: tuple) -> np.ndarray:
+        c, s_ = math.cos(-mo[2]), math.sin(-mo[2])
+        d = xy - np.array([mo[0], mo[1]])
+        return np.stack([c * d[:, 0] - s_ * d[:, 1], s_ * d[:, 0] + c * d[:, 1]], axis=1)
+
+    @staticmethod
+    def _odom_to_map(xy: np.ndarray, mo: tuple) -> np.ndarray:
+        c, s_ = math.cos(mo[2]), math.sin(mo[2])
+        return np.stack([c * xy[:, 0] - s_ * xy[:, 1] + mo[0],
+                         s_ * xy[:, 0] + c * xy[:, 1] + mo[1]], axis=1)
+
+    def _store_keyframe(self, mo, sensor_xy, free_xy, occ_xy) -> None:
+        half = self._kf_pts // 2
+
+        def pick(a):
+            if len(a) > half:
+                a = a[self._rng.choice(len(a), half, replace=False)]
+            return self._map_to_odom(a, mo).astype(np.float32) if len(a) else np.empty((0, 2), np.float32)
+        sens = self._map_to_odom(np.array([sensor_xy]), mo)[0]
+        self._kf.append((float(sens[0]), float(sens[1]), pick(free_xy), pick(occ_xy)))
+
+    def _maybe_rebuild(self, mo) -> None:
+        ref = self._ref_mo
+        dr = abs((mo[2] - ref[2] + math.pi) % (2 * math.pi) - math.pi)
+        if math.hypot(mo[0] - ref[0], mo[1] - ref[1]) < self._jump_t and dr < self._jump_r:
+            return
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if now - self._last_rebuild < self._rebuild_gap:
+            return
+        t0 = time.monotonic()
+        old = self._grid
+        new = LogOddsGrid(self._resolution, 1.0)
+        new.l = np.zeros_like(old.l)
+        new.ox, new.oy = old.ox, old.oy
+        for sx, sy, f_o, o_o in self._kf:
+            sm = self._odom_to_map(np.array([[sx, sy]]), mo)[0]
+            new.integrate(sm[0], sm[1],
+                          self._odom_to_map(f_o, mo) if len(f_o) else f_o.reshape(0, 2),
+                          self._odom_to_map(o_o, mo) if len(o_o) else o_o.reshape(0, 2))
+        self._grid = new
+        self._ref_mo = mo
+        self._last_rebuild = now
+        self._rebuilds += 1
+        self.get_logger().info(
+            f'map->odom shifted {math.hypot(mo[0] - ref[0], mo[1] - ref[1]):.2f} m / '
+            f'{math.degrees(dr):.1f} deg: rebuilt grid from {len(self._kf)} stored scans in '
+            f'{time.monotonic() - t0:.2f}s (rebuild #{self._rebuilds})')
 
     def _publish_map(self) -> None:
         if self._grid.ox is None:

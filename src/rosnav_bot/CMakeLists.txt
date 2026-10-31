@@ -132,6 +132,7 @@ if(BUILD_TESTING)
   ament_add_pytest_test(test_frontier_explorer test/test_frontier_explorer.py)
   ament_add_pytest_test(test_frontier_env test/test_frontier_env.py)
   ament_add_pytest_test(test_mpc_core test/test_mpc_core.py)
+  ament_add_pytest_test(test_orb_slam3_occupancy_bridge test/test_orb_slam3_occupancy_bridge.py)
 endif()
 
 ament_package()
