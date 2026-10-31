@@ -700,25 +700,36 @@ def _build_runtime_actions(context, pkg_share: str):
                 SetRemap(src='/tf', dst='/tf_nav'),
                 SetRemap(src='/tf_static', dst='/tf_static_nav'),
             ]
+        # controller:=mpc — scripts/mpc_controller.py (true NLP MPC) drives /cmd_vel_nav from the
+        # global /plan. controller_server still runs (DWB params) for FollowPath goal/progress
+        # checking, but its velocity goes to an unused topic via this package's navigation launch.
+        use_mpc = controller == 'mpc'
+        nav2_launch_file = (
+            os.path.join(pkg_share, 'launch', 'nav2_navigation_global_tf.launch.py') if use_mpc else
+            os.path.join(get_package_share_directory('nav2_bringup'), 'launch', 'navigation_launch.py'))
+        nav2_launch_args = {'use_sim_time': 'true', 'params_file': _params_file}
+        mpc_actions = []
+        if use_mpc:
+            nav2_launch_args['controller_cmd_vel'] = 'cmd_vel_nav_dwb_unused'
+            mpc_actions = [
+                LogInfo(msg='[slam_nav] controller:=mpc — MPC node publishes /cmd_vel_nav; '
+                            'controller_server output -> cmd_vel_nav_dwb_unused'),
+                Node(package='rosnav_bot', executable='mpc_controller.py', name='mpc_controller',
+                     output='screen', parameters=[{'use_sim_time': True}]),
+            ]
         nav2 = TimerAction(
             period=8.0 if not tf_relay_on else 7.0,
             actions=relay_actions[:1] + [GroupAction(relay_actions[1:] + [
                 IncludeLaunchDescription(
-                    PythonLaunchDescriptionSource(
-                        os.path.join(
-                            get_package_share_directory('nav2_bringup'),
-                            'launch',
-                            'navigation_launch.py',
-                        )
-                    ),
-                    launch_arguments={
-                        'use_sim_time': 'true',
-                        'params_file': _params_file,
-                    }.items(),
+                    PythonLaunchDescriptionSource(nav2_launch_file),
+                    launch_arguments=nav2_launch_args.items(),
                 )
-            ])],
+            ] + mpc_actions)],
         )
     else:
+        if controller == 'mpc':
+            print('[slam_nav] controller:=mpc is only wired for SLAM/VSLAM modes (slam:=true / '
+                  'vslam / orbslam3); this prebuilt-map (AMCL) run uses DWB instead')
         nav2 = TimerAction(
             period=8.0,
             actions=[
@@ -1634,7 +1645,8 @@ def generate_launch_description():
             name='controller', default_value='dwb',
             description='Local controller: "dwb" (default, trajectory rollout), "mppi" '
                         '(nav2_mppi_controller, sampling-based optimization/MPC), or "rpp" '
-                        '(nav2_regulated_pure_pursuit_controller, carrot-chasing pursuit). '
+                        '(nav2_regulated_pure_pursuit_controller, carrot-chasing pursuit), or "mpc" '
+                        '(scripts/mpc_controller.py, true NLP MPC; SLAM/VSLAM modes only). '
                         'Humble only — ignored on Jazzy, which defaults to MPPI.'),
         DeclareLaunchArgument(
             name='drive_type',

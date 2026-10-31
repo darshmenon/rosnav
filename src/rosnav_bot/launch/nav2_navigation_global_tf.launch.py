@@ -76,6 +76,12 @@ def generate_launch_description():
         description='Whether to respawn if a node crashes')
     declare_log_level_cmd = DeclareLaunchArgument(
         'log_level', default_value='info', description='log level')
+    # controller_server's velocity output. Default feeds the velocity smoother; an external
+    # controller (mpc_controller.py, controller:=mpc) points this at an unused topic and
+    # publishes cmd_vel_nav itself, leaving controller_server to do goal/progress checking.
+    declare_controller_cmd_vel_cmd = DeclareLaunchArgument(
+        'controller_cmd_vel', default_value='cmd_vel_nav',
+        description='Topic controller_server publishes its velocity on')
 
     load_nodes = GroupAction(
         condition=IfCondition(PythonExpression(['not ', use_composition])),
@@ -89,7 +95,7 @@ def generate_launch_description():
                 respawn_delay=2.0,
                 parameters=[configured_params],
                 arguments=['--ros-args', '--log-level', log_level],
-                remappings=[('cmd_vel', 'cmd_vel_nav')],
+                remappings=[('cmd_vel', LaunchConfiguration('controller_cmd_vel'))],
             ),
             Node(
                 package='nav2_smoother',
@@ -183,7 +189,7 @@ def generate_launch_description():
                 plugin='nav2_controller::ControllerServer',
                 name='controller_server',
                 parameters=[configured_params],
-                remappings=[('cmd_vel', 'cmd_vel_nav')],
+                remappings=[('cmd_vel', LaunchConfiguration('controller_cmd_vel'))],
             ),
             ComposableNode(
                 package='nav2_smoother',
@@ -245,6 +251,7 @@ def generate_launch_description():
     ld.add_action(declare_container_name_cmd)
     ld.add_action(declare_use_respawn_cmd)
     ld.add_action(declare_log_level_cmd)
+    ld.add_action(declare_controller_cmd_vel_cmd)
     ld.add_action(load_nodes)
     ld.add_action(load_composable_nodes)
     return ld

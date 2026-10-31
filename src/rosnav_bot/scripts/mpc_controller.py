@@ -61,6 +61,8 @@ class MPCController(Node):
         self.declare_parameter('goal_tol', 0.15)
         self.declare_parameter('scan_stride', 6)
         self.declare_parameter('track_timeout', 1.0)
+        self.declare_parameter('yaw_tol', 0.12)       # rad, final heading alignment
+        self.declare_parameter('align_w_max', 0.8)
         cfg = MPCConfig()
         for f in dataclasses.fields(cfg):
             self.declare_parameter(f.name, getattr(cfg, f.name))
@@ -73,6 +75,10 @@ class MPCController(Node):
         self._goal_tol = float(self.get_parameter('goal_tol').value)
         self._stride = max(1, int(self.get_parameter('scan_stride').value))
         self._track_timeout = float(self.get_parameter('track_timeout').value)
+        self._yaw_tol = float(self.get_parameter('yaw_tol').value)
+        self._align_w = float(self.get_parameter('align_w_max').value)
+        self._final_yaw = None                  # goal heading in control_frame
+        self._at_goal = False
 
         self._tf = tf2_ros.Buffer()
         self._tfl = tf2_ros.TransformListener(self._tf, self)
@@ -122,11 +128,19 @@ class MPCController(Node):
         yaw = _yaw(t.transform.rotation)
         c, s = math.cos(yaw), math.sin(yaw)
         p = np.array([[ps.pose.position.x, ps.pose.position.y] for ps in msg.poses])
-        self._path = np.stack([c * p[:, 0] - s * p[:, 1] + t.transform.translation.x,
-                               s * p[:, 0] + c * p[:, 1] + t.transform.translation.y], axis=1)
-        self._mpc.reset()
-        self.get_logger().info(f'new plan: {len(p)} poses, goal ({self._path[-1][0]:.2f}, '
-                               f'{self._path[-1][1]:.2f}) in {self._ctl}')
+        new_path = np.stack([c * p[:, 0] - s * p[:, 1] + t.transform.translation.x,
+                             s * p[:, 0] + c * p[:, 1] + t.transform.translation.y], axis=1)
+        gq = msg.poses[-1].pose.orientation
+        self._final_yaw = _yaw(gq) + yaw
+        # BT re-publishes the same plan about every 0.5 s: only reset/log when the goal changes
+        same_goal = (self._path is not None and
+                     math.hypot(*(new_path[-1] - self._path[-1])) < 0.05)
+        self._path = new_path
+        if not same_goal:
+            self._at_goal = False
+            self._mpc.reset()
+            self.get_logger().info(f'new goal ({new_path[-1][0]:.2f}, {new_path[-1][1]:.2f}) in '
+                                   f'{self._ctl}, plan of {len(p)} poses')
 
     def _on_scan(self, msg: LaserScan) -> None:
         pose = self._pose()
@@ -156,10 +170,19 @@ class MPCController(Node):
             return
         gdist = math.hypot(self._path[-1][0] - pose[0], self._path[-1][1] - pose[1])
         if gdist < self._goal_tol:
-            self._pub.publish(Twist())
-            self._v = self._w = 0.0
-            self._path = None
-            self.get_logger().info(f'goal reached (dist {gdist:.2f} m) — stopping')
+            # position reached: turn to the goal heading (controller_server's goal checker also
+            # needs it before it reports success), then hold still
+            err = (self._final_yaw - pose[2] + math.pi) % (2 * math.pi) - math.pi \
+                if self._final_yaw is not None else 0.0
+            cmd = Twist()
+            if abs(err) > self._yaw_tol:
+                cmd.angular.z = float(math.copysign(
+                    min(self._align_w, max(0.2, 1.5 * abs(err))), err))
+            elif not self._at_goal:
+                self._at_goal = True
+                self.get_logger().info(f'goal reached (dist {gdist:.2f} m, yaw err {err:.2f} rad)')
+            self._pub.publish(cmd)
+            self._v, self._w = 0.0, cmd.angular.z
             return
         parts = [self._scan_xy.reshape(-1, 2) if len(self._scan_xy) else np.empty((0, 2))]
         obs = np.hstack([parts[0], np.zeros((len(parts[0]), 2))])
