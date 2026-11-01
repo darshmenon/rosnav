@@ -319,3 +319,92 @@ def test_cold_start_spin_waits_for_running_spin(monkeypatch):
     ex = make_bare(_last_cold_spin=-1e9, _cold_spin_proc=_FakeProc(True))
     ex._cold_start_spin((0.0, 0.0))
     assert calls == []
+
+
+# ---- cramped start: goals that need no motion -----------------------------------------------
+
+class _Origin:
+    class position:
+        x = 0.0
+        y = 0.0
+
+
+class _Info:
+    origin = _Origin
+
+
+class _Map:
+    info = _Info
+
+
+def _pool(*cells):
+    # (unk_clear, occ_clear, bfs_dist, y, x) at 0.05 m/cell, origin (0, 0)
+    return [(0.5, 0.5, 1.0, y, x) for y, x in cells]
+
+
+def test_prefer_goals_needing_motion_drops_cells_under_the_robot():
+    obj = make_bare(_min_goal_dist=0.35, _map=_Map)
+    obj._robot_position = lambda: (0.5, 0.5)
+    near, far = (10, 10), (10, 30)                     # ~0.0 m and ~1.0 m from (0.5, 0.5)
+    got = obj._prefer_goals_needing_motion(_pool(near, far), 0.05)
+    assert [(c[3], c[4]) for c in got] == [far]
+
+
+def test_prefer_goals_needing_motion_keeps_all_when_everything_is_close():
+    obj = make_bare(_min_goal_dist=0.35, _map=_Map)
+    obj._robot_position = lambda: (0.5, 0.5)
+    pool = _pool((10, 10), (11, 10))
+    assert obj._prefer_goals_needing_motion(pool, 0.05) == pool
+
+
+def test_prefer_goals_needing_motion_noop_without_pose_or_when_disabled():
+    pool = _pool((10, 10), (10, 30))
+    no_pose = make_bare(_min_goal_dist=0.35, _map=_Map)
+    no_pose._robot_position = lambda: None
+    assert no_pose._prefer_goals_needing_motion(pool, 0.05) == pool
+    off = make_bare(_min_goal_dist=0.0, _map=_Map)
+    off._robot_position = lambda: (0.5, 0.5)
+    assert off._prefer_goals_needing_motion(pool, 0.05) == pool
+
+
+class _Future:
+    def __init__(self, status):
+        self._s = status
+
+    def result(self):
+        class R:
+            pass
+        r = R()
+        r.status = self._s
+        return r
+
+
+def _result_obj(goal, start, pos, elapsed=0.2):
+    obj = make_bare(
+        _current_goal_handle=object(), _ignore_next_result=False, _current_goal=goal,
+        _goal_start_pos=start, _goal_sent_time=time_now() - elapsed, _success_max_dist=1.0,
+        _min_progress=0.5, _min_goal_dist=0.35, _spurious_streak=0, _hold_goals_until=0.0,
+        _visited=[], _current_frontier_meta=None, _last_goal_done=0.0, _navigating=True)
+    obj._robot_position = lambda: pos
+    return obj
+
+
+def time_now():
+    import time
+    return time.monotonic()
+
+
+def test_success_on_goal_already_under_robot_counts_as_visited():
+    succ = frontier_explorer.GoalStatus.STATUS_SUCCEEDED
+    obj = _result_obj(goal=(-0.06, -0.13), start=(0.0, 0.0), pos=(0.0, 0.0))
+    obj._result_cb(_Future(succ))
+    assert obj._visited == [(-0.06, -0.13)]
+    assert obj._spurious_streak == 0 and obj._hold_goals_until == 0.0
+
+
+def test_instant_success_on_far_goal_is_still_spurious():
+    succ = frontier_explorer.GoalStatus.STATUS_SUCCEEDED
+    obj = _result_obj(goal=(3.0, 0.0), start=(0.0, 0.0), pos=(0.0, 0.0), elapsed=0.1)
+    obj._result_cb(_Future(succ))
+    assert obj._visited == []
+    assert obj._spurious_streak == 1 and obj._hold_goals_until > 0.0

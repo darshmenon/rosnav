@@ -167,6 +167,9 @@ class FrontierExplorer(Node):
         # Stand this far back from unknown cells into free space (m).
         # Must be >= global inflation_radius (0.5) or goals sit in inflated cells.
         self.declare_parameter('goal_pullback', 0.55)
+        # A goal closer than this to the robot is already inside Nav2's goal tolerance, so Nav2
+        # 'succeeds' without moving. Prefer goals at least this far away (cramped starts).
+        self.declare_parameter('min_goal_dist', 0.35)
         self.declare_parameter('goal_search_radius', 1.25)
         # Flat [x1, y1, x2, y2, ...] polygon (map frame); < 3 points (incl.
         # the [0.0, 0.0] default) = unbounded. Frontier goals outside it are
@@ -261,6 +264,7 @@ class FrontierExplorer(Node):
         self._costmap_abort_cost = int(self.get_parameter('costmap_abort_cost').value)
         self._allow_unknown_costmap = self.get_parameter('allow_unknown_costmap').value
         self._goal_pullback = float(self.get_parameter('goal_pullback').value)
+        self._min_goal_dist = float(self.get_parameter('min_goal_dist').value)
         self._goal_search_radius = float(self.get_parameter('goal_search_radius').value)
         self._boundary = self._parse_boundary(
             list(self.get_parameter('exploration_boundary').value))
@@ -925,6 +929,7 @@ class FrontierExplorer(Node):
         # every cluster, so one visit falsely marks all of them "visited".
         # Picking the closest qualifying cell keeps each goal anchored to
         # the frontier that produced it.
+        pool = self._prefer_goals_needing_motion(pool, resolution)
         best = None
         best_key = None
         for unk_clear, occ_clear, dist, y, x in pool:
@@ -934,6 +939,21 @@ class FrontierExplorer(Node):
                 best = (float(y), float(x), occ_clear)
 
         return (best[0], best[1]), best[2]
+
+    def _prefer_goals_needing_motion(self, pool, resolution):
+        """Candidates at least min_goal_dist from the robot, when any exist.
+
+        On a cramped start the nearest free cell to the frontier can sit a few cm from the robot;
+        Nav2 reports that goal reached instantly and the explorer never leaves the spot. If every
+        candidate is that close, keep them all (the result is then handled as a genuine arrival)."""
+        pos = self._robot_position() if self._min_goal_dist > 0 else None
+        if pos is None or not pool:
+            return pool
+        ox, oy = self._map.info.origin.position.x, self._map.info.origin.position.y
+        far = [c for c in pool
+               if math.hypot(ox + (c[4] + 0.5) * resolution - pos[0],
+                             oy + (c[3] + 0.5) * resolution - pos[1]) >= self._min_goal_dist]
+        return far or pool
 
     @staticmethod
     def _cell_clearance(y, x, mask, radius_cells, resolution):
@@ -1531,8 +1551,10 @@ class FrontierExplorer(Node):
         moved = math.hypot(pos[0] - start[0], pos[1] - start[1]) if pos and start else None
         need = min(self._min_progress, 0.5 * math.hypot(gx - start[0], gy - start[1])) if start else 0.0
         stayed = self._min_progress > 0 and moved is not None and moved < need
+        # Goal was already inside Nav2's tolerance when sent: success without motion is correct.
+        near_goal = start is not None and math.hypot(gx - start[0], gy - start[1]) < self._min_goal_dist
         if status == GoalStatus.STATUS_SUCCEEDED:
-            if elapsed < 0.5 or far or stayed:
+            if not near_goal and (elapsed < 0.5 or far or stayed):
                 # Nav2 can report success without the robot arriving (e.g. controller TF check failing)
                 self.get_logger().warn(
                     f'Spurious success at ({gx:.2f}, {gy:.2f}) in {elapsed:.2f}s'
