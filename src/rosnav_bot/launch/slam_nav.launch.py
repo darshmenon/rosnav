@@ -447,6 +447,14 @@ def _build_runtime_actions(context, pkg_share: str):
     if int(LaunchConfiguration('dynamic_obstacles').perform(context).strip() or 0) > 0:
         _enabled_filters.add('dynobs_keepout_filter')
     _params_file = _common.strip_inert_filters(_params_file, _enabled_filters)
+    local_scan_cloud = _common.truthy(LaunchConfiguration('local_scan_cloud').perform(context))
+    if local_scan_cloud:
+        _params_file = _common.use_odom_scan_cloud(_params_file)
+        scan_cloud_node = Node(package='rosnav_bot', executable='scan_to_odom_cloud.py',
+                               name='scan_to_odom_cloud', output='screen',
+                               parameters=[{'use_sim_time': True}])
+    else:
+        scan_cloud_node = LogInfo(msg='[slam_nav] local_scan_cloud off — local costmap reads /scan directly.')
 
     use_vslam_localize = (not use_slam) and slam_algo == 'vslam'
     # ORB-SLAM3 (docker/orb_slam3/) runs as a separate sidecar container, not
@@ -1418,6 +1426,7 @@ def _build_runtime_actions(context, pkg_share: str):
         gs_semantic_fusion,
         slam_debug_monitor,
         tf_watchdog,
+        scan_cloud_node,
         slam_watchdog,
         posegraph_autosave_group,
         visual_reloc_group,
@@ -1513,6 +1522,12 @@ def generate_launch_description():
             name='slam_watchdog', default_value='true',
             description='slam_algo:=2d (online_async/sync): restart slam_toolbox when map->odom goes '
                         'stale (it hangs ~30 s in on some runs). See scripts/slam_stall_watchdog.py.'),
+        DeclareLaunchArgument(
+            name='local_scan_cloud', default_value='true',
+            description='Feed the local costmap an odom-frame cloud from scripts/scan_to_odom_cloud.py '
+                        'instead of /scan. Avoids the LaserScan tf MessageFilter in controller_server, '
+                        'which triggered the map->odom freeze (cafe: freeze at 35-262 s without it, none '
+                        'in 850 s with it). Set false to read /scan directly. Single-robot slam_nav only (not multi_robot).'),
         DeclareLaunchArgument(
             name='tf_relay', default_value='false',
             description='EXPERIMENTAL: remap Nav2 onto /tf_nav,/tf_static_nav fed by scripts/tf_relay.py '
