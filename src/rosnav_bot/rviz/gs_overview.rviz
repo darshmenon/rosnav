@@ -1,14 +1,23 @@
 Panels:
-  - Class: rviz_common/Displays
-    Name: Displays
-    Property Tree Widget:
-      Splitter Ratio: 0.5
-    Tree Height: 400
-  - Class: rviz_common/Views
-    Name: Views
+- Class: rviz_common/Displays
+  Name: Displays
+  Property Tree Widget:
+    Splitter Ratio: 0.5
+  Tree Height: 400
+  Expanded:
+  - /Global Options1
+  - /Status1
+  - /Robot & TF1
+  - /Maps1
+  - /Navigation1
+  - /SLAM & 3D1
+  - /Sensors1
+  - /Cameras1
 Visualization Manager:
-  Class: ""
+  Class: ''
   Displays:
+  - Class: rviz_common/Group
+    Displays:
     - Alpha: 0.5
       Cell Size: 1
       Class: rviz_default_plugins/Grid
@@ -25,8 +34,9 @@ Visualization Manager:
       Name: TF
       Show Arrows: false
       Show Axes: true
-      Show Names: true
+      Show Names: false
       Value: true
+      Marker Scale: 0.4
     - Alpha: 1
       Class: rviz_default_plugins/RobotModel
       Description Source: Topic
@@ -35,25 +45,43 @@ Visualization Manager:
       Enabled: true
       Name: RobotModel
       Value: true
+    Enabled: true
+    Name: Robot & TF
+  - Class: rviz_common/Group
+    Displays:
     - Alpha: 0.7
       Class: rviz_default_plugins/Map
       Color Scheme: map
       Enabled: true
-      Name: SLAM Map
+      Name: Map
       Topic:
         Durability Policy: Transient Local
         Value: /map
       Value: true
-    - Alpha: 0.7
+    - Alpha: 0.35
       Class: rviz_default_plugins/Map
       Color Scheme: costmap
       Draw Behind: true
       Enabled: true
-      Name: Global Costmap (keepout / speed filter)
+      Name: Global Costmap
       Topic:
         Durability Policy: Transient Local
         Value: /global_costmap/costmap
       Value: true
+    Enabled: true
+    Name: Maps
+  - Class: rviz_common/Group
+    Displays:
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: GS Semantic Markers
+      Topic:
+        Value: /gs_semantic/markers
+      Value: true
+    Enabled: true
+    Name: Navigation
+  - Class: rviz_common/Group
+    Displays:
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Axis: Z
@@ -73,12 +101,6 @@ Visualization Manager:
         Value: /gs_capture/splat_points
       Use Fixed Frame: true
       Value: true
-    - Class: rviz_default_plugins/MarkerArray
-      Enabled: true
-      Name: GS Semantic Markers
-      Topic:
-        Value: /gs_semantic/markers
-      Value: true
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Axis: Z
@@ -87,7 +109,7 @@ Visualization Manager:
       Color Transformer: AxisColor
       Decay Time: 0
       Enabled: true
-      Name: Lidar3D (lidar_type:=3d)
+      Name: Lidar 3D Cloud
       Position Transformer: XYZ
       Size (Pixels): 3
       Size (m): 0.03
@@ -99,24 +121,34 @@ Visualization Manager:
         Value: /points
       Use Fixed Frame: true
       Value: true
+    Enabled: true
+    Name: SLAM & 3D
+  - Class: rviz_common/Group
+    Displays:
     - Alpha: 1
       Class: rviz_default_plugins/LaserScan
       Color: 255; 255; 255
       Color Transformer: Intensity
       Enabled: true
-      Name: LaserScan
+      Name: Lidar Scan
       Size (m): 0.03
       Style: Flat Squares
       Topic:
         Value: /scan
       Use Fixed Frame: true
       Value: true
+    Enabled: true
+    Name: Sensors
+  - Class: rviz_common/Group
+    Displays:
     - Class: rviz_default_plugins/Image
-      Enabled: true
+      Enabled: false
       Name: Camera
       Topic:
         Value: /camera/image_raw
-      Value: true
+      Value: false
+    Enabled: true
+    Name: Cameras
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -124,13 +156,13 @@ Visualization Manager:
     Frame Rate: 30
   Name: root
   Tools:
-    - Class: rviz_default_plugins/MoveCamera
-    - Class: rviz_default_plugins/Select
-    - Class: rviz_default_plugins/FocusCamera
-    - Class: nav2_rviz_plugins/GoalTool
-    - Class: rviz_default_plugins/SetInitialPose
-      Topic:
-        Value: /initialpose
+  - Class: rviz_default_plugins/MoveCamera
+  - Class: rviz_default_plugins/Select
+  - Class: rviz_default_plugins/FocusCamera
+  - Class: nav2_rviz_plugins/GoalTool
+  - Class: rviz_default_plugins/SetInitialPose
+    Topic:
+      Value: /initialpose
   Transformation:
     Current:
       Class: rviz_default_plugins/TF
@@ -155,8 +187,7 @@ Window Geometry:
   Displays:
     collapsed: false
   Height: 1000
-  Views:
-    collapsed: false
   Width: 1600
   X: 60
   Y: 40
+  Hide Right Dock: false

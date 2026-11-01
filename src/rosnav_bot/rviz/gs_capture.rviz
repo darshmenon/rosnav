@@ -1,13 +1,30 @@
 Panels:
-  - Class: rviz_common/Displays
-    Name: Displays
+- Class: rviz_common/Displays
+  Name: Displays
+  Expanded:
+  - /Global Options1
+  - /Status1
+  - /Robot & TF1
+  - /Maps1
+  - /Navigation1
+  - /SLAM & 3D1
+  - /Sensors1
+  - /Cameras1
 Visualization Manager:
   Displays:
-    - Class: rviz_default_plugins/Image
-      Name: gs_capture_view
-      Topic:
-        Value: /gs_capture/image_raw
+  - Class: rviz_common/Group
+    Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
       Enabled: true
+    Enabled: true
+    Name: Robot & TF
+  - Class: rviz_common/Group
+    Displays: []
+    Enabled: true
+    Name: Navigation
+  - Class: rviz_common/Group
+    Displays:
     - Class: rviz_default_plugins/PointCloud2
       Name: gs_splat_points
       Topic:
@@ -18,16 +35,25 @@ Visualization Manager:
       Size (Pixels): 4
       Color Transformer: RGB8
       Enabled: true
-    - Class: rviz_default_plugins/Grid
-      Name: Grid
+    Enabled: true
+    Name: SLAM & 3D
+  - Class: rviz_common/Group
+    Displays:
+    - Class: rviz_default_plugins/Image
+      Name: gs_capture_view
+      Topic:
+        Value: /gs_capture/image_raw
       Enabled: true
+    Enabled: true
+    Name: Cameras
   Global Options:
     Fixed Frame: world
   Tools:
-    - Class: rviz_default_plugins/Interact
-    - Class: rviz_default_plugins/MoveCamera
+  - Class: rviz_default_plugins/Interact
+  - Class: rviz_default_plugins/MoveCamera
 Window Geometry:
   Height: 720
   Width: 1000
   X: 50
   Y: 50
+  Hide Right Dock: false
