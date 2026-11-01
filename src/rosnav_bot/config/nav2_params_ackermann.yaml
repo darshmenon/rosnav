@@ -104,7 +104,7 @@ controller_server:
       plugin: "nav2_mppi_controller::MPPIController"
       time_steps: 56
       model_dt: 0.05
-      batch_size: 2000
+      batch_size: 1000   # 2000 starved the 20 Hz loop (284 missed cycles); matches nav2_params_mppi.yaml
       ax_max: 3.0
       ax_min: -3.0
       ay_max: 0.0
