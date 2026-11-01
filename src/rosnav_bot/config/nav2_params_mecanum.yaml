@@ -118,8 +118,8 @@ controller_server:
       decel_lim_y: -2.5
       decel_lim_theta: -3.5
       vx_samples: 20
-      vy_samples: 10
-      vtheta_samples: 20
+      vy_samples: 5     # 20x10x20 = 4000 trajectories starved the 20 Hz loop; 1000 is plenty
+      vtheta_samples: 10
       sim_time: 1.5
       linear_granularity: 0.05
       angular_granularity: 0.025
