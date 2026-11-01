@@ -232,30 +232,28 @@ def strip_inert_filters(params_path: str, enabled) -> str:
     return out_path
 
 
-def use_odom_scan_cloud(params_path: str, cloud_topic: str = '/scan_odom_cloud') -> str:
-    """Point the LOCAL costmap's obstacle layer at a PointCloud2 already in the odom frame.
+def odom_scan_cloud_patch(data: dict, cloud_topic: str = '/scan_odom_cloud',
+                          sensor_frame: str = 'base_link') -> bool:
+    """In-place: point the LOCAL costmap's obstacle layer at a PointCloud2 already in the odom frame.
 
-    Replaces its `scan` LaserScan source with `scan_cloud` (topic `cloud_topic`, sensor_frame base_link
-    for the raytrace origin). Produced by scripts/scan_to_odom_cloud.py. Only the local costmap is
-    touched: bisecting the controller_server map->odom freeze (2026-11-01) implicated the local
-    obstacle layer's tf2 MessageFilter on a LaserScan, and the global costmap lives in planner_server.
-    Returns the (possibly new) params path.
+    Replaces its `scan` LaserScan source with `scan_cloud` (topic `cloud_topic`, `sensor_frame` for the
+    raytrace origin). Produced by scripts/scan_to_odom_cloud.py. Only the local costmap is touched:
+    bisecting the controller_server map->odom freeze (2026-11-01) implicated the local obstacle layer's
+    tf2 MessageFilter on a LaserScan, and the global costmap lives in planner_server.
+    Returns True when the params had a `scan` source to replace.
     """
-    import yaml
-    with open(params_path) as f:
-        data = yaml.safe_load(f)
     try:
         layer = data['local_costmap']['local_costmap']['ros__parameters']['obstacle_layer']
     except (KeyError, TypeError):
-        return params_path
+        return False
     src = layer.get('observation_sources', '')
     names = src.split() if isinstance(src, str) else list(src)
     if 'scan' not in names:
-        return params_path
+        return False
     old = layer.get('scan', {})
     layer['observation_sources'] = ' '.join('scan_cloud' if n == 'scan' else n for n in names)
     layer['scan_cloud'] = {
-        'topic': cloud_topic, 'data_type': 'PointCloud2', 'sensor_frame': 'base_link',
+        'topic': cloud_topic, 'data_type': 'PointCloud2', 'sensor_frame': sensor_frame,
         'clearing': True, 'marking': True,
         'min_obstacle_height': 0.0, 'max_obstacle_height': 2.0,
         'raytrace_max_range': old.get('raytrace_max_range', 3.0),
@@ -263,6 +261,17 @@ def use_odom_scan_cloud(params_path: str, cloud_topic: str = '/scan_odom_cloud')
         'obstacle_max_range': old.get('obstacle_max_range', 2.5),
         'obstacle_min_range': old.get('obstacle_min_range', 0.0),
     }
+    return True
+
+
+def use_odom_scan_cloud(params_path: str, cloud_topic: str = '/scan_odom_cloud') -> str:
+    """File version of odom_scan_cloud_patch for the single-robot launch. Returns the (possibly new)
+    params path."""
+    import yaml
+    with open(params_path) as f:
+        data = yaml.safe_load(f)
+    if not odom_scan_cloud_patch(data, cloud_topic):
+        return params_path
     out_path = params_path.replace('.yaml', '_scancloud.yaml')
     with open(out_path, 'w') as f:
         yaml.safe_dump(data, f)

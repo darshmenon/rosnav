@@ -386,6 +386,7 @@ def _make_robot_params(
     pkg_share: str,
     initial_pose: dict | None = None,
     nav_map_topic: str = '/map',
+    local_scan_cloud: bool = False,
 ) -> str:
     """Return a namespaced-for-this-robot copy of a nav2 params file as a temp-file path.
 
@@ -426,6 +427,9 @@ def _make_robot_params(
         .setdefault('static_layer', {})
     )
     static_layer['map_topic'] = nav_map_topic
+    if local_scan_cloud:
+        # relative topic: resolves to /<ns>/scan_odom_cloud (this robot's scan_to_odom_cloud node)
+        _common.odom_scan_cloud_patch(params, 'scan_odom_cloud', f'{robot_ns}/base_link')
     content = yaml.safe_dump(params, sort_keys=False)
     tmp = tempfile.NamedTemporaryFile(
         mode='w', suffix=f'_{robot_ns}.yaml', delete=False, prefix='nav2_mr_')
@@ -621,6 +625,7 @@ def _build_all(context, pkg_share: str):
     world_arg    = LaunchConfiguration('world').perform(context).strip()
     explore      = _truthy(LaunchConfiguration('explore').perform(context))
     headless     = _truthy(LaunchConfiguration('headless').perform(context))
+    local_scan_cloud = _truthy(LaunchConfiguration('local_scan_cloud').perform(context))
     fleet_mgmt   = _truthy(LaunchConfiguration('fleet_mgmt').perform(context))
     merge_scans  = _truthy(LaunchConfiguration('merge_scans').perform(context))
     slam_mode = LaunchConfiguration('slam_mode').perform(context).strip().lower()
@@ -907,7 +912,8 @@ def _build_all(context, pkg_share: str):
                 'yaw': float(yaw),
             }
         nav_map_topic = '/map_merged' if explore and slam_mode == 'multi' else '/map'
-        robot_params = _make_robot_params(template_yaml, ns, pkg_share, initial_pose, nav_map_topic)
+        robot_params = _make_robot_params(template_yaml, ns, pkg_share, initial_pose, nav_map_topic,
+                                          local_scan_cloud=local_scan_cloud)
         actions.append(LogInfo(msg=f'[multi_robot] {ns}: nav2 params -> {robot_params} (map_topic={nav_map_topic})'))
 
         # Robot State Publisher — frame_prefix + namespace arg makes TF frames unique per robot
@@ -1081,6 +1087,13 @@ def _build_all(context, pkg_share: str):
         if points_to_scan is not None:
             per_robot.append(points_to_scan)
         per_robot.append(laser_filter)
+        if local_scan_cloud:
+            per_robot.append(Node(
+                package='rosnav_bot', executable='scan_to_odom_cloud.py', name='scan_to_odom_cloud',
+                namespace=ns, output='screen',
+                parameters=[{'scan_topic': 'scan', 'cloud_topic': 'scan_odom_cloud',
+                             'target_frame': f'{ns}/odom', 'use_sim_time': True}],
+                remappings=[('tf', '/tf'), ('tf_static', '/tf_static')]))
 
         if is_slam_robot:
             # SLAM handles localisation for this robot.
@@ -1353,6 +1366,11 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'headless', default_value='false',
             description='true = Gazebo server only, no GUI or RViz'),
+        DeclareLaunchArgument(
+            'local_scan_cloud', default_value='false',
+            description='true = feed each robot\'s local costmap an odom-frame cloud from '
+                        'scripts/scan_to_odom_cloud.py (avoids the controller_server map->odom '
+                        'freeze, same as slam_nav.launch.py local_scan_cloud:=true)'),
         DeclareLaunchArgument(
             'fleet_mgmt', default_value='false',
             description='true = start priority collision avoidance + deadlock recovery nodes'),
