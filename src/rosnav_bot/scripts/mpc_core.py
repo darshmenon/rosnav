@@ -227,7 +227,7 @@ class UnicycleMPC:
         v, w = split(u)
         pred = rollout(x0, v, w, dt)[:, :2]
         return float(v[0]), float(w[0]), {'ok': True, 'cost': float(res.fun), 'goal_dist': goal_d,
-                                           'n_obstacles': len(obs), 'pred': pred,
+                                           'n_obstacles': len(obs), 'pred': pred, 'obs': obs,
                                            'iters': int(res.nit)}
 
     def _select_obstacles(self, x0, obstacles):
