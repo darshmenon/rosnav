@@ -117,6 +117,9 @@ Same two-phase flow as `slam_algo:=vslam`'s `rtabmap_db`:
   projection of the depth image (Bresenham free-space tracing + height-band
   occupied endpoints), not RTAB-Map's more sophisticated grid assembly — good
   enough for Nav2 costmaps/frontier exploration, not a pixel-perfect map.
+  It also keeps subsampled scans in the (drift-free) odom frame and rebuilds the
+  grid when `map->odom` shifts (loop closure / drift correction; `rebuild_on_jump`,
+  `jump_trans_m`, `jump_rot_deg`), so old walls follow the corrected map.
 - `costmap_ghost_clear.py` already runs for `slam_algo:=orbslam3` (clears
   Nav2's costmap on a `map->odom` jump, same as every other backend) —
   `slam_accuracy_monitor.py` doesn't know about this backend yet.

@@ -2,7 +2,7 @@
 
 #--------------------------------------------------------------------------------------------
 # Camera Parameters — computed for rosnav_bot's urdf/rgbd_camera.xacro:
-#   width=1280 height=960 horizontal_fov=1.5708 rad (exactly 90 deg)
+#   width=640 height=480 horizontal_fov=1.5708 rad (exactly 90 deg)
 # Gazebo's camera sensor uses square pixels (fx == fy), so:
 #   fx = fy = (width/2) / tan(hfov/2) = 640 / tan(45 deg) = 640
 #   cx = width/2 = 640, cy = height/2 = 480
@@ -12,10 +12,10 @@
 #--------------------------------------------------------------------------------------------
 Camera.type: "PinHole"
 
-Camera.fx: 640.0
-Camera.fy: 640.0
-Camera.cx: 640.0
-Camera.cy: 480.0
+Camera.fx: 320.0
+Camera.fy: 320.0
+Camera.cx: 320.0
+Camera.cy: 240.0
 
 Camera.k1: 0.0
 Camera.k2: 0.0
@@ -23,11 +23,11 @@ Camera.p1: 0.0
 Camera.p2: 0.0
 Camera.k3: 0.0
 
-Camera.width: 1280
-Camera.height: 960
+Camera.width: 640
+Camera.height: 480
 
 # rgbd_camera.xacro's <rgbd_camera> update_rate
-Camera.fps: 15.0
+Camera.fps: 10.0
 
 # IR projector baseline times fx (approx.) — RGB-D has no real baseline;
 # kept at the upstream default, only affects ThDepth's close/far cutoff.

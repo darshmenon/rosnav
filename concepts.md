@@ -1183,10 +1183,11 @@ Prefer textured Fuel worlds (`cafe`, `lake_house`, …) for VSLAM — see README
 Full SLAM backend matrix (including **Cartographer**, **multisensor**, **cslam**, and
 the headless **benchmark**) → **§3**.
 
-Both `camera.xacro` and `rgbd_camera.xacro` render at **1280×960** (bumped from
-640×480 — 4:3 kept so the tuned 90° horizontal FOV / ArUco framing doesn't
-shift). `gs_capture.py`'s `image_width`/`image_height` params default to the
-same values so its intrinsics stay correct.
+Both `camera.xacro` and `rgbd_camera.xacro` render at **640×480** by default, RGB 15 Hz /
+RGB-D 10 Hz (was 1280×960 at 30/15 Hz; dropped because the load starved the controller and
+triggered the TF freeze, §TF freeze). 4:3 and the 90° horizontal FOV are unchanged, so framing
+holds. Override with `ROSNAV_CAM_W` / `ROSNAV_CAM_H`. `gs_capture.py`'s `image_width`/`image_height`
+params default to the same values so its intrinsics stay correct (change both together).
 
 ### Overview camera (`world_monitor_cam`)
 

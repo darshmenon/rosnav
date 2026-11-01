@@ -77,13 +77,6 @@
   gz_type_name: "gz.msgs.CameraInfo"
   direction: GZ_TO_ROS
 
-# Depth point cloud for Nav2 VoxelLayer (close-range obstacles / overhangs).
-- ros_topic_name: "/camera/depth/points"
-  gz_topic_name: "/camera/points"
-  ros_type_name: "sensor_msgs/msg/PointCloud2"
-  gz_type_name: "gz.msgs.PointCloudPacked"
-  direction: GZ_TO_ROS
-
 - ros_topic_name: "/world_monitor/image_raw"
   gz_topic_name: "/world_monitor/image_raw"
   ros_type_name: "sensor_msgs/msg/Image"

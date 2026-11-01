@@ -217,7 +217,7 @@ local_costmap:
         combination_method: 1
         # "points" only publishes when lidar_type:=3d; "depth" when enable_rgbd /
         # slam_algo:=vslam. Empty sources are harmless, so list all unconditionally.
-        observation_sources: scan points depth
+        observation_sources: scan points
         scan:
           topic: /scan
           clearing: True
@@ -301,7 +301,7 @@ global_costmap:
         unknown_threshold: 15
         mark_threshold: 0
         combination_method: 1
-        observation_sources: scan points depth
+        observation_sources: scan points
         scan:
           topic: /scan
           max_obstacle_height: 2.0
