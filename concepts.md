@@ -542,11 +542,26 @@ so a `benchmark.py mode:=nav` run across all three is apples-to-apples.
   on the path and steers a circular arc toward it, regulating speed down on tight
   curvature/near obstacles. No sampling — cheapest of the three, but no explicit
   obstacle cost in the arc choice (relies on `use_collision_detection` instead).
+  `use_cost_regulated_linear_velocity_scaling` is on (`cost_scaling_dist: 0.6`), so
+  it also slows down automatically when the path runs near inflated cells — doorways,
+  door jambs. DWB wedged against a door jamb in the hospital prebuilt-map patrol
+  (start pose ended up inside inflation → every global plan failed); RPP with this
+  scaling and straight-on door approaches passed through cleanly.
 
 All three publish their selected path on `/local_plan` (Path display in
-`slam_explore.rviz`, "Local Plan").
+`slam_explore.rviz` and `localization.rviz`, "Local Plan"; the global planner's
+path is the "Global Plan" display on `/plan`).
 
 ---
+
+### 7.1 True MPC controller (`mpc_core.py` + `mpc_controller.py`, 2026-11-01)
+Nav2 Humble ships MPPI (sampling-based) but no gradient/NLP MPC; the community plugins found are Jazzy-only
+(`prox_mpc_controller`) or ROS 1 (CasADi/IPOPT theses). This repo has its own, with no new dependencies (SciPy SLSQP):
+- **Model/problem:** unicycle `x+=dt(v cos th, v sin th, w)`, horizon 12 x 0.2 s. Cost: along-track + (lower) cross-track error to the global plan, heading, terminal, effort, smoothness, soft clearance; constraints: v/w bounds, acceleration limits (exact linear Jacobian), **hard clearance** `r_hard` (0.30 m) to the nearest `max_obstacles` points, with constant-velocity prediction for moving obstacles (`obstacle_tracker.py` JSON). Hard radius relaxes to what is achievable when already too close, so the NLP stays feasible. Failed/violating solves brake instead of driving.
+- **Local-minimum fix (found by testing):** an obstacle dead ahead is a symmetric minimum where every start collapses to v=0 (heading has no effect at v=0). Warm start is tried first; if the plan squeezes an obstacle or stalls, left/right **S-curve starts at reference speed** are also solved and the cheapest valid one wins.
+- **Node:** `mpc_controller.py` reads `/plan`, `/scan` (static points), `/obstacle_tracker/state`, works in the odom frame, publishes `cmd_vel_topic` (default `/cmd_vel_nav`). Launch with `controller:=mpc` (SLAM/VSLAM modes of `slam_nav.launch.py`): uses `nav2_navigation_global_tf.launch.py` with `controller_cmd_vel:=cmd_vel_nav_dwb_unused`, so controller_server (DWB params) still does FollowPath goal/progress checking while its velocity is discarded and the MPC node drives `/cmd_vel_nav`. AMCL/prebuilt-map runs fall back to DWB with a printed notice. **Launch description loads; not yet run in Gazebo.**
+- **Verified offline:** 8 closed-loop tests (`test/test_mpc_core.py`: straight tracking, lateral recovery, static obstacle, crossing moving obstacle, scan-surface obstacle, infeasible start, limits, solve time) and a ROS smoke test with a fake robot (detours a scan obstacle, reaches goal, 0 solver failures, ~40 ms median solve on a quiet CPU, ~160 ms when the machine is at load 90). **Not yet run in Gazebo/Nav2.**
+- **Gotcha:** `ros2 run` leaves the child python alive after SIGINT to the wrapper; stale controllers share `cmd_vel_nav` and fight (it invalidated two of my smoke runs). Kill by exact PID.
 
 ## 8. Waypoint Following
 
@@ -2641,6 +2656,18 @@ A long mapping session chased "robot stops, map stops growing" across DWB, RPP a
 | 3 | Robot crawls near walls | `collision_monitor` SLOWDOWN zone (1.0 m) scaled every command to 40% in corridors | `slowdown_distance` 1.0 -> 0.6 |
 | 4 | MPPI "never moves" | `visualize: true` + `batch_size: 2000` starved the controller loop; rectangle footprint is larger than the old octagon | `visualize: false`, `batch_size: 1000` |
 | 5 | Controller TF view frozen while TF is healthy on the wire | Not solved. `controller_server` keeps `map->odom` at one stamp while `/tf` carries fresh data. Hunter run: no tf2 warnings, threads idle. The slam_toolbox pose-graph autosave (`posegraph_autosave`) looks like a trigger: runs with it on froze, runs with it off did not (small sample) | `posegraph_autosave` is now **off** by default |
+
+### Controller TF freeze: 2026-10-31 findings
+Still unsolved, but narrowed down (slam_toolbox + RGB-D unless noted):
+- **Load decides when it hits.** No camera: no freeze in 14 goals. Camera on: full-res 1280x960 ~40 s sim time, 424x240 ~220 s, +split bridge ~340 s. Defaults are now 640x480, RGB-D 10 Hz, depth cloud off the costmaps and bridge (`/camera/depth/points` was ~1.2 M points/frame). That alone did not remove it (froze at ~97 s on a loaded machine).
+- **`tf_relay:=true`** (experimental, `scripts/tf_relay.py`): Nav2 listens to `/tf_nav` + `/tf_static_nav` fed by one local relay. Froze at ~283 s instead of ~97 s with 59% of the cafe explored. At the freeze `map->odom` is still live on `/tf` and `/tf_nav` (~10 Hz, fresh stamps) and the relay keeps forwarding, while controller_server's buffer sits at 283.5 s and its executor keeps running. So DDS reception is not the cause; the TF buffer/listener inside controller_server stops absorbing data. `drop_regex` can drop wheel/joint frames; it logs per-frame counts to tune it.
+- **2026-11-01 night runs (load 10-20, own `GZ_PARTITION`):** (1) plain DWB, slam_toolbox, **no camera, no MPC node** froze at 35 s sim time with 1 goal — so neither camera load nor the MPC node is required to trigger it, and the older "no camera = clean" result does not hold. (2) `controller:=mpc` (controller_server only does goal checking) reached **7 of 8 frontier goals genuinely** (51.6% of the cafe) before freezing at 122 s; the freeze is *always first seen on the first `Passing new path to controller` after a goal begins*. (3) `tf_relay:=true tf_relay_restamp:=true` (map->odom republished at 20 Hz with fresh, monotonic stamps) froze at **9.2 s**: even a perfectly regular stream is not absorbed, so it is not the stamps or the publisher. (4) planner_server's TF listener (separate process, same `/tf_nav`) kept working while controller_server's did not -> the problem is specific to the controller_server process. Cyclone DDS and a Humble Fast-DDS regression report (nav2 #3014/#3018) were already excluded. A per-node lifecycle restart is not safe: the lifecycle manager's 4 s bond would take the whole stack down.
+- **Local-costmap layer test (2026-11-01):** swapping the local costmap's `VoxelLayer` for `ObstacleLayer` (scan only) moved plain-DWB's freeze from 35 s to 262 s (10 goals accepted, 6 reached, 56.4% explored) but did not remove it. Every mitigation so far (less camera data, relay, lighter costmap) only delays it, which points at something inside controller_server accumulating or starving over time, not at a single bad input. `VoxelLayer` was left in place (needed for `lidar_type:=3d`).
+- **ROOT CAUSE LOCATED + FIXED (2026-11-01):** bisecting the local costmap: with *no* obstacle layer there was no freeze in 548 s; with `ObstacleLayer` on `scan` (no denoise) it froze at ~223 s; with `VoxelLayer` + `scan`+`points` at 35-122 s. The trigger is the local costmap's **LaserScan observation source**, which creates a tf2 `MessageFilter` on controller_server's TF buffer (waiting for `laser_frame->odom` at every scan stamp); after a while that buffer stops absorbing `/tf` ("Transform data too old"). Fix: `scripts/scan_to_odom_cloud.py` republishes `/scan` as a PointCloud2 **already in the odom frame**, and `_common.use_odom_scan_cloud()` repoints the local costmap's obstacle layer at it (`sensor_frame: base_link` for the raytrace origin) — nothing left to wait for. Verified in the cafe, plain DWB: 850 s and 16 goals, no freeze (before: 35/223/262 s); with the RGB-D camera on: 452 s, no freeze (before: 40-97 s). Now the default (`local_scan_cloud:=true` in `slam_nav.launch.py`). Open: frontier goals show more 'no progress for 20 s' timeouts (5 reached of 16) — unknown whether that is the cloud source (no inf-range clearing) or normal; compare against a frozen-free baseline. Not yet applied to `multi_robot.launch.py`. The actual tf2/MessageFilter defect is not diagnosed.
+- **Disproved:** hold/relay keepalives from the ORB bridge, future-dated sidecar stamps, controller type/rate, `transform_tolerance`, depth points in costmaps, Fast DDS vs Cyclone, SLAM backend (RTAB-Map, ORB-SLAM3, slam_toolbox, AMCL all freeze).
+- **Oddity:** slam_toolbox `map->odom` jumps ~0.51 m about every 10 s in the cafe, each triggering `costmap_ghost_clear`.
+- **Measurement caveat:** the dev machine is shared; ~17 `gz sim` jobs from another project push load to 70-90, which stops this sim from even starting its clock. Earlier timings were taken under unknown load and may be inflated or shifted. Use a distinct `GZ_PARTITION` and check `uptime` before trusting a freeze time.
+- **ORB-SLAM3 sidecar needs `LD_LIBRARY_PATH=$HOME/.local/lib`** (libpango_windowing.so) when started by hand, or it exits 127 and `map` never appears.
 
 ### Watchdogs
 - `slam_stall_watchdog.py` (on by default, `slam_watchdog:=true`): if `map->odom` is stale while `/scan` still
