@@ -2,8 +2,14 @@ Panels:
 - Class: rviz_common/Displays
   Name: Displays
   Property Tree Widget:
-    Splitter Ratio: 0.5
-  Tree Height: 400
+    Splitter Ratio: 0.55
+    Expanded:
+    - /Robot & TF1
+    - /Maps1
+    - /Navigation1
+    - /SLAM & 3D1
+    - /Sensors1
+  Tree Height: 560
   Expanded:
   - /Global Options1
   - /Status1

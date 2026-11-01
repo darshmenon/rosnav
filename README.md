@@ -133,7 +133,7 @@ Or let the robot explore alone: add `explore:=true` to the launch above.
 | <img src="images/frontier_maps/hospital.gif" width="260"> | <img src="images/frontier_maps/house.gif" width="200"> | <img src="images/frontier_maps/simple_rooms.gif" width="240"> |
 | 133.1k cells · 3.4 cm | 47.0k cells · 12.7 cm | 98.3k cells · 3.7 cm |
 
-Ready-made maps: `src/rosnav_bot/maps/map_{hospital,house,simple_rooms}.yaml` (+ RTAB-Map `map_cafe_rtab.yaml`, [3D views](#rtab-map-rgb-d--cafe)) — skip exploring and [navigate on them directly](#c--navigate-on-the-saved-map).
+Ready-made maps: `src/rosnav_bot/maps/map_{hospital,house,simple_rooms}.yaml` (+ RTAB-Map `map_cafe_rtab.yaml`, [3D views](#rtab-map-visual-slam-rgb-d-cafe)) — skip exploring and [navigate on them directly](#c--navigate-on-the-saved-map).
 
 Exploration backend defaults to `builtin` (best result in the 2026-10-11 cafe test — see
 `concepts.md` §9 for the earlier comparison). Switch it with `explorer:=`:
@@ -313,140 +313,50 @@ slam_toolbox's nodes + loop-closure constraints live; "Fused Odom (EKF/UKF)" vs
 "Wheel Odom (raw)" (off by default) lets you watch the localization filter correct
 drift, with its position-covariance ellipse on.
 
-### SLAM screenshots
+### SLAM in RViz (live recordings)
 
-#### RTAB-Map and slam_toolbox
+Each GIF is the full RViz window: display groups on the left, map, plan, costmap and pose graph in the 3D view.
 
-<table align="center">
-  <tr>
-    <td align="center"><b>slam_toolbox · hospital, live exploration</b></td>
-  </tr>
-  <tr>
-    <td><img src="images/slam_toolbox_hospital_rviz.png" alt="slam_toolbox map and planned path of the hospital in RViz" width="420"/></td>
-  </tr>
-</table>
+#### RTAB-Map 3D lidar
 
-#### RTAB-Map views in RViz (`vslam.rviz`, simple_rooms)
+`ros2 launch rosnav_bot slam_nav.launch.py world_name:=simple_rooms lidar_type:=3d slam_algo:=3d explore:=true`
 
-<table align="center">
-  <tr>
-    <td align="center"><b>Start, no goal yet</b></td>
-    <td align="center"><b>Goal sent (11.1 m to go)</b></td>
-  </tr>
-  <tr>
-    <td><img src="images/rtabmap/rtabmap.png" alt="RTAB-Map vslam.rviz start, no goal yet" width="420"/></td>
-    <td><img src="images/rtabmap/rtabmap2.png" alt="RTAB-Map vslam.rviz goal sent, 11.1 m remaining" width="420"/></td>
-  </tr>
-  <tr>
-    <td align="center"><b>Approaching a doorway (6.2 m left)</b></td>
-    <td align="center"><b>Later goal across the mapped room (8.9 m)</b></td>
-  </tr>
-  <tr>
-    <td><img src="images/rtabmap/rtabmap3.png" alt="RTAB-Map vslam.rviz approaching a doorway, 6.2 m remaining" width="420"/></td>
-    <td><img src="images/rtabmap/rtabmap4.png" alt="RTAB-Map vslam.rviz later goal, 8.9 m remaining" width="420"/></td>
-  </tr>
-</table>
+![RTAB-Map 3D lidar exploring simple_rooms in RViz](images/rtabmap_3d_lidar_simple_rooms.gif)
 
-#### RTAB-Map RGB-D · cafe
+#### RTAB-Map visual SLAM (RGB-D, cafe)
 
-`slam_algo:=vslam world_name:=cafe` — saved 2D map and exported 3D cloud:
+`slam_algo:=vslam world_name:=cafe` (`vslam.rviz`)
+
+![RTAB-Map RGB-D visual SLAM exploring the cafe in RViz](images/rtabmap_visual_cafe.gif)
+
+Saved 2D map and exported 3D cloud:
 
 | 2D map | 3D cloud (RViz) | 3D cloud (MeshLab) |
 |:---:|:---:|:---:|
 | <img src="images/rtabmap/map_cafe_rtab.png" width="260"> | <img src="images/rtabmap/cafe_3d_cloud.png" width="260"> | <img src="images/rtabmap/cafe_3d_meshlab.png" width="260"> |
 | 111 m² · `src/rosnav_bot/maps/map_cafe_rtab.yaml` | 682k coloured points | `rtabmap-export --cloud` |
 
-**Live in RViz**
+#### Frontier exploration
+
+Single-room `coverage_100` world, slam_toolbox (same session as the coverage screenshots in §5):
+
+![Frontier exploration of the coverage_100 world in RViz](images/frontier_exploration_coverage_100.gif)
+
+#### ORB-SLAM3 (sidecar, cafe)
+
+Needs GTK-enabled OpenCV for the viewer windows, see `docker/orb_slam3/params/rosnav_rgbd_ros_params.yaml`.
 
 <table align="center">
   <tr>
-    <td align="center"><b>Coloured cloud and Nav2 path</b></td>
-    <td align="center"><b>After more exploration (furniture and door)</b></td>
+    <td align="center"><b>Full system live</b> (Gazebo, RViz, Map Viewer, Current Frame)</td>
+    <td align="center"><b>Map Viewer, cafe</b></td>
   </tr>
   <tr>
-    <td><img src="images/rtabmap_vslam_cafe_rviz.png" alt="RTAB-Map RGB-D coloured cloud and path in RViz, cafe" width="420"/></td>
-    <td><img src="images/rtabmap_vslam_cafe_rviz_3.png" alt="RTAB-Map RGB-D map with furniture and door after more exploration, cafe" width="420"/></td>
-  </tr>
-</table>
-
-#### RTAB-Map OctoMap layer
-
-OctoMap voxel layer (blue voxels) live during frontier exploration of the single-room
-`coverage_100` world (same session as the coverage screenshots in §5):
-
-<table align="center">
-  <tr>
-    <td align="center"><b>Frontier just starting</b></td>
-    <td align="center"><b>Dense scan coverage</b></td>
-  </tr>
-  <tr>
-    <td><img src="images/rtabmap_octomap_frontier_start.png" alt="OctoMap frontier exploration just starting in RViz" width="420"/></td>
-    <td><img src="images/rtabmap_octomap_explore_dense.png" alt="OctoMap dense scan coverage during frontier exploration in RViz" width="420"/></td>
-  </tr>
-  <tr>
-    <td align="center"><b>Goal sent across the map</b></td>
-    <td align="center"><b>Final local frontier pass</b></td>
-  </tr>
-  <tr>
-    <td><img src="images/rtabmap_octomap_explore_3.png" alt="OctoMap goal sent across the partially mapped area" width="420"/></td>
-    <td><img src="images/rtabmap_octomap_explore_6.png" alt="OctoMap final local frontier pass" width="420"/></td>
-  </tr>
-</table>
-
-#### 3D lidar
-
-![3D lidar point cloud, SLAM map, and costmap in RViz](images/gs_3d_slam_view.png)
-
-#### ORB-SLAM3 live demo
-
-All four windows at once: Gazebo (top-left), RViz's `/map` + costmap (bottom-left),
-ORB-SLAM3's Map Viewer top-down point cloud (top-right), and Current Frame tracked-feature overlay
-(bottom). Needs GTK-enabled OpenCV for the viewer windows — see
-`docker/orb_slam3/params/rosnav_rgbd_ros_params.yaml`.
-
-<table align="center">
-  <tr>
-    <td align="center"><b>Early in the run</b></td>
-    <td align="center"><b>Later — denser map, tracking a shelf</b></td>
-  </tr>
-  <tr>
-    <td><img src="images/orbslam3_full_demo.png" alt="Full system live: Gazebo, RViz, ORB-SLAM3 Map Viewer, and Current Frame all running together" width="420"/></td>
-    <td><img src="images/orbslam3_full_demo_2.png" alt="Same setup, later in the run — denser map, robot further along" width="420"/></td>
-  </tr>
-</table>
-
-<details open>
-<summary>Closer look at the two ORB-SLAM3 viewer windows individually</summary>
-
-<table align="center">
-  <tr>
-    <td align="center"><b>Current Frame (923/1200 matched)</b></td>
-    <td align="center"><b>Map Viewer (top-down)</b></td>
-  </tr>
-  <tr>
-    <td><img src="images/orbslam3_current_frame.png" alt="ORB-SLAM3 feature tracking, live against the sim's RGB-D camera" width="420"/></td>
-    <td><img src="images/orbslam3_map_viewer.png" alt="ORB-SLAM3 Map Viewer, top-down — accumulated map points tracing the room, green = current camera pose" width="420"/></td>
-  </tr>
-  <tr>
-    <td colspan="2" align="center"><b>Keyframe pose-graph</b> (blue = keyframes, green = covisibility edges, red = current camera)</td>
-  </tr>
-  <tr>
-    <td colspan="2" align="center"><img src="images/orbslam3_keyframe_graph.png" alt="ORB-SLAM3 Map Viewer keyframe/covisibility graph" width="420"/></td>
-  </tr>
-</table>
-
-</details>
-
-**ORB-SLAM3 · cafe**
-
-<table align="center">
-  <tr>
-    <td align="center"><b>Map Viewer</b></td>
-    <td align="center"><b>Current Frame (tracked features)</b></td>
-  </tr>
-  <tr>
+    <td><img src="images/orbslam3_full_demo_2.png" alt="Full system live: Gazebo, RViz, ORB-SLAM3 Map Viewer and Current Frame" width="420"/></td>
     <td><img src="images/orbslam3_cafe_map_viewer.png" alt="ORB-SLAM3 Map Viewer, cafe" width="420"/></td>
-    <td><img src="images/orbslam3_cafe_current_frame.png" alt="ORB-SLAM3 tracked features, cafe" width="420"/></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><b>Current Frame, tracked features (cafe)</b><br><img src="images/orbslam3_cafe_current_frame.png" alt="ORB-SLAM3 tracked features, cafe" width="420"/></td>
   </tr>
 </table>
 
@@ -676,11 +586,6 @@ ros2 run rosnav_bot aruco_dock.py --ros-args -p dock_name:=charging_dock
 
 Dock poses / marker IDs → `config/docks.yaml`. Live view: `/tmp/aruco_dock_view.jpg` or RViz `Image` on `/camera/image_raw`.
 
-<p align="center">
-  <img src="images/docking.png" alt="ArUco visual docking" width="720"/>
-  <br/><sub>ArUco visual docking</sub>
-</p>
-
 
 ---
 
@@ -739,6 +644,7 @@ ros2 run rosnav_bot multi_teleop.py
 ```
 
 ---
+
 
 ## 15. Gaussian Splatting capture
 

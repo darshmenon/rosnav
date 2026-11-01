@@ -17,7 +17,7 @@ import sys
 import yaml
 
 GROUPS = ['Robot & TF', 'Maps', 'Navigation', 'SLAM & 3D', 'Sensors', 'Cameras']
-DEAD_TOPICS = {'/camera/depth/points'}
+DEAD_TOPICS = {'/camera/depth/points', '/exploration_goal_flags'}   # flags clutter the map
 RENAME_BY_TOPIC = {
     '/map': 'Map',
     '/global_costmap/costmap': 'Global Costmap',
@@ -34,6 +34,10 @@ RENAME_BY_TOPIC = {
     '/camera/depth/image_raw': 'Depth',
     '/world_monitor/image_raw': 'World Monitor',
     '/mapPath': 'Pose-Graph Path',
+    '/plan_smoothed': 'Smoothed Plan',
+    '/obstacle_markers': 'Dynamic Obstacles',
+    '/exploration_goal_flags': 'Exploration Goals',
+    '/scan_odom_cloud': 'Costmap Scan Cloud (odom)',
     '/points_traversability': 'Traversability',
 }
 
@@ -51,9 +55,11 @@ def group_of(d):
         return 'Maps'
     if cls == 'Map':
         return 'Maps'
-    if cls in ('Path', 'Polygon') or topic in ('/explore/frontiers', '/exploration_goal_flags', '/trajectories') \
+    if cls in ('Path', 'Polygon') or topic in ('/explore/frontiers', '/exploration_goal_flags', '/trajectories', '/obstacle_markers') \
             or topic.startswith('/mpc/'):
         return 'Navigation'
+    if topic == '/scan_odom_cloud':
+        return 'Sensors'
     if cls in ('MapCloud', 'MapGraph', 'PointCloud2') or 'graph' in topic.lower() or 'octomap' in topic:
         return 'SLAM & 3D'
     if cls == 'MarkerArray':
@@ -79,6 +85,32 @@ def mpc_displays():
     ]
 
 
+def extra_displays():
+    """Other published topics worth showing, added when a config lacks them (off by default if noisy)."""
+    q = {'Depth': 5, 'Durability Policy': 'Volatile', 'Filter size': 10, 'History Policy': 'Keep Last',
+         'Reliability Policy': 'Reliable'}
+    path = lambda name, topic, col, on=True: {
+        'Alpha': 1, 'Buffer Length': 1, 'Class': 'rviz_default_plugins/Path', 'Color': col, 'Enabled': on,
+        'Head Diameter': 0.3, 'Head Length': 0.2, 'Length': 0.3, 'Line Style': 'Lines', 'Line Width': 0.03,
+        'Name': name, 'Offset': {'X': 0, 'Y': 0, 'Z': 0.03}, 'Pose Color': col, 'Pose Style': 'None',
+        'Radius': 0.03, 'Shaft Diameter': 0.1, 'Shaft Length': 0.1, 'Topic': dict(q, Value=topic), 'Value': on}
+    marks = lambda name, topic, on=True: {
+        'Class': 'rviz_default_plugins/MarkerArray', 'Enabled': on, 'Name': name, 'Namespaces': {},
+        'Topic': dict(q, Value=topic), 'Value': on}
+    return [
+        path('Smoothed Plan', '/plan_smoothed', '255; 170; 0'),
+        {'Class': 'rviz_default_plugins/Marker', 'Enabled': True, 'Name': 'Dynamic Obstacles', 'Namespaces': {},
+         'Topic': dict(q, Value='/obstacle_markers'), 'Value': True},
+        {'Alpha': 1, 'Autocompute Intensity Bounds': True, 'Autocompute Value Bounds': {'Max Value': 10, 'Min Value': 0, 'Value': True},
+         'Axis': 'Z', 'Channel Name': 'intensity', 'Class': 'rviz_default_plugins/PointCloud2', 'Color': '255; 85; 255',
+         'Color Transformer': 'FlatColor', 'Decay Time': 0, 'Enabled': False, 'Invert Rainbow': False,
+         'Max Color': '255; 255; 255', 'Max Intensity': 4096, 'Min Color': '0; 0; 0', 'Min Intensity': 0,
+         'Name': 'Costmap Scan Cloud (odom)', 'Position Transformer': 'XYZ', 'Selectable': True, 'Size (Pixels)': 3,
+         'Size (m)': 0.05, 'Style': 'Flat Squares', 'Topic': dict(q, Value='/scan_odom_cloud'), 'Use Fixed Frame': True,
+         'Use rainbow': True, 'Value': False},
+    ]
+
+
 def tidy(path):
     with open(path) as f:
         cfg = yaml.safe_load(f)
@@ -97,6 +129,8 @@ def tidy(path):
         if topic in RENAME_BY_TOPIC:
             d['Name'] = RENAME_BY_TOPIC[topic]
         cls = d['Class'].split('/')[-1]
+        if d['Name'] == 'Depth' and cls == 'Image':      # depth image is black in sim, wastes dock space
+            d['Enabled'] = d['Value'] = False
         if cls == 'TF':
             d['Show Names'], d['Show Arrows'], d['Marker Scale'] = False, False, 0.4
         if cls == 'Map' and 'costmap' in topic:
@@ -109,6 +143,9 @@ def tidy(path):
     names = {d['Name'] for d in kept}
     if 'multi' not in path and 'gs_' not in path and not any(topic_of(d).startswith('/mpc/') for d in kept):
         kept.extend(x for x in mpc_displays() if x['Name'] not in names)
+    if 'multi' not in path and 'gs_' not in path:
+        have = {topic_of(d) for d in kept}
+        kept.extend(x for x in extra_displays() if topic_of(x) not in have)
     buckets = {g: [] for g in GROUPS}
     for d in kept:
         buckets[group_of(d)].append(d)

@@ -4,14 +4,13 @@ Panels:
   Name: Displays
   Property Tree Widget:
     Expanded:
-    - /Global Options1
-    - /Status1
-    - /TF1/Frames1
-    - /Map Merged1
-    - /Map Robot1 (raw)1
-    - /Map Robot2 (raw)1
-    Splitter Ratio: 0.5
-  Tree Height: 300
+    - /Robot & TF1
+    - /Maps1
+    - /Navigation1
+    - /SLAM & 3D1
+    - /Sensors1
+    Splitter Ratio: 0.55
+  Tree Height: 560
   Expanded:
   - /Global Options1
   - /Status1

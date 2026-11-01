@@ -1,6 +1,13 @@
 Panels:
 - Class: rviz_common/Displays
   Name: Displays
+  Property Tree Widget:
+    Expanded:
+    - /Robot & TF1
+    - /Navigation1
+    - /SLAM & 3D1
+    Splitter Ratio: 0.55
+  Tree Height: 560
   Expanded:
   - /Global Options1
   - /Status1
@@ -19,10 +26,6 @@ Visualization Manager:
       Enabled: true
     Enabled: true
     Name: Robot & TF
-  - Class: rviz_common/Group
-    Displays: []
-    Enabled: true
-    Name: Navigation
   - Class: rviz_common/Group
     Displays:
     - Class: rviz_default_plugins/PointCloud2
