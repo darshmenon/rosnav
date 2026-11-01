@@ -431,7 +431,7 @@ Visualization Manager:
       Selectable: true
       Size (Pixels): 2
       Size (m): 0.05
-      Style: Boxes
+      Style: Flat Squares
       Topic:
         Depth: 5
         Durability Policy: Volatile
