@@ -88,14 +88,30 @@ def _collect(robots: list[str] | None, sample: float) -> tuple[dict, bool | None
     rclpy.init()
     node = Node('rosnav_doctor', parameter_overrides=[
         rclpy.parameter.Parameter('use_sim_time', rclpy.Parameter.Type.BOOL, True)])
-    spin = lambda t: [rclpy.spin_once(node, timeout_sec=0.05) for _ in range(int(t / 0.05))]
-    spin(1.0)
+    import time
+
+    def spin(t):
+        # Wall-clock deadline, not a fixed number of spin_once calls: spin_once returns at once when a
+        # callback is ready, so with /clock + TF + odom flooding it a count-based loop ends in well
+        # under `t` seconds, starving slower topics (scan read as 0 Hz) and unanswered service calls
+        # (Nav2 read as DOWN).
+        end = time.monotonic() + t
+        while time.monotonic() < end:
+            rclpy.spin_once(node, timeout_sec=0.05)
+
+    spin(3.0)
     if not robots:
         robots = sorted({t.split('/')[1] for t, _ in node.get_topic_names_and_types()
                          if t.count('/') >= 2 and t.endswith('/cmd_vel')})
     buf = tf2_ros.Buffer()
     tf2_ros.TransformListener(buf, node)
-    import time
+    # frames published on /tf_static never refresh their stamp: they must not be reported as stale
+    from tf2_msgs.msg import TFMessage
+    static_children = set()
+    node.create_subscription(
+        TFMessage, '/tf_static',
+        lambda m: static_children.update(t.child_frame_id.lstrip('/') for t in m.transforms),
+        QoSProfile(depth=100, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL))
     stamps = {r: {'odom': [], 'scan': []} for r in robots}      # wall-clock arrivals
     for r in robots:
         node.create_subscription(Odometry, f'/{r}/odom', lambda m, r=r: stamps[r]['odom'].append(time.monotonic()),
@@ -111,10 +127,17 @@ def _collect(robots: list[str] | None, sample: float) -> tuple[dict, bool | None
     spin(sample)
 
     def rate(ts):
-        # first-to-last arrival: discovery lag at the start of the sample must not count as silence
-        return (len(ts) - 1) / (ts[-1] - ts[0]) if len(ts) >= 2 and ts[-1] > ts[0] else 0.0
+        # Newly discovered subscriptions get a burst of queued messages, so only the second half of
+        # the sample counts; first-to-last (not count/window) so discovery lag is not read as silence.
+        if len(ts) < 3:
+            return 0.0
+        cut = ts[0] + 0.5 * (ts[-1] - ts[0])
+        tail = [t for t in ts if t >= cut]
+        return (len(tail) - 1) / (tail[-1] - tail[0]) if len(tail) >= 2 and tail[-1] > tail[0] else 0.0
 
     def age(target, source):
+        if source in static_children:
+            return 0.0
         try:
             tr = buf.lookup_transform(target, source, rclpy.time.Time())
         except Exception:

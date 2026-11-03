@@ -115,6 +115,9 @@ class FrontierCoordinator(Node):
         # Per-robot min goal distance for mixed fleets, e.g. "robot2:0.8,robot3:0.5"
         # (ackermann robots cannot reach goals inside their turning radius).
         self.declare_parameter('min_goal_distance_overrides', '')
+        # Tiny frontiers (a few wall-edge cells) have almost no unknown area behind them; chasing
+        # them sent robots to useless far corners. Skipped while any larger frontier exists.
+        self.declare_parameter('min_info_gain', 0.05)
         self.declare_parameter('separation_weight', 0.0)
         self.declare_parameter('separation_radius', 6.0)
         self.declare_parameter('suspicious_frontier_ratio', 3.0)
@@ -161,6 +164,7 @@ class FrontierCoordinator(Node):
         self._gain_scale  = self.get_parameter('gain_scale').value
         self._hyst_r      = self.get_parameter('hysteresis_radius').value
         self._hyst_gain   = self.get_parameter('hysteresis_gain').value
+        self._min_gain    = self.get_parameter('min_info_gain').value
         self._sep_w       = self.get_parameter('separation_weight').value
         self._sep_r       = self.get_parameter('separation_radius').value
         self._suspect_ratio = float(self.get_parameter('suspicious_frontier_ratio').value)
@@ -407,7 +411,7 @@ class FrontierCoordinator(Node):
         return (self.get_clock().now() - self._start_time).nanoseconds / 1e9
 
     # ------------------------------------------------------------------
-    def _pick(self, frontiers, robot_pos, ns, collect=None):
+    def _pick(self, frontiers, robot_pos, ns, collect=None, allow_tiny=False):
         """Pick a frontier through the selected scorer plugin.
 
         Returns (goal_xy | None, diagnostics dict).
@@ -418,6 +422,7 @@ class FrontierCoordinator(Node):
         best, best_score = None, float('-inf')
         best_meta = {}
         n_visited = n_failed = n_taken = n_costmap = n_near = n_ok = n_unreachable = n_suspicious = 0
+        n_tiny = 0
         for frontier in frontiers:
             fx, fy = frontier['point']
             if _near_any(fx, fy, self._visited, self._revisit_r):
@@ -428,6 +433,10 @@ class FrontierCoordinator(Node):
                 continue
             if frontier.get('suspicious_ratio', 0.0) >= self._suspect_hard_ratio:
                 n_suspicious += 1
+                continue
+            if (not allow_tiny and getattr(self, '_min_gain', 0.0) > 0.0
+                    and frontier.get('info_gain', 0.0) < self._min_gain):
+                n_tiny += 1
                 continue
             if _near_any(fx, fy, taken, self._assign_r):
                 n_taken += 1
@@ -463,8 +472,13 @@ class FrontierCoordinator(Node):
                     'suspicious_ratio': frontier.get('suspicious_ratio', 0.0),
                 }
 
+        if best is None and n_tiny and not allow_tiny:
+            # only tiny frontiers are left: take them rather than stop exploring early
+            return self._pick(frontiers, robot_pos, ns, collect=collect, allow_tiny=True)
+
         diag = {
             'n_total': len(frontiers),
+            'n_tiny': n_tiny,
             'n_ok': n_ok,
             'n_visited': n_visited,
             'n_failed': n_failed,

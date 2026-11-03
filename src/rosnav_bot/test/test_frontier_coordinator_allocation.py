@@ -79,3 +79,33 @@ def test_parse_robot_floats_and_per_robot_min_goal():
     node = fc.FrontierCoordinator.__new__(fc.FrontierCoordinator)
     node._min_goal_d, node._min_goal_by_robot = 0.35, {'r2': 0.8}
     assert node._min_goal_for('r2') == 0.8 and node._min_goal_for('r1') == 0.35
+
+
+def _pick_node(min_gain):
+    node = fc.FrontierCoordinator.__new__(fc.FrontierCoordinator)
+    for k, v in dict(_assigned={}, _visited=[], _revisit_r=0.5, _assign_r=1.0, _suspect_hard_ratio=6.0,
+                     _min_goal_d=0.0, _min_gain=min_gain, _scorer='nearest', _hyst_r=0, _hyst_gain=0,
+                     _sep_w=0.0, _sep_r=6.0, _suspect_ratio=3.0, _suspect_penalty=8.0,
+                     _suspect_buffer=1.0).items():
+        setattr(node, k, v)
+    node._path_distance_map = lambda pos: None
+    node._frontier_path_distance = staticmethod(lambda f, pd: f['d'])
+    node._recently_failed = lambda x, y: False
+    node._costmap_allows = lambda x, y, ns: True
+    return node
+
+
+def _fr(x, gain, d):
+    return {'point': (x, 0.0), 'size_m': 1.0, 'info_gain': gain, 'clearance': 1.0, 'd': d}
+
+
+def test_tiny_frontiers_skipped_while_larger_exist():
+    node = _pick_node(0.05)
+    goal, diag = node._pick([_fr(1.0, 0.02, 1.0), _fr(5.0, 0.20, 4.0)], (0, 0), 'r1')
+    assert goal == (5.0, 0.0) and diag['n_tiny'] == 1
+
+
+def test_tiny_frontiers_used_when_nothing_else_left():
+    node = _pick_node(0.05)
+    goal, _ = node._pick([_fr(1.0, 0.02, 1.0)], (0, 0), 'r1')
+    assert goal == (1.0, 0.0)

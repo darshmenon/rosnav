@@ -678,6 +678,10 @@ def _build_all(context, pkg_share: str):
     slam_mode = LaunchConfiguration('slam_mode').perform(context).strip().lower()
     collab_loop_closure = _truthy(LaunchConfiguration('collab_loop_closure').perform(context))
     frontier_detector = LaunchConfiguration('frontier_detector').perform(context).strip()
+    # world_name:= is the slam_nav.launch.py spelling; accept it here so it is not silently ignored.
+    world_name_alias = LaunchConfiguration('world_name').perform(context).strip()
+    if world_name_alias:
+        world_arg = world_name_alias
     frontier_scorer = LaunchConfiguration('frontier_scorer').perform(context).strip()
     allocation = LaunchConfiguration('allocation').perform(context).strip()
     explorer_backend = _common.resolve_explorer(LaunchConfiguration('explorer').perform(context))
@@ -1457,6 +1461,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'headless', default_value='false',
             description='true = Gazebo server only, no GUI or RViz'),
+        DeclareLaunchArgument(
+            'world_name', default_value='',
+            description='Alias for world:= (same spelling as slam_nav.launch.py); wins when set'),
         DeclareLaunchArgument(
             'explore_localization', default_value='static',
             description='Non-SLAM robots in explore mode: static (fixed map->odom at spawn pose, '
