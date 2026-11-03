@@ -216,6 +216,13 @@ class FrontierCoordinator(Node):
         self._assigned_meta: dict[str, dict | None]           = {r: None        for r in self._robots}
         self._visited:  list[tuple[float, float]]            = []
         self._failed_frontiers: list[dict]                    = []
+        # Spurious-success guard (as in frontier_explorer.py): Nav2 can report SUCCEEDED
+        # without the robot moving when the controller has no TF yet. Such a goal must
+        # not be marked visited, or the whole frontier ring is swallowed in seconds.
+        self._goal_sent_t:   dict[str, float]                 = {r: 0.0   for r in self._robots}
+        self._goal_start:    dict[str, tuple | None]          = {r: None  for r in self._robots}
+        self._hold_until:    dict[str, float]                 = {r: 0.0   for r in self._robots}
+        self._spurious:      dict[str, int]                   = {r: 0     for r in self._robots}
 
         # One Nav2 action client per robot
         self._nav_clients: dict[str, ActionClient] = {
@@ -296,9 +303,11 @@ class FrontierCoordinator(Node):
                 f'ok={self._succeeded_goals} fail={self._failed_goals}')
             self._last_assignment_cycle_log = elapsed
 
+        now_m = time.monotonic()
         idle = [
             r for r in self._robots
             if self._state[r] == _State.IDLE and self._nav_ready.get(r, False)
+            and now_m >= self._hold_until[r]
         ]
         if idle and frontiers:
             plan = {}
@@ -613,6 +622,8 @@ class FrontierCoordinator(Node):
         goal.pose.pose.orientation.w = 1.0
         if self._bt_xml:
             goal.behavior_tree = self._bt_xml
+        self._goal_sent_t[ns] = time.monotonic()
+        self._goal_start[ns] = self._robot_pos(ns)
 
         f = self._nav_clients[ns].send_goal_async(goal)
         f.add_done_callback(lambda fut, r=ns: self._on_accepted(fut, r))
@@ -635,6 +646,31 @@ class FrontierCoordinator(Node):
         self.get_logger().info(f'[{ns}] Nav2 accepted ({gx:.2f}, {gy:.2f})')
         handle.get_result_async().add_done_callback(lambda fut, r=ns: self._on_result(fut, r))
 
+    def _spurious_success(self, ns, goal) -> bool:
+        """True when Nav2 said SUCCEEDED but the robot never really went anywhere."""
+        gx, gy = goal
+        start = self._goal_start.get(ns)
+        pos = self._robot_pos(ns)
+        elapsed = time.monotonic() - self._goal_sent_t[ns]
+        if start is None or pos is None:
+            return False
+        # Goal already inside Nav2's tolerance when sent: success without motion is right.
+        if math.hypot(gx - start[0], gy - start[1]) < self._min_goal_d:
+            return False
+        moved = math.hypot(pos[0] - start[0], pos[1] - start[1])
+        need = min(0.3, 0.5 * math.hypot(gx - start[0], gy - start[1]))
+        far = math.hypot(pos[0] - gx, pos[1] - gy) > 1.0
+        if not (elapsed < 0.5 or far or moved < need):
+            return False
+        self._spurious[ns] += 1
+        backoff = min(30.0, 2.0 * self._spurious[ns])
+        self._hold_until[ns] = time.monotonic() + backoff
+        self.get_logger().warn(
+            f'[{ns}] spurious success at ({gx:.2f}, {gy:.2f}) in {elapsed:.2f}s, robot moved '
+            f'{moved:.2f} m (< {need:.2f} m) - not marking visited; {self._spurious[ns]} in a '
+            f'row, holding goals {backoff:.0f}s (controller TF likely not ready).')
+        return True
+
     def _on_result(self, future, ns):
         status = future.result().status
         goal = self._assigned[ns]
@@ -644,6 +680,13 @@ class FrontierCoordinator(Node):
                 f'[{ns}] reached ({gx:.2f}, {gy:.2f}) '
                 f'(visited={len(self._visited) + (1 if goal else 0)} '
                 f'ok={self._succeeded_goals + 1})')
+            if goal and self._spurious_success(ns, goal):
+                self._assigned[ns] = None
+                self._assigned_meta[ns] = None
+                self._state[ns] = _State.IDLE
+                self._publish_stats()
+                return
+            self._spurious[ns] = 0
             self._succeeded_goals += 1
             if goal:
                 self._visited.append(goal)

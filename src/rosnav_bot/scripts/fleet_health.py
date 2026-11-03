@@ -26,7 +26,8 @@ Optional ros2_pulse
 Overall rules
 ─────────────
   ERROR   odom or scan dropped to 0 Hz
-  WARN    odom or scan below threshold, OR nav2_alive = false
+  WARN    odom or scan below threshold, OR nav2_alive = false, OR no exploration progress
+          for stall_s (60 s) while frontiers remain (progress = stalled)
   OK      all checks green
 
 Usage
@@ -106,8 +107,16 @@ class FleetHealthMonitor(Node):
         if mode != 'false' and PulseRates is not None:
             self._pulse = PulseRates(str(self.get_parameter('pulse_glob').value))
         self._sources:       dict[str, str] = {}
+        self._stall_warned = False
 
         self.create_subscription(String, '/mission/state',  self._mission_cb,  10)
+        # Exploration progress: odom/scan alive does not mean the fleet is getting anywhere.
+        self.declare_parameter('stall_s', 60.0)
+        self._stall_s = float(self.get_parameter('stall_s').value)
+        self._prog_sig = None
+        self._prog_changed = time.monotonic()
+        self._frontiers = 0
+        self.create_subscription(String, '/exploration/stats', self._stats_cb, 10)
         self._pub = self.create_publisher(String, '/fleet/health', 10)
 
         self.create_timer(1.0, self._tick)
@@ -159,6 +168,18 @@ class FleetHealthMonitor(Node):
         except json.JSONDecodeError:
             pass
 
+    def _stats_cb(self, msg: String):
+        try:
+            d = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
+        sig = (d.get('succeeded_goals'), d.get('visited_count'), d.get('explored_area_m2'))
+        with self._lock:
+            if sig != self._prog_sig:
+                self._prog_sig = sig
+                self._prog_changed = time.monotonic()
+            self._frontiers = int(d.get('frontier_count') or 0)
+
     def _mission_cb(self, msg: String):
         try:
             data = json.loads(msg.data)
@@ -189,6 +210,14 @@ class FleetHealthMonitor(Node):
         with self._lock:
             robots = sorted(self._known_robots)
             report = {}
+            stalled_s = time.monotonic() - self._prog_changed
+            stalled = (self._prog_sig is not None and self._frontiers > 0
+                       and stalled_s >= self._stall_s)
+            if stalled and not self._stall_warned:
+                self.get_logger().warn(
+                    f'Health: no exploration progress for {stalled_s:.0f}s with '
+                    f'{self._frontiers} frontier(s) left - fleet is stalled')
+            self._stall_warned = stalled
 
             for ns in robots:
                 if self._sources.get(ns) == 'pulse':
@@ -211,6 +240,8 @@ class FleetHealthMonitor(Node):
                     overall = 'WARN'
                 elif col_state == 'STOP':
                     overall = 'WARN'
+                elif stalled:
+                    overall = 'WARN'
                 else:
                     overall = 'OK'
 
@@ -222,6 +253,7 @@ class FleetHealthMonitor(Node):
                     'nav2':      nav2_ok,
                     'mission':   mission,
                     'collision': col_state,
+                    'progress':  'stalled' if stalled else 'ok',
                 }
 
         msg      = String()
