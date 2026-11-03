@@ -170,6 +170,10 @@ def generate_launch_description():
                 name='lifecycle_manager_navigation',
                 namespace=namespace,
                 output='screen',
+                # Respawn so nav2_bringup_watchdog can kill a manager that hung waiting on a lost
+                # lifecycle service reply (it never answers is_active again) and get a fresh one.
+                respawn=True,
+                respawn_delay=2.0,
                 arguments=['--ros-args', '--log-level', log_level],
                 parameters=[{
                     'use_sim_time': use_sim_time,

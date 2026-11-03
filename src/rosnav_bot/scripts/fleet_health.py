@@ -56,7 +56,7 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
 
 try:                                    # optional: only used when ros2_pulse logs exist
-    from pulse_rates import PulseRates
+    from pulse_rates import PulseRates, nav_loop_rates, stall_reason
 except ImportError:                     # pragma: no cover - module missing from an install
     PulseRates = None
 
@@ -249,7 +249,14 @@ class FleetHealthMonitor(Node):
                 else:
                     overall = 'OK'
 
+                extra = {}
+                if self._sources.get(ns) == 'pulse':
+                    loops = nav_loop_rates(pulse, ns)
+                    extra = {k: (round(v, 1) if v is not None else None) for k, v in loops.items()}
+                    if stalled:
+                        extra['stall_reason'] = stall_reason(odom_hz, scan_hz, loops)
                 report[ns] = {
+                    **extra,
                     'overall':   overall,
                     'odom_hz':   round(odom_hz, 1),
                     'scan_hz':   round(scan_hz, 1),

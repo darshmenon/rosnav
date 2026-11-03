@@ -78,3 +78,29 @@ class PulseRates:
 
     def active(self, now: float | None = None) -> bool:
         return bool(self.read(now))
+
+
+def nav_loop_rates(rates: dict, ns: str) -> dict:
+    """Navigation-loop rates for one robot from a PulseRates.read() dict (None = not reported)."""
+    def pick(*names):
+        for n in names:
+            if n in rates:
+                return rates[n]
+        return None
+    return {
+        'controller_hz': pick(f'/{ns}/cmd_vel_nav', f'/{ns}/cmd_vel'),
+        'costmap_hz': pick(f'/{ns}/local_costmap/costmap', f'/{ns}/local_costmap/costmap_raw'),
+    }
+
+
+def stall_reason(odom_hz: float, scan_hz: float, loops: dict,
+                 min_odom: float = 5.0, min_scan: float = 1.0, min_controller: float = 5.0) -> str:
+    """Best guess why a robot with frontiers left is not progressing, from topic rates alone."""
+    if scan_hz < min_scan:
+        return f'lidar not publishing ({scan_hz:.1f} Hz)'
+    if odom_hz < min_odom:
+        return f'odometry slow ({odom_hz:.1f} Hz)'
+    ctrl = loops.get('controller_hz')
+    if ctrl is not None and ctrl < min_controller:
+        return f'controller loop starved ({ctrl:.1f} Hz)'
+    return 'sensors and controller rates look fine (planner/goal problem?)'

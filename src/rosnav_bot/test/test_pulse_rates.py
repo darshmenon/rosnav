@@ -79,3 +79,19 @@ def test_only_the_tail_of_a_big_log_is_read(tmp_path):
     big = [_win([{'topic': '/old', 'pub_inter_hz': 1.0}])] * 5000
     _log(tmp_path, 'topic_freq.1.log', *big, _win([{'topic': '/robot1/odom', 'pub_inter_hz': 50.0}]))
     assert _reader(tmp_path).read() == {'/robot1/odom': 50.0}
+
+
+def test_nav_loop_rates_prefers_cmd_vel_nav():
+    r = {'/robot1/cmd_vel_nav': 19.8, '/robot1/cmd_vel': 20.0, '/robot1/local_costmap/costmap': 5.0}
+    loops = pulse_rates.nav_loop_rates(r, 'robot1')
+    assert loops == {'controller_hz': 19.8, 'costmap_hz': 5.0}
+    assert pulse_rates.nav_loop_rates({}, 'robot1') == {'controller_hz': None, 'costmap_hz': None}
+
+
+def test_stall_reason_priority():
+    ok = {'controller_hz': 20.0}
+    assert 'lidar' in pulse_rates.stall_reason(50, 0.0, ok)
+    assert 'odometry' in pulse_rates.stall_reason(1.0, 10, ok)
+    assert 'controller loop starved' in pulse_rates.stall_reason(50, 10, {'controller_hz': 2.0})
+    assert 'look fine' in pulse_rates.stall_reason(50, 10, ok)
+    assert 'look fine' in pulse_rates.stall_reason(50, 10, {'controller_hz': None})
