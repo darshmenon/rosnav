@@ -14,6 +14,15 @@ Checks per robot
   collision     Last known collision monitor state
   overall       OK | WARN | ERROR
 
+Optional ros2_pulse
+───────────────────
+  If ros2_pulse (apt: ros-humble-ros2-pulse) is running (LD_PRELOAD probe, jsonl logs, e.g.
+  `multi_robot.launch.py pulse:=true`), odom_hz / scan_hz come from its logs and this node does
+  not subscribe to every robot's /odom and /scan itself. Without fresh pulse logs, or for a
+  robot pulse has not seen, it keeps the subscriptions below, so nothing needs installing.
+  Pulse rates are 5 s window averages: slower to react than the 2 s subscription window.
+  Parameter use_pulse: auto (default) | false (never read pulse).  Report has a per-robot "source".
+
 Overall rules
 ─────────────
   ERROR   odom or scan dropped to 0 Hz
@@ -44,6 +53,11 @@ from rclpy.utilities import remove_ros_args
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
+
+try:                                    # optional: only used when ros2_pulse logs exist
+    from pulse_rates import PulseRates
+except ImportError:                     # pragma: no cover - module missing from an install
+    PulseRates = None
 
 _ODOM_WARN_HZ  = 5.0
 _SCAN_WARN_HZ  = 5.0
@@ -85,6 +99,14 @@ class FleetHealthMonitor(Node):
         self._scan_subs:     dict = {}
         self._col_subs:      dict = {}
 
+        self.declare_parameter('use_pulse', 'auto')        # auto | false
+        self.declare_parameter('pulse_glob', '')           # '' = $TMPDIR/topic_freq.*.log
+        mode = str(self.get_parameter('use_pulse').value).strip().lower()
+        self._pulse = None
+        if mode != 'false' and PulseRates is not None:
+            self._pulse = PulseRates(str(self.get_parameter('pulse_glob').value))
+        self._sources:       dict[str, str] = {}
+
         self.create_subscription(String, '/mission/state',  self._mission_cb,  10)
         self._pub = self.create_publisher(String, '/fleet/health', 10)
 
@@ -106,17 +128,21 @@ class FleetHealthMonitor(Node):
             self._odom_rates[ns] = RateTracker()
             self._scan_rates[ns] = RateTracker()
 
-            self._odom_subs[ns] = self.create_subscription(
-                Odometry, f'/{ns}/odom',
-                lambda msg, n=ns: self._odom_cb(n), 10)
-            self._scan_subs[ns] = self.create_subscription(
-                LaserScan, f'/{ns}/scan',
-                lambda msg, n=ns: self._scan_cb(n), 10)
             self._col_subs[ns] = self.create_subscription(
                 String, f'/{ns}/collision_monitor/state',
                 lambda msg, n=ns: self._col_cb(msg, n), 10)
 
             self.get_logger().info(f'Health: tracking {ns}')
+
+    def _ensure_stream_subs(self, ns: str):
+        """Own /odom and /scan subscriptions: the fallback when pulse has no data for this robot."""
+        if ns in self._odom_subs:
+            return
+        self._odom_subs[ns] = self.create_subscription(
+            Odometry, f'/{ns}/odom', lambda msg, n=ns: self._odom_cb(n), 10)
+        self._scan_subs[ns] = self.create_subscription(
+            LaserScan, f'/{ns}/scan', lambda msg, n=ns: self._scan_cb(n), 10)
+        self.get_logger().info(f'Health: {ns} odom/scan from own subscriptions')
 
     def _odom_cb(self, ns: str):
         with self._lock:
@@ -149,14 +175,28 @@ class FleetHealthMonitor(Node):
         self._discover()
 
         node_ns_pairs = self.get_node_names_and_namespaces()
+        pulse = self._pulse.read() if self._pulse is not None else {}
+
+        # Per robot: pulse when it reports both streams, else our own subscriptions.
+        for ns in sorted(self._known_robots):
+            src = 'pulse' if (f'/{ns}/odom' in pulse and f'/{ns}/scan' in pulse) else 'subscription'
+            if src == 'subscription':
+                self._ensure_stream_subs(ns)
+            if self._sources.get(ns) != src:
+                self._sources[ns] = src
+                self.get_logger().info(f'Health: {ns} rates from {src}')
 
         with self._lock:
             robots = sorted(self._known_robots)
             report = {}
 
             for ns in robots:
-                odom_hz = self._odom_rates[ns].hz
-                scan_hz = self._scan_rates[ns].hz
+                if self._sources.get(ns) == 'pulse':
+                    odom_hz = pulse[f'/{ns}/odom']
+                    scan_hz = pulse[f'/{ns}/scan']
+                else:
+                    odom_hz = self._odom_rates[ns].hz
+                    scan_hz = self._scan_rates[ns].hz
                 nav2_ok = any(
                     name == 'bt_navigator' and namespace.rstrip('/') == f'/{ns}'
                     for name, namespace in node_ns_pairs
@@ -178,6 +218,7 @@ class FleetHealthMonitor(Node):
                     'overall':   overall,
                     'odom_hz':   round(odom_hz, 1),
                     'scan_hz':   round(scan_hz, 1),
+                    'source':    self._sources.get(ns, 'subscription'),
                     'nav2':      nav2_ok,
                     'mission':   mission,
                     'collision': col_state,

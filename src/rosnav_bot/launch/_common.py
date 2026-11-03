@@ -64,6 +64,31 @@ def truthy(value: str) -> bool:
     return value.strip().lower() in ('true', '1', 'yes')
 
 
+def pulse_env_actions(enabled: bool):
+    """Optional ros2_pulse probe: preload libros2_pulse.so into every process this launch starts
+    (jsonl logs, read by scripts/pulse_rates.py via fleet_health.py). Not installed -> a warning
+    and no change, so the flag is safe to leave on. Returns launch actions to put FIRST."""
+    from launch.actions import LogInfo
+    from ament_index_python.packages import get_package_prefix, PackageNotFoundError
+    if not enabled:
+        return []
+    try:
+        lib = os.path.join(get_package_prefix('ros2_pulse'), 'lib', 'libros2_pulse.so')
+    except PackageNotFoundError:
+        lib = ''
+    if not os.path.isfile(lib):
+        return [LogInfo(msg='[pulse] ros2_pulse not installed (apt install ros-humble-ros2-pulse) '
+                            '- continuing without it; fleet_health uses its own subscriptions')]
+    old = os.environ.get('LD_PRELOAD', '')
+    return [
+        SetEnvironmentVariable('LD_PRELOAD', f'{old}:{lib}' if old else lib),
+        SetEnvironmentVariable('ROS_TOPIC_STATS_FORMAT', 'jsonl'),
+        SetEnvironmentVariable('ROS_TOPIC_STATISTICS_PUBLISH_PERIOD', '5.0'),
+        SetEnvironmentVariable('ROS_TOPIC_STATS_QUIET', '1'),
+        LogInfo(msg=f'[pulse] ros2_pulse attached to all launched processes ({lib})'),
+    ]
+
+
 def resolve_gazebo_world_name(world_path: str) -> str:
     """Read the <world name="..."> attribute from an SDF file; fall back to the filename stem."""
     fallback = os.path.splitext(os.path.basename(world_path))[0]

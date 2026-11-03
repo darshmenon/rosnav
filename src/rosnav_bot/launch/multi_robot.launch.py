@@ -753,7 +753,7 @@ def _build_all(context, pkg_share: str):
         robots, world_path, validate_spawns, robot_clearance,
         spawn_search_radius, spawn_search_step)
 
-    actions = [
+    actions = _common.pulse_env_actions(_truthy(LaunchConfiguration('pulse').perform(context))) + [
         LogInfo(msg=f'[multi_robot] world = {world_path}'),
         LogInfo(msg=f'[multi_robot] fleet = {[r["name"] for r in robots]}'),
         LogInfo(msg=f'[multi_robot] spawn poses = {[(r["name"], r["x"], r["y"]) for r in robots]}'),
@@ -1371,6 +1371,11 @@ def generate_launch_description():
             description='true = feed each robot\'s local costmap an odom-frame cloud from '
                         'scripts/scan_to_odom_cloud.py (avoids the controller_server map->odom '
                         'freeze, same as slam_nav.launch.py local_scan_cloud:=true)'),
+        DeclareLaunchArgument(
+            'pulse', default_value='false',
+            description='true = attach the optional ros2_pulse probe (LD_PRELOAD, apt '
+                        'ros-humble-ros2-pulse) to every process; fleet_health then reads odom/scan '
+                        'rates from its logs instead of subscribing. Not installed = warning only.'),
         DeclareLaunchArgument(
             'fleet_mgmt', default_value='false',
             description='true = start priority collision avoidance + deadlock recovery nodes'),

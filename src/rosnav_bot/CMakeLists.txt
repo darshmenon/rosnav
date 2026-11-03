@@ -98,6 +98,7 @@ install(
     scripts/slam_debug_monitor.py
     scripts/tf_freeze_watchdog.py
     scripts/mpc_core.py
+    scripts/pulse_rates.py
     scripts/mpc_controller.py
     scripts/tf_relay.py
     scripts/scan_to_odom_cloud.py
@@ -134,6 +135,7 @@ if(BUILD_TESTING)
   ament_add_pytest_test(test_frontier_explorer test/test_frontier_explorer.py)
   ament_add_pytest_test(test_frontier_env test/test_frontier_env.py)
   ament_add_pytest_test(test_mpc_core test/test_mpc_core.py)
+  ament_add_pytest_test(test_pulse_rates test/test_pulse_rates.py)
   ament_add_pytest_test(test_orb_slam3_occupancy_bridge test/test_orb_slam3_occupancy_bridge.py)
 endif()
 
