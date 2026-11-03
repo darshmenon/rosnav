@@ -99,6 +99,8 @@ install(
     scripts/tf_freeze_watchdog.py
     scripts/mpc_core.py
     scripts/pulse_rates.py
+    scripts/nav2_bringup_watchdog.py
+    scripts/rosnav_doctor.py
     scripts/mpc_controller.py
     scripts/tf_relay.py
     scripts/scan_to_odom_cloud.py
@@ -136,6 +138,7 @@ if(BUILD_TESTING)
   ament_add_pytest_test(test_frontier_env test/test_frontier_env.py)
   ament_add_pytest_test(test_mpc_core test/test_mpc_core.py)
   ament_add_pytest_test(test_pulse_rates test/test_pulse_rates.py)
+  ament_add_pytest_test(test_rosnav_doctor test/test_rosnav_doctor.py)
   ament_add_pytest_test(test_orb_slam3_occupancy_bridge test/test_orb_slam3_occupancy_bridge.py)
 endif()
 

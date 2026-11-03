@@ -60,6 +60,11 @@ try:                                    # optional: only used when ros2_pulse lo
 except ImportError:                     # pragma: no cover - module missing from an install
     PulseRates = None
 
+def progress_stalled(have_stats: bool, unchanged_s: float, frontiers: int, stall_s: float) -> bool:
+    """Exploration counts as stalled when stats exist, frontiers remain and nothing changed for stall_s."""
+    return bool(have_stats) and frontiers > 0 and unchanged_s >= stall_s
+
+
 _ODOM_WARN_HZ  = 5.0
 _SCAN_WARN_HZ  = 5.0
 _WINDOW        = 2.0    # seconds to measure Hz over
@@ -211,8 +216,7 @@ class FleetHealthMonitor(Node):
             robots = sorted(self._known_robots)
             report = {}
             stalled_s = time.monotonic() - self._prog_changed
-            stalled = (self._prog_sig is not None and self._frontiers > 0
-                       and stalled_s >= self._stall_s)
+            stalled = progress_stalled(self._prog_sig is not None, stalled_s, self._frontiers, self._stall_s)
             if stalled and not self._stall_warned:
                 self.get_logger().warn(
                     f'Health: no exploration progress for {stalled_s:.0f}s with '

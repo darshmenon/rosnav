@@ -1246,6 +1246,12 @@ def _build_all(context, pkg_share: str):
                 msg=f'[multi_robot] explorer={explorer_backend} will start at t={explore_delay}s '
                     f'for {robot_ns_list} (map_topic={frontier_map_topic})'))
 
+    # Nav2 lifecycle bringup can abort under load (service discovery race); restart such robots.
+    actions.append(TimerAction(period=20.0, actions=[Node(
+        package='rosnav_bot', executable='nav2_bringup_watchdog.py',
+        name='nav2_bringup_watchdog', output='screen',
+        parameters=[{'robots': [r['name'] for r in robots], 'use_sim_time': True}])]))
+
     # ── Fleet management algorithms (optional) ────────────────────────────────
     if fleet_mgmt:
         actions.append(TimerAction(

@@ -56,6 +56,57 @@ _MAP_QOS = QoSProfile(
 )
 
 
+def project_grid(data, ox, oy, res, pose):
+    """FREE/OCCUPIED cells of a local grid (rows x cols int8, origin ox,oy) in global quantized
+    cell coords for a robot whose local-map origin sits at `pose` {x,y,yaw}.
+    Returns (free_gc, free_gr, occ_gc, occ_gr)."""
+    yaw = pose['yaw']
+    c, s = math.cos(yaw), math.sin(yaw)
+    tx, ty = pose['x'], pose['y']
+
+    def to_global(rows, cols):
+        lx = ox + (cols.astype(np.float64) + 0.5) * res
+        ly = oy + (rows.astype(np.float64) + 0.5) * res
+        gx = tx + c * lx - s * ly
+        gy = ty + s * lx + c * ly
+        return np.floor(gx / res).astype(np.int64), np.floor(gy / res).astype(np.int64)
+
+    free_rows, free_cols = np.nonzero(data == FREE)
+    occ_rows, occ_cols = np.nonzero(data == OCCUPIED)
+    free_gc, free_gr = to_global(free_rows, free_cols)
+    occ_gc, occ_gr = to_global(occ_rows, occ_cols)
+    return free_gc, free_gr, occ_gc, occ_gr
+
+
+def merge_grids(grids, res, margin=0, max_cells=80_000_000):
+    """grids: list of (data, ox, oy, pose). Returns (grid int8, min_c, min_r) or None when empty/absurd.
+    Conflict policy OCCUPIED > FREE > UNKNOWN; cell (min_c, min_r) is the lower-left cell."""
+    free_gc, free_gr, occ_gc, occ_gr = [], [], [], []
+    for data, ox, oy, pose in grids:
+        fgc, fgr, ogc, ogr = project_grid(data, ox, oy, res, pose)
+        if fgc.size:
+            free_gc.append(fgc)
+            free_gr.append(fgr)
+        if ogc.size:
+            occ_gc.append(ogc)
+            occ_gr.append(ogr)
+    if not free_gc and not occ_gc:
+        return None
+    all_gc = np.concatenate(free_gc + occ_gc)
+    all_gr = np.concatenate(free_gr + occ_gr)
+    min_c, max_c = int(all_gc.min()) - margin, int(all_gc.max()) + margin
+    min_r, max_r = int(all_gr.min()) - margin, int(all_gr.max()) + margin
+    width, height = max_c - min_c + 1, max_r - min_r + 1
+    if width <= 0 or height <= 0 or width * height > max_cells:
+        return None
+    grid = np.full((height, width), UNKNOWN, dtype=np.int8)
+    if free_gc:
+        grid[np.concatenate(free_gr) - min_r, np.concatenate(free_gc) - min_c] = FREE
+    if occ_gc:
+        grid[np.concatenate(occ_gr) - min_r, np.concatenate(occ_gc) - min_c] = OCCUPIED
+    return grid, min_c, min_r
+
+
 class MapMergeKnown(Node):
     def __init__(self):
         super().__init__('map_merge_known')
@@ -152,53 +203,24 @@ class MapMergeKnown(Node):
             return
 
         res = self._res
-        # Quantized global cell coords in world coordinates, split by value
-        # so the whole merge is a couple of vectorized numpy ops instead of
-        # a per-cell Python dict rebuilt from scratch every tick — that loop
-        # became the dominant cost as grids grow (hospital/warehouse worlds).
-        # slam_toolbox only ever emits -1/0/100 (never partial probabilities),
-        # so filtering to exactly FREE/OCCUPIED loses nothing.
-        free_gc, free_gr, occ_gc, occ_gr = [], [], [], []
+        # World-coordinate alignment, vectorised (see merge_grids): a per-cell Python dict rebuilt
+        # every tick became the dominant cost as grids grew. Margin of UNKNOWN cells: the bounding
+        # box is recomputed each publish, so it can grow between ticks; without slack a goal from a
+        # slightly newer snapshot can land past a costmap static_layer's (shrunk) edge.
+        grids = []
         for ns, pose in zip(self._robots, self._poses):
             msg = self._maps.get(ns)
             if msg is None:
                 continue
-            fgc, fgr, ogc, ogr = self._project_grid(msg, pose, res)
-            if fgc.size:
-                free_gc.append(fgc)
-                free_gr.append(fgr)
-            if ogc.size:
-                occ_gc.append(ogc)
-                occ_gr.append(ogr)
-
-        if not free_gc and not occ_gc:
+            data = np.asarray(msg.data, dtype=np.int8).reshape((msg.info.height, msg.info.width))
+            grids.append((data, msg.info.origin.position.x, msg.info.origin.position.y, pose))
+        merged = merge_grids(grids, res, self._margin)
+        if merged is None:
+            if grids:
+                self.get_logger().error('Refused absurd merged map size', throttle_duration_sec=10.0)
             return
-
-        all_gc = np.concatenate(free_gc + occ_gc)
-        all_gr = np.concatenate(free_gr + occ_gr)
-
-        # Pad with a margin of UNKNOWN cells: this grid's bounding box is
-        # recomputed from scratch every publish, so it can grow between
-        # ticks. Without slack, a goal picked from a slightly newer snapshot
-        # than the one a costmap's static_layer has buffered can land just
-        # past that layer's (still shrunk) edge -> worldToMap failures.
-        min_c, max_c = int(all_gc.min()) - self._margin, int(all_gc.max()) + self._margin
-        min_r, max_r = int(all_gr.min()) - self._margin, int(all_gr.max()) + self._margin
-        width = max_c - min_c + 1
-        height = max_r - min_r + 1
-        if width <= 0 or height <= 0 or width * height > 80_000_000:
-            self.get_logger().error(
-                f'Refused absurd merged size {width}x{height}')
-            return
-
-        grid = np.full((height, width), UNKNOWN, dtype=np.int8)
-        # Free first, occupied second: occupied unconditionally wins wherever
-        # the two disagree on the same cell, matching the OCCUPIED > FREE >
-        # UNKNOWN merge policy.
-        if free_gc:
-            grid[np.concatenate(free_gr) - min_r, np.concatenate(free_gc) - min_c] = FREE
-        if occ_gc:
-            grid[np.concatenate(occ_gr) - min_r, np.concatenate(occ_gc) - min_c] = OCCUPIED
+        grid, min_c, min_r = merged
+        height, width = grid.shape
 
         out = OccupancyGrid()
         out.header.stamp = self.get_clock().now().to_msg()
@@ -213,31 +235,6 @@ class MapMergeKnown(Node):
         out.info.origin.orientation.w = 1.0
         out.data = grid.flatten().tolist()
         self._pub.publish(out)
-
-    def _project_grid(self, msg: OccupancyGrid, pose: dict, res: float):
-        """Project a local OccupancyGrid's FREE/OCCUPIED cells into global
-        quantized coords. Returns (free_gc, free_gr, occ_gc, occ_gr)."""
-        data = np.asarray(msg.data, dtype=np.int8).reshape(
-            (msg.info.height, msg.info.width))
-        ox = msg.info.origin.position.x
-        oy = msg.info.origin.position.y
-        # Local map origin yaw is usually 0; compose with known init yaw.
-        yaw = pose['yaw']
-        c, s = math.cos(yaw), math.sin(yaw)
-        tx, ty = pose['x'], pose['y']
-
-        def to_global(rows, cols):
-            lx = ox + (cols.astype(np.float64) + 0.5) * res
-            ly = oy + (rows.astype(np.float64) + 0.5) * res
-            gx = tx + c * lx - s * ly
-            gy = ty + s * lx + c * ly
-            return np.floor(gx / res).astype(np.int64), np.floor(gy / res).astype(np.int64)
-
-        free_rows, free_cols = np.nonzero(data == FREE)
-        occ_rows, occ_cols = np.nonzero(data == OCCUPIED)
-        free_gc, free_gr = to_global(free_rows, free_cols)
-        occ_gc, occ_gr = to_global(occ_rows, occ_cols)
-        return free_gc, free_gr, occ_gc, occ_gr
 
 
 def main(args=None):
