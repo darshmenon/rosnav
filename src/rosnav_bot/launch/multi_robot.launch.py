@@ -626,6 +626,9 @@ def _build_all(context, pkg_share: str):
     explore      = _truthy(LaunchConfiguration('explore').perform(context))
     headless     = _truthy(LaunchConfiguration('headless').perform(context))
     local_scan_cloud = _truthy(LaunchConfiguration('local_scan_cloud').perform(context))
+    explore_loc = LaunchConfiguration('explore_localization').perform(context).strip().lower()
+    if explore_loc not in ('static', 'amcl'):
+        raise ValueError('explore_localization must be one of: static, amcl')
     fleet_mgmt   = _truthy(LaunchConfiguration('fleet_mgmt').perform(context))
     merge_scans  = _truthy(LaunchConfiguration('merge_scans').perform(context))
     slam_mode = LaunchConfiguration('slam_mode').perform(context).strip().lower()
@@ -1111,6 +1114,24 @@ def _build_all(context, pkg_share: str):
                 *slam_actions,
                 TimerAction(period=robot_nav2_delay, actions=[nav2_group, *docking_actions]),
             ]
+        elif explore and explore_loc == 'static':
+            # AMCL re-initialises on every republished SLAM /map, so a robot standing still
+            # never publishes map->odom and its controller fails with 'Transform data too old'
+            # (-> instant fake success, robot never moves). In sim each robot's odom origin is its
+            # spawn pose, so a fixed map->odom at that pose is exact and cannot go stale.
+            actions.append(LogInfo(
+                msg=f'[multi_robot] {ns}: static map->{ns}/odom at ({map_x}, {map_y}, yaw {yaw}) '
+                    f'(explore_localization:=static), nav2 t={static_nav2_delay:.1f}s'))
+            per_robot += [
+                TimerAction(period=static_amcl_delay, actions=[Node(
+                    package='tf2_ros', executable='static_transform_publisher',
+                    name=f'{ns}_map_to_odom', output='screen',
+                    arguments=['--x', str(map_x), '--y', str(map_y), '--z', '0', '--yaw', str(yaw),
+                               '--pitch', '0', '--roll', '0',
+                               '--frame-id', 'map', '--child-frame-id', f'{ns}/odom'],
+                    parameters=[{'use_sim_time': True}])]),
+                TimerAction(period=static_nav2_delay, actions=[nav2_group, *docking_actions]),
+            ]
         elif explore:
             # Other robots in explore mode: need AMCL to localise on SLAM map.
             # Stagger each robot so Nav2 lifecycle activation does not stampede.
@@ -1366,6 +1387,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'headless', default_value='false',
             description='true = Gazebo server only, no GUI or RViz'),
+        DeclareLaunchArgument(
+            'explore_localization', default_value='static',
+            description='Non-SLAM robots in explore mode: static (fixed map->odom at spawn pose, '
+                        'sim only, never stale) or amcl (re-initialises on every SLAM map update).'),
         DeclareLaunchArgument(
             'local_scan_cloud', default_value='false',
             description='true = feed each robot\'s local costmap an odom-frame cloud from '
