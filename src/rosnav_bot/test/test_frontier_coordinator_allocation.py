@@ -127,3 +127,31 @@ def test_stale_tf_is_detected():
     assert node._tf_is_stale(mk(0)) is False       # static chain
     node._max_tf_age = 0.0
     assert node._tf_is_stale(mk(10)) is False      # disabled
+
+
+def _grid_node(rows, reach):
+    """Bare coordinator with a tiny OccupancyGrid (-1 unknown, 0 free, 100 occupied), 1 m cells."""
+    import types
+    import numpy as np
+    h, w = len(rows), len(rows[0])
+    info = types.SimpleNamespace(width=w, height=h, resolution=1.0,
+                                 origin=types.SimpleNamespace(position=types.SimpleNamespace(x=0.0, y=0.0)))
+    node = fc.FrontierCoordinator.__new__(fc.FrontierCoordinator)
+    node._map = types.SimpleNamespace(data=[v for r in rows for v in r], info=info)
+    node._unknown_reach = reach
+    return node
+
+
+def test_robot_in_unknown_cells_reaches_mapped_free_space():
+    # free blob on the left, two unknown cells, then the robot standing in unknown territory
+    rows = [[0, 0, 0, -1, -1, -1]]
+    far = _grid_node(rows, 0.0)._path_distance_map((5.5, 0.5))
+    near = _grid_node(rows, 3.0)._path_distance_map((5.5, 0.5))
+    assert not (far[0, :3] < float('inf')).any()        # strict: robot cut off from the free blob
+    assert (near[0, :3] < float('inf')).all()           # unknown_reach lets it connect
+
+
+def test_unknown_reach_never_crosses_occupied_cells():
+    rows = [[0, 0, 100, -1, -1]]
+    d = _grid_node(rows, 5.0)._path_distance_map((4.5, 0.5))
+    assert not (d[0, :2] < float('inf')).any()          # the wall still blocks

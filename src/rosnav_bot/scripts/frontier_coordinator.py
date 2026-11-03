@@ -121,6 +121,10 @@ class FrontierCoordinator(Node):
         # A map->base_link transform older than this (s) is stale (SLAM / map->odom stopped
         # updating): treat the robot position as unknown instead of judging motion from it. 0 = off.
         self.declare_parameter('max_tf_age', 3.0)
+        # Unknown map cells within this radius (m) of a robot count as traversable when measuring
+        # path distances: a robot that spawned beside the explored area stands in cells the shared
+        # map has not seen yet, and its own lidar clears them in Nav2. 0 = off.
+        self.declare_parameter('unknown_reach', 1.5)
         self.declare_parameter('separation_weight', 0.0)
         self.declare_parameter('separation_radius', 6.0)
         self.declare_parameter('suspicious_frontier_ratio', 3.0)
@@ -169,6 +173,7 @@ class FrontierCoordinator(Node):
         self._hyst_gain   = self.get_parameter('hysteresis_gain').value
         self._min_gain    = self.get_parameter('min_info_gain').value
         self._max_tf_age  = self.get_parameter('max_tf_age').value
+        self._unknown_reach = float(self.get_parameter('unknown_reach').value)
         self._sep_w       = self.get_parameter('separation_weight').value
         self._sep_r       = self.get_parameter('separation_radius').value
         self._suspect_ratio = float(self.get_parameter('suspicious_frontier_ratio').value)
@@ -615,6 +620,15 @@ class FrontierCoordinator(Node):
         h, w = free.shape
         dist = np.full((h, w), np.inf, dtype=np.float32)
         seed = _world_to_cell(robot_pos[0], robot_pos[1], msg.info)
+        reach = getattr(self, '_unknown_reach', 0.0)
+        if reach > 0.0 and 0 <= seed[0] < h and 0 <= seed[1] < w:
+            # unknown cells right around the robot are passable (not occupied ones)
+            rc = int(math.ceil(reach / msg.info.resolution))
+            y0, y1 = max(0, seed[0] - rc), min(h, seed[0] + rc + 1)
+            x0, x1 = max(0, seed[1] - rc), min(w, seed[1] + rc + 1)
+            yy, xx = np.ogrid[y0:y1, x0:x1]
+            near = (yy - seed[0]) ** 2 + (xx - seed[1]) ** 2 <= rc * rc
+            free[y0:y1, x0:x1] |= near & (data[y0:y1, x0:x1] == -1)
         resolved = (seed if (0 <= seed[0] < h and 0 <= seed[1] < w and free[seed])
                     else self._nearest_free_cell(seed[0], seed[1], free, msg.info.resolution))
         if resolved is None:
