@@ -125,6 +125,11 @@ class FrontierCoordinator(Node):
         # path distances: a robot that spawned beside the explored area stands in cells the shared
         # map has not seen yet, and its own lidar clears them in Nav2. 0 = off.
         self.declare_parameter('unknown_reach', 1.5)
+        # A goal Nav2 accepted but never answered (its stack was reset mid-goal, or the action
+        # server vanished) would pin the robot in NAVIGATING forever. After this many seconds, or
+        # as soon as its action server is gone for more than 5 s, the goal is cancelled and counted
+        # as failed. 0 = off.
+        self.declare_parameter('goal_timeout_s', 150.0)
         self.declare_parameter('separation_weight', 0.0)
         self.declare_parameter('separation_radius', 6.0)
         self.declare_parameter('suspicious_frontier_ratio', 3.0)
@@ -174,6 +179,7 @@ class FrontierCoordinator(Node):
         self._min_gain    = self.get_parameter('min_info_gain').value
         self._max_tf_age  = self.get_parameter('max_tf_age').value
         self._unknown_reach = float(self.get_parameter('unknown_reach').value)
+        self._goal_timeout = float(self.get_parameter('goal_timeout_s').value)
         self._sep_w       = self.get_parameter('separation_weight').value
         self._sep_r       = self.get_parameter('separation_radius').value
         self._suspect_ratio = float(self.get_parameter('suspicious_frontier_ratio').value)
@@ -244,6 +250,8 @@ class FrontierCoordinator(Node):
         # without the robot moving when the controller has no TF yet. Such a goal must
         # not be marked visited, or the whole frontier ring is swallowed in seconds.
         self._goal_sent_t:   dict[str, float]                 = {r: 0.0   for r in self._robots}
+        self._goal_handle:   dict[str, object]                = {r: None  for r in self._robots}
+        self._goal_gen:      dict[str, int]                   = {r: 0     for r in self._robots}
         self._goal_start:    dict[str, tuple | None]          = {r: None  for r in self._robots}
         self._hold_until:    dict[str, float]                 = {r: 0.0   for r in self._robots}
         self._spurious:      dict[str, int]                   = {r: 0     for r in self._robots}
@@ -295,6 +303,7 @@ class FrontierCoordinator(Node):
         elapsed = self._elapsed_sec()
         robot_positions = self._robot_positions(elapsed)
         self._refresh_nav_servers()
+        self._expire_stale_goals()
         if self._detector in ('wfd', 'rrt') and not robot_positions:
             self.get_logger().debug('Waiting for robot TF before frontier search.')
             self._publish_stats()
@@ -697,11 +706,17 @@ class FrontierCoordinator(Node):
         self._goal_sent_t[ns] = time.monotonic()
         self._goal_start[ns] = self._robot_pos(ns)
 
+        self._goal_gen[ns] += 1
+        self._goal_handle[ns] = None
         f = self._nav_clients[ns].send_goal_async(goal)
-        f.add_done_callback(lambda fut, r=ns: self._on_accepted(fut, r))
+        f.add_done_callback(lambda fut, r=ns, g=self._goal_gen[ns]: self._on_accepted(fut, r, g))
 
-    def _on_accepted(self, future, ns):
+    def _on_accepted(self, future, ns, gen=None):
         handle = future.result()
+        if gen is not None and gen != self._goal_gen[ns]:
+            if handle is not None and handle.accepted:
+                handle.cancel_goal_async()      # a goal we already gave up on
+            return
         goal = self._assigned.get(ns)
         gx, gy = goal if goal else (0.0, 0.0)
         if not handle.accepted:
@@ -716,7 +731,45 @@ class FrontierCoordinator(Node):
             self._publish_stats()
             return
         self.get_logger().info(f'[{ns}] Nav2 accepted ({gx:.2f}, {gy:.2f})')
-        handle.get_result_async().add_done_callback(lambda fut, r=ns: self._on_result(fut, r))
+        self._goal_handle[ns] = handle
+        handle.get_result_async().add_done_callback(
+            lambda fut, r=ns, g=self._goal_gen[ns]: self._on_result(fut, r, g))
+
+    def _expire_stale_goals(self):
+        """Free robots stuck NAVIGATING on a goal Nav2 will never answer."""
+        timeout = getattr(self, '_goal_timeout', 0.0)
+        if timeout <= 0.0:
+            return
+        now = time.monotonic()
+        freed = False
+        for ns in self._robots:
+            if self._state[ns] != _State.NAVIGATING:
+                continue
+            elapsed = now - self._goal_sent_t[ns]
+            server_gone = not self._nav_ready.get(ns, False) and elapsed > 5.0
+            if elapsed < timeout and not server_gone:
+                continue
+            goal = self._assigned.get(ns)
+            why = 'its Nav2 action server is gone' if server_gone else f'no result after {elapsed:.0f}s'
+            self.get_logger().warn(
+                f'[{ns}] goal {goal} abandoned: {why} - cancelling, counting it failed and freeing {ns}.')
+            handle = self._goal_handle.get(ns)
+            if handle is not None:
+                try:
+                    handle.cancel_goal_async()
+                except Exception:
+                    pass
+            self._goal_gen[ns] += 1             # any late reply for this goal is now ignored
+            self._goal_handle[ns] = None
+            self._failed_goals += 1
+            if goal:
+                self._remember_failed_frontier(goal, self._assigned_meta.get(ns))
+            self._assigned[ns] = None
+            self._assigned_meta[ns] = None
+            self._state[ns] = _State.IDLE
+            freed = True
+        if freed:
+            self._publish_stats()
 
     def _spurious_success(self, ns, goal) -> bool:
         """True when Nav2 said SUCCEEDED but the robot never really went anywhere."""
@@ -743,7 +796,11 @@ class FrontierCoordinator(Node):
             f'row, holding goals {backoff:.0f}s (controller TF likely not ready).')
         return True
 
-    def _on_result(self, future, ns):
+    def _on_result(self, future, ns, gen=None):
+        if gen is not None and gen != getattr(self, '_goal_gen', {}).get(ns, gen):
+            return                              # reply for a goal we already expired
+        if getattr(self, '_goal_handle', None) is not None:
+            self._goal_handle[ns] = None
         status = future.result().status
         goal = self._assigned[ns]
         gx, gy = goal if goal else (0.0, 0.0)

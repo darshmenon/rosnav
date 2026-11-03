@@ -155,3 +155,68 @@ def test_unknown_reach_never_crosses_occupied_cells():
     rows = [[0, 0, 100, -1, -1]]
     d = _grid_node(rows, 5.0)._path_distance_map((4.5, 0.5))
     assert not (d[0, :2] < float('inf')).any()          # the wall still blocks
+
+
+class _WarnLog:
+    def __init__(self): self.warns = []
+    def info(self, *a, **k): pass
+    def warn(self, msg, *a, **k): self.warns.append(msg)
+
+
+def _goal_node(sent_ago, nav_ready=True, timeout=150.0):
+    import time
+    node = fc.FrontierCoordinator.__new__(fc.FrontierCoordinator)
+    log = _WarnLog()
+    node.get_logger = lambda: log
+    node._log = log
+    node._robots = ['r1']
+    node._state = {'r1': fc._State.NAVIGATING}
+    node._goal_sent_t = {'r1': time.monotonic() - sent_ago}
+    node._assigned = {'r1': (2.0, 1.0)}
+    node._assigned_meta = {'r1': {'score': 1.0}}
+    node._nav_ready = {'r1': nav_ready}
+    node._goal_timeout = timeout
+    node._goal_gen = {'r1': 3}
+    node._failed_goals = 0
+    cancelled = []
+    node._goal_handle = {'r1': types_ns(cancel_goal_async=lambda: cancelled.append(1))}
+    node._cancelled = cancelled
+    node._failed = []
+    node._remember_failed_frontier = lambda g, m: node._failed.append(g)
+    node._publish_stats = lambda: None
+    return node
+
+
+def types_ns(**kw):
+    import types
+    return types.SimpleNamespace(**kw)
+
+
+def test_goal_with_no_result_is_abandoned_after_timeout():
+    node = _goal_node(sent_ago=200.0)
+    node._expire_stale_goals()
+    assert node._state['r1'] == fc._State.IDLE and node._assigned['r1'] is None
+    assert node._failed_goals == 1 and node._failed == [(2.0, 1.0)]
+    assert node._cancelled == [1] and node._goal_gen['r1'] == 4      # late replies now ignored
+
+
+def test_recent_goal_with_live_server_is_kept():
+    node = _goal_node(sent_ago=20.0)
+    node._expire_stale_goals()
+    assert node._state['r1'] == fc._State.NAVIGATING and node._failed_goals == 0
+
+
+def test_goal_freed_when_action_server_disappears():
+    node = _goal_node(sent_ago=12.0, nav_ready=False)
+    node._expire_stale_goals()
+    assert node._state['r1'] == fc._State.IDLE and node._failed_goals == 1
+    # but a brief blip (<5 s since the goal was sent) is tolerated
+    young = _goal_node(sent_ago=2.0, nav_ready=False)
+    young._expire_stale_goals()
+    assert young._state['r1'] == fc._State.NAVIGATING
+
+
+def test_goal_timeout_zero_disables_expiry():
+    node = _goal_node(sent_ago=9999.0, timeout=0.0)
+    node._expire_stale_goals()
+    assert node._state['r1'] == fc._State.NAVIGATING
