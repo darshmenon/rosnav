@@ -118,6 +118,9 @@ class FrontierCoordinator(Node):
         # Tiny frontiers (a few wall-edge cells) have almost no unknown area behind them; chasing
         # them sent robots to useless far corners. Skipped while any larger frontier exists.
         self.declare_parameter('min_info_gain', 0.05)
+        # A map->base_link transform older than this (s) is stale (SLAM / map->odom stopped
+        # updating): treat the robot position as unknown instead of judging motion from it. 0 = off.
+        self.declare_parameter('max_tf_age', 3.0)
         self.declare_parameter('separation_weight', 0.0)
         self.declare_parameter('separation_radius', 6.0)
         self.declare_parameter('suspicious_frontier_ratio', 3.0)
@@ -165,6 +168,7 @@ class FrontierCoordinator(Node):
         self._hyst_r      = self.get_parameter('hysteresis_radius').value
         self._hyst_gain   = self.get_parameter('hysteresis_gain').value
         self._min_gain    = self.get_parameter('min_info_gain').value
+        self._max_tf_age  = self.get_parameter('max_tf_age').value
         self._sep_w       = self.get_parameter('separation_weight').value
         self._sep_r       = self.get_parameter('separation_radius').value
         self._suspect_ratio = float(self.get_parameter('suspicious_frontier_ratio').value)
@@ -572,6 +576,16 @@ class FrontierCoordinator(Node):
                     score += self._hyst_gain
         return score - suspicious_penalty - self._separation_penalty(frontier, ns)
 
+    def _tf_is_stale(self, tf) -> bool:
+        max_age = getattr(self, '_max_tf_age', 0.0)
+        if not max_age or max_age <= 0.0:
+            return False
+        stamp = tf.header.stamp
+        if stamp.sec == 0 and stamp.nanosec == 0:
+            return False                      # static-only chain: no meaningful age
+        age = self.get_clock().now().nanoseconds / 1e9 - (stamp.sec + stamp.nanosec / 1e9)
+        return age > max_age
+
     def _min_goal_for(self, ns):
         return getattr(self, '_min_goal_by_robot', {}).get(ns, self._min_goal_d)
 
@@ -649,6 +663,8 @@ class FrontierCoordinator(Node):
     def _robot_pos(self, ns):
         try:
             tf = self._tf.lookup_transform('map', f'{ns}/base_link', rclpy.time.Time())
+            if self._tf_is_stale(tf):
+                return None
             return tf.transform.translation.x, tf.transform.translation.y
         except Exception:
             return None

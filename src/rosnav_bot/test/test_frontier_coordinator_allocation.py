@@ -109,3 +109,21 @@ def test_tiny_frontiers_used_when_nothing_else_left():
     node = _pick_node(0.05)
     goal, _ = node._pick([_fr(1.0, 0.02, 1.0)], (0, 0), 'r1')
     assert goal == (1.0, 0.0)
+
+
+def test_stale_tf_is_detected():
+    import types
+
+    class _Clock:
+        def now(self): return fc.rclpy.time.Time(seconds=100)
+
+    node = fc.FrontierCoordinator.__new__(fc.FrontierCoordinator)
+    node.get_clock = lambda: _Clock()
+    node._max_tf_age = 3.0
+    mk = lambda sec: types.SimpleNamespace(header=types.SimpleNamespace(
+        stamp=types.SimpleNamespace(sec=sec, nanosec=0)))
+    assert node._tf_is_stale(mk(90)) is True       # 10 s old
+    assert node._tf_is_stale(mk(99)) is False      # 1 s old
+    assert node._tf_is_stale(mk(0)) is False       # static chain
+    node._max_tf_age = 0.0
+    assert node._tf_is_stale(mk(10)) is False      # disabled

@@ -623,6 +623,17 @@ def _load_node_params(params_path: str, node_name: str) -> dict:
     return (content.get(node_name) or {}).get('ros__parameters', {})
 
 
+def _static_map_odom(ns: str, x, y, yaw) -> Node:
+    """Fixed map -> <ns>/odom at the robot's spawn pose (sim: odom origin == spawn pose).
+    A /tf_static transform can never be 'too old' for a controller, unlike AMCL's or SLAM's."""
+    return Node(
+        package='tf2_ros', executable='static_transform_publisher',
+        name=f'{ns}_map_to_odom', output='screen',
+        arguments=['--x', str(x), '--y', str(y), '--z', '0', '--yaw', str(yaw),
+                   '--pitch', '0', '--roll', '0', '--frame-id', 'map', '--child-frame-id', f'{ns}/odom'],
+        parameters=[{'use_sim_time': True}])
+
+
 def _initial_pose_pub(robot_ns: str, x: str, y: str, yaw: str) -> ExecuteProcess:
     yaw_f = float(yaw)
     qz = math.sin(yaw_f / 2.0)
@@ -667,9 +678,16 @@ def _initial_pose_pub(robot_ns: str, x: str, y: str, yaw: str) -> ExecuteProcess
 def _build_all(context, pkg_share: str):
     map_arg      = LaunchConfiguration('map').perform(context).strip()
     world_arg    = LaunchConfiguration('world').perform(context).strip()
+    # world_name:= is the slam_nav.launch.py spelling; accept it here so it is not silently ignored.
+    world_name_alias = LaunchConfiguration('world_name').perform(context).strip()
+    if world_name_alias:
+        world_arg = world_name_alias
     explore      = _truthy(LaunchConfiguration('explore').perform(context))
     headless     = _truthy(LaunchConfiguration('headless').perform(context))
     local_scan_cloud = _truthy(LaunchConfiguration('local_scan_cloud').perform(context))
+    prebuilt_loc = LaunchConfiguration('prebuilt_localization').perform(context).strip().lower()
+    if prebuilt_loc not in ('static', 'amcl'):
+        raise ValueError('prebuilt_localization must be one of: static, amcl')
     explore_loc = LaunchConfiguration('explore_localization').perform(context).strip().lower()
     if explore_loc not in ('static', 'amcl'):
         raise ValueError('explore_localization must be one of: static, amcl')
@@ -678,10 +696,6 @@ def _build_all(context, pkg_share: str):
     slam_mode = LaunchConfiguration('slam_mode').perform(context).strip().lower()
     collab_loop_closure = _truthy(LaunchConfiguration('collab_loop_closure').perform(context))
     frontier_detector = LaunchConfiguration('frontier_detector').perform(context).strip()
-    # world_name:= is the slam_nav.launch.py spelling; accept it here so it is not silently ignored.
-    world_name_alias = LaunchConfiguration('world_name').perform(context).strip()
-    if world_name_alias:
-        world_arg = world_name_alias
     frontier_scorer = LaunchConfiguration('frontier_scorer').perform(context).strip()
     allocation = LaunchConfiguration('allocation').perform(context).strip()
     explorer_backend = _common.resolve_explorer(LaunchConfiguration('explorer').perform(context))
@@ -1182,13 +1196,7 @@ def _build_all(context, pkg_share: str):
                 msg=f'[multi_robot] {ns}: static map->{ns}/odom at ({map_x}, {map_y}, yaw {yaw}) '
                     f'(explore_localization:=static), nav2 t={static_nav2_delay:.1f}s'))
             per_robot += [
-                TimerAction(period=static_amcl_delay, actions=[Node(
-                    package='tf2_ros', executable='static_transform_publisher',
-                    name=f'{ns}_map_to_odom', output='screen',
-                    arguments=['--x', str(map_x), '--y', str(map_y), '--z', '0', '--yaw', str(yaw),
-                               '--pitch', '0', '--roll', '0',
-                               '--frame-id', 'map', '--child-frame-id', f'{ns}/odom'],
-                    parameters=[{'use_sim_time': True}])]),
+                TimerAction(period=static_amcl_delay, actions=[_static_map_odom(ns, map_x, map_y, yaw)]),
                 TimerAction(period=static_nav2_delay, actions=[nav2_group, *docking_actions]),
             ]
         elif explore:
@@ -1204,6 +1212,14 @@ def _build_all(context, pkg_share: str):
                 ]),
                 TimerAction(period=initial_pose_delay, actions=[_initial_pose_pub(ns, map_x, map_y, yaw)]),
                 TimerAction(period=amcl_nav2_delay, actions=[nav2_group, *docking_actions]),
+            ]
+        elif prebuilt_loc == 'static':
+            actions.append(LogInfo(
+                msg=f'[multi_robot] {ns}: static map->{ns}/odom at ({map_x}, {map_y}, yaw {yaw}) '
+                    f'(prebuilt_localization:=static), nav2 t={static_nav2_delay:.1f}s'))
+            per_robot += [
+                TimerAction(period=static_amcl_delay, actions=[_static_map_odom(ns, map_x, map_y, yaw)]),
+                TimerAction(period=static_nav2_delay, actions=[nav2_group, *docking_actions]),
             ]
         else:
             # Pre-built map mode: all robots use AMCL
@@ -1446,6 +1462,9 @@ def generate_launch_description():
             'world', default_value='cafe',
             description='World name (cafe, hospital, corridor, maze, obstacles) or full path to .world file'),
         DeclareLaunchArgument(
+            'world_name', default_value='',
+            description='Alias for world:= (same spelling as slam_nav.launch.py); wins when set'),
+        DeclareLaunchArgument(
             'map', default_value='',
             description='Pre-built map yaml path. Ignored when explore:=true'),
         DeclareLaunchArgument(
@@ -1462,12 +1481,13 @@ def generate_launch_description():
             'headless', default_value='false',
             description='true = Gazebo server only, no GUI or RViz'),
         DeclareLaunchArgument(
-            'world_name', default_value='',
-            description='Alias for world:= (same spelling as slam_nav.launch.py); wins when set'),
-        DeclareLaunchArgument(
             'explore_localization', default_value='static',
             description='Non-SLAM robots in explore mode: static (fixed map->odom at spawn pose, '
                         'sim only, never stale) or amcl (re-initialises on every SLAM map update).'),
+        DeclareLaunchArgument(
+            'prebuilt_localization', default_value='amcl',
+            description='explore:=false: amcl (default) or static (fixed map->odom at the spawn pose, '
+                        'sim only; sidesteps a stale map->odom in the controller)'),
         DeclareLaunchArgument(
             'local_scan_cloud', default_value='false',
             description='true = feed each robot\'s local costmap an odom-frame cloud from '
