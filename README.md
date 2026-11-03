@@ -37,8 +37,8 @@ Deep dive → [`concepts.md`](concepts.md) · launch args → `ros2 launch rosna
 - [2. Map · save · navigate](#2-map--save--navigate)
 
 **Platforms & tuning**
-- [3. Platforms — drive bases, chassis skins, how to switch](#3-platforms--drive-bases-chassis-skins-how-to-switch)
-- [4. Controllers, SLAM backends & benchmarking](#4-controllers-slam-backends--benchmarking)
+- [3. Controllers, SLAM backends & benchmarking](#3-controllers-slam-backends--benchmarking)
+- [4. Platforms — drive bases, chassis skins, how to switch](#4-platforms--drive-bases-chassis-skins-how-to-switch)
 - [5. Worlds](#5-worlds)
 - [6. Update YAML (tuning)](#6-update-yaml-tuning)
 
@@ -95,7 +95,7 @@ ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
 `docker-compose.yml` bind-mounts `src/` so host edits are picked up without a
 full image rebuild (just re-`colcon build` inside the container). See
 [`docker/orb_slam3/README.md`](docker/orb_slam3/README.md) for the separate
-ORB-SLAM3 visual-SLAM sidecar (§4 below has more on comparing SLAM backends).
+ORB-SLAM3 visual-SLAM sidecar (§3 below has more on comparing SLAM backends).
 
 ---
 
@@ -196,74 +196,7 @@ Multi-SLAM (`slam_mode:=multi`): save `/map_merged` with `-t /map_merged` or `fl
 
 ---
 
-## 3. Platforms — drive bases, chassis skins, how to switch
-
-Two independent launch args:
-
-| Arg | What it changes | Values |
-|---|---|---|
-| `drive_type` | Physics + Gazebo plugin + Nav2 params (how it moves) | `diff` (default) · `mecanum` · `ackermann` |
-| `robot_model` | Chassis **visual** only (same footprint / wheels / Nav2) | `custom` (default) · `mir100` · `husky` |
-
-`mir100` / `husky` only work with `drive_type:=diff`. Mixing them with mecanum/ackermann is ignored (with a warning).
-
-| Platform | Launch knobs | Motion | Notes |
-|---|---|---|---|
-| Diff box (default) | `drive_type:=diff` | Forward + turn in place | DWB (Humble, default) · MPPI (`controller:=mppi`) · RPP (`controller:=rpp`) |
-| Mecanum | `drive_type:=mecanum` | Holonomic — can strafe (`vy`) | Nav2 unlocks `max_vel_y`; no pre-rotate |
-| Ackermann (car-like) | `drive_type:=ackermann` | Front steer, min turning radius ~0.66 m | Always MPPI; keep `safety:=true` |
-| MiR100 look | `robot_model:=mir100` (+ diff) | Same as diff | Mesh skin only |
-| Husky look | `robot_model:=husky` (+ diff) | Same as diff | Mesh skin only |
-
-### Switch (single robot — map + navigate)
-
-```bash
-# Diff (default)
-ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital drive_type:=diff explore:=true
-
-# Holonomic
-ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital drive_type:=mecanum explore:=true
-
-# Car-like
-ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital drive_type:=ackermann explore:=true safety:=true
-
-# Same drive, different look
-ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital robot_model:=mir100
-ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital robot_model:=husky
-
-# Navigate on a saved map (same args work on robot.launch.py)
-ros2 launch rosnav_bot robot.launch.py world_name:=hospital \
-  map:=src/rosnav_bot/maps/map_hospital.yaml drive_type:=ackermann safety:=true
-```
-
-### Drive examples (mecanum / ackermann)
-
-Strafe (mecanum):
-```bash
-ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
-  "{linear: {x: 0.0, y: 0.3, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}"
-```
-
-Ackermann steer-while-driving:
-```bash
-ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
-  "{linear: {x: 0.4, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.3}}"
-```
-
-Deep dive → [concepts.md §18–20](concepts.md#18-mecanum-holonomic-drive) (mecanum / ackermann / MiR100 / Husky).
-
-### Switch (fleet)
-
-```bash
-ros2 launch rosnav_bot multi_robot.launch.py drive_type:=mecanum
-ros2 launch rosnav_bot multi_robot.launch.py drive_type:=ackermann
-ros2 launch rosnav_bot multi_robot.launch.py robot_model:=mir100
-ros2 launch rosnav_bot multi_robot.launch.py robot_model:=husky
-```
-
----
-
-## 4. Controllers, SLAM backends & benchmarking
+## 3. Controllers, SLAM backends & benchmarking
 
 ### Controllers & sensors (orthogonal)
 
@@ -316,6 +249,16 @@ drift, with its position-covariance ellipse on.
 ### SLAM in RViz (live recordings)
 
 Each GIF is the full RViz window: display groups on the left, map, plan, costmap and pose graph in the 3D view.
+
+#### Collaborative SLAM (2 robots, map merging, cafe)
+
+```bash
+ros2 launch rosnav_bot multi_robot_multi_slam.launch.py world:=cafe robot_count:=2
+```
+
+Per-robot slam_toolbox maps merged into `/map_merged` (10x speed).
+
+![Two-robot C-SLAM map merging in RViz](images/cslam_map_merging_cafe.gif)
 
 #### RTAB-Map 3D lidar
 
@@ -392,6 +335,73 @@ Install Cartographer once if you want that row:
 ```
 
 Stop other Gazebo/ROS sims first — parallel `gz sim` instances starve DDS and make later variants fail.
+
+---
+
+## 4. Platforms — drive bases, chassis skins, how to switch
+
+Two independent launch args:
+
+| Arg | What it changes | Values |
+|---|---|---|
+| `drive_type` | Physics + Gazebo plugin + Nav2 params (how it moves) | `diff` (default) · `mecanum` · `ackermann` |
+| `robot_model` | Chassis **visual** only (same footprint / wheels / Nav2) | `custom` (default) · `mir100` · `husky` |
+
+`mir100` / `husky` only work with `drive_type:=diff`. Mixing them with mecanum/ackermann is ignored (with a warning).
+
+| Platform | Launch knobs | Motion | Notes |
+|---|---|---|---|
+| Diff box (default) | `drive_type:=diff` | Forward + turn in place | DWB (Humble, default) · MPPI (`controller:=mppi`) · RPP (`controller:=rpp`) |
+| Mecanum | `drive_type:=mecanum` | Holonomic — can strafe (`vy`) | Nav2 unlocks `max_vel_y`; no pre-rotate |
+| Ackermann (car-like) | `drive_type:=ackermann` | Front steer, min turning radius ~0.66 m | Always MPPI; keep `safety:=true` |
+| MiR100 look | `robot_model:=mir100` (+ diff) | Same as diff | Mesh skin only |
+| Husky look | `robot_model:=husky` (+ diff) | Same as diff | Mesh skin only |
+
+### Switch (single robot — map + navigate)
+
+```bash
+# Diff (default)
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital drive_type:=diff explore:=true
+
+# Holonomic
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital drive_type:=mecanum explore:=true
+
+# Car-like
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital drive_type:=ackermann explore:=true safety:=true
+
+# Same drive, different look
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital robot_model:=mir100
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital robot_model:=husky
+
+# Navigate on a saved map (same args work on robot.launch.py)
+ros2 launch rosnav_bot robot.launch.py world_name:=hospital \
+  map:=src/rosnav_bot/maps/map_hospital.yaml drive_type:=ackermann safety:=true
+```
+
+### Drive examples (mecanum / ackermann)
+
+Strafe (mecanum):
+```bash
+ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
+  "{linear: {x: 0.0, y: 0.3, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}"
+```
+
+Ackermann steer-while-driving:
+```bash
+ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
+  "{linear: {x: 0.4, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.3}}"
+```
+
+Deep dive → [concepts.md §18–20](concepts.md#18-mecanum-holonomic-drive) (mecanum / ackermann / MiR100 / Husky).
+
+### Switch (fleet)
+
+```bash
+ros2 launch rosnav_bot multi_robot.launch.py drive_type:=mecanum
+ros2 launch rosnav_bot multi_robot.launch.py drive_type:=ackermann
+ros2 launch rosnav_bot multi_robot.launch.py robot_model:=mir100
+ros2 launch rosnav_bot multi_robot.launch.py robot_model:=husky
+```
 
 ---
 
