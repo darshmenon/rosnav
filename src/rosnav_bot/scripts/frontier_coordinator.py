@@ -110,6 +110,13 @@ class FrontierCoordinator(Node):
         self.declare_parameter('gain_scale', 1.0)
         self.declare_parameter('hysteresis_radius', 2.0)
         self.declare_parameter('hysteresis_gain', 1.5)
+        # Soft spread: penalise frontiers near OTHER robots' current goals so
+        # the fleet fans out (0 = off). Complements the hard assign_radius.
+        # Per-robot min goal distance for mixed fleets, e.g. "robot2:0.8,robot3:0.5"
+        # (ackermann robots cannot reach goals inside their turning radius).
+        self.declare_parameter('min_goal_distance_overrides', '')
+        self.declare_parameter('separation_weight', 0.0)
+        self.declare_parameter('separation_radius', 6.0)
         self.declare_parameter('suspicious_frontier_ratio', 3.0)
         self.declare_parameter('suspicious_frontier_penalty', 8.0)
         self.declare_parameter('suspicious_frontier_buffer', 1.0)
@@ -143,6 +150,8 @@ class FrontierCoordinator(Node):
             self.get_logger().warn(f'Unknown allocation={self._allocation!r}; using greedy.')
             self._allocation = 'greedy'
         self._min_goal_d  = self.get_parameter('min_goal_distance').value
+        self._min_goal_by_robot = parse_robot_floats(
+            self.get_parameter('min_goal_distance_overrides').value)
         self._frontier_clearance = self.get_parameter('frontier_clearance_radius').value
         self._failed_goal_r = self.get_parameter('failed_goal_radius').value
         self._failed_goal_cooldown = self.get_parameter('failed_goal_cooldown').value
@@ -152,6 +161,8 @@ class FrontierCoordinator(Node):
         self._gain_scale  = self.get_parameter('gain_scale').value
         self._hyst_r      = self.get_parameter('hysteresis_radius').value
         self._hyst_gain   = self.get_parameter('hysteresis_gain').value
+        self._sep_w       = self.get_parameter('separation_weight').value
+        self._sep_r       = self.get_parameter('separation_radius').value
         self._suspect_ratio = float(self.get_parameter('suspicious_frontier_ratio').value)
         self._suspect_penalty = float(
             self.get_parameter('suspicious_frontier_penalty').value)
@@ -428,7 +439,7 @@ class FrontierCoordinator(Node):
             if not math.isfinite(d):
                 n_unreachable += 1
                 continue
-            if d < self._min_goal_d:
+            if d < self._min_goal_for(ns):
                 n_near += 1
                 continue
 
@@ -545,7 +556,24 @@ class FrontierCoordinator(Node):
                 fx, fy = frontier['point']
                 if math.hypot(fx - current[0], fy - current[1]) <= self._hyst_r:
                     score += self._hyst_gain
-        return score - suspicious_penalty
+        return score - suspicious_penalty - self._separation_penalty(frontier, ns)
+
+    def _min_goal_for(self, ns):
+        return getattr(self, '_min_goal_by_robot', {}).get(ns, self._min_goal_d)
+
+    def _separation_penalty(self, frontier, ns):
+        """Linear penalty (max separation_weight) for frontiers close to
+        another robot's current goal; 0 beyond separation_radius."""
+        if self._sep_w <= 0.0 or self._sep_r <= 0.0:
+            return 0.0
+        fx, fy = frontier['point']
+        near = min(
+            (math.hypot(fx - g[0], fy - g[1])
+             for r, g in self._assigned.items() if r != ns and g is not None),
+            default=None)
+        if near is None or near >= self._sep_r:
+            return 0.0
+        return self._sep_w * (1.0 - near / self._sep_r)
 
     def _suspicious_frontier_ratio(self, size_m: float, clearance: float) -> float:
         """Heuristic leak detector for giant frontier clusters behind thin seams."""
@@ -655,7 +683,7 @@ class FrontierCoordinator(Node):
         if start is None or pos is None:
             return False
         # Goal already inside Nav2's tolerance when sent: success without motion is right.
-        if math.hypot(gx - start[0], gy - start[1]) < self._min_goal_d:
+        if math.hypot(gx - start[0], gy - start[1]) < self._min_goal_for(ns):
             return False
         moved = math.hypot(pos[0] - start[0], pos[1] - start[1])
         need = min(0.3, 0.5 * math.hypot(gx - start[0], gy - start[1]))
@@ -1196,6 +1224,19 @@ class FrontierCoordinator(Node):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+def parse_robot_floats(raw) -> dict:
+    """'robot2:0.8, robot3:0.5' -> {'robot2': 0.8, 'robot3': 0.5}; bad items skipped."""
+    out = {}
+    for item in str(raw or '').split(','):
+        name, _, val = item.partition(':')
+        try:
+            out[name.strip()] = float(val)
+        except ValueError:
+            continue
+    out.pop('', None)
+    return out
+
+
 def _pkg_share() -> str:
     try:
         from ament_index_python.packages import get_package_share_directory

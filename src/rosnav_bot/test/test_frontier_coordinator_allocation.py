@@ -50,3 +50,32 @@ def test_close_frontiers_not_double_assigned():
 def test_single_candidate_robot_returns_empty_plan():
     node = make_bare({'r1': [(5, (0.0, 0.0))], 'r2': []})
     assert node._hungarian_plan(['r1', 'r2'], [], {'r1': (0, 0), 'r2': (0, 0)}) == {}
+
+
+def _bare_scorer(sep_w):
+    obj = fc.FrontierCoordinator.__new__(fc.FrontierCoordinator)
+    obj._sep_w, obj._sep_r = sep_w, 6.0
+    obj._assigned = {'r1': None, 'r2': (0.0, 0.0)}
+    return obj
+
+
+def test_separation_penalty_off_by_default():
+    assert _bare_scorer(0.0)._separation_penalty({'point': (1.0, 0.0)}, 'r1') == 0.0
+
+
+def test_separation_penalty_scales_with_closeness():
+    node = _bare_scorer(2.0)
+    near = node._separation_penalty({'point': (0.0, 0.0)}, 'r1')
+    mid = node._separation_penalty({'point': (3.0, 0.0)}, 'r1')
+    far = node._separation_penalty({'point': (7.0, 0.0)}, 'r1')
+    assert near == 2.0 and abs(mid - 1.0) < 1e-9 and far == 0.0
+    # own goal is ignored
+    assert node._separation_penalty({'point': (0.0, 0.0)}, 'r2') == 0.0
+
+
+def test_parse_robot_floats_and_per_robot_min_goal():
+    assert fc.parse_robot_floats('robot2:0.8, bad, robot3:x,robot4:0.5') == {
+        'robot2': 0.8, 'robot4': 0.5}
+    node = fc.FrontierCoordinator.__new__(fc.FrontierCoordinator)
+    node._min_goal_d, node._min_goal_by_robot = 0.35, {'r2': 0.8}
+    assert node._min_goal_for('r2') == 0.8 and node._min_goal_for('r1') == 0.35

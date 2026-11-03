@@ -173,6 +173,34 @@ def _normalise_robot(robot: dict, idx: int) -> dict:
         'y': str(robot['y']),
         'z': str(robot.get('z', 0.3)),
         'yaw': str(robot.get('yaw', 0.0)),
+        # Optional per-robot overrides (empty = use the fleet-wide launch arg).
+        'drive_type': str(robot.get('drive_type', '')).strip().lower(),
+        'controller': str(robot.get('controller', '')).strip().lower(),
+        'robot_model': str(robot.get('robot_model', '')).strip().lower(),
+    }
+
+
+_DRIVE_TYPES = ('diff', 'mecanum', 'ackermann')
+
+
+def _robot_profile(robot: dict, pkg_share: str, fleet_drive: str,
+                   fleet_controller: str, fleet_model: str) -> dict:
+    """Resolve one robot's drive_type/controller/URDF/nav2 template.
+
+    Per-robot keys from robots_json win over the fleet-wide launch args, so a
+    fleet can mix diff / mecanum / ackermann robots.
+    """
+    drive = robot.get('drive_type') or fleet_drive
+    if drive not in _DRIVE_TYPES:
+        raise ValueError(
+            f"robot {robot.get('name')!r}: drive_type must be one of {_DRIVE_TYPES}, got {drive!r}")
+    controller = robot.get('controller') or fleet_controller
+    model = robot.get('robot_model') or fleet_model
+    return {
+        'drive_type': drive,
+        'controller': controller,
+        'urdf': _common.urdf_filename_for(drive, model),
+        'template': _multirobot_template_yaml(pkg_share, controller, drive),
     }
 
 
@@ -380,6 +408,21 @@ def _multirobot_template_yaml(pkg_share: str, controller: str, drive_type: str) 
     return os.path.join(pkg_share, 'config', fname)
 
 
+def _inject_sim_time(node, value=True):
+    """Set use_sim_time in every ros__parameters block of a nav2 params dict.
+
+    The hand-tuned fleet templates carry no use_sim_time, and nav2's RewrittenYaml only
+    rewrites keys that already exist, so every Nav2 node ran on the wall clock while TF
+    and the sensors ran on sim time (-> 'Transform data too old', wall-stamped /plan).
+    """
+    if isinstance(node, dict):
+        for key, val in node.items():
+            if key == 'ros__parameters' and isinstance(val, dict):
+                val['use_sim_time'] = value
+            else:
+                _inject_sim_time(val, value)
+
+
 def _make_robot_params(
     template_path: str,
     robot_ns: str,
@@ -430,6 +473,7 @@ def _make_robot_params(
     if local_scan_cloud:
         # relative topic: resolves to /<ns>/scan_odom_cloud (this robot's scan_to_odom_cloud node)
         _common.odom_scan_cloud_patch(params, 'scan_odom_cloud', f'{robot_ns}/base_link')
+    _inject_sim_time(params)
     content = yaml.safe_dump(params, sort_keys=False)
     tmp = tempfile.NamedTemporaryFile(
         mode='w', suffix=f'_{robot_ns}.yaml', delete=False, prefix='nav2_mr_')
@@ -647,6 +691,8 @@ def _build_all(context, pkg_share: str):
     goal_pullback = float(LaunchConfiguration('goal_pullback').perform(context).strip())
     hysteresis_radius = float(LaunchConfiguration('hysteresis_radius').perform(context).strip())
     hysteresis_gain = float(LaunchConfiguration('hysteresis_gain').perform(context).strip())
+    separation_weight = float(LaunchConfiguration('separation_weight').perform(context).strip())
+    separation_radius = float(LaunchConfiguration('separation_radius').perform(context).strip())
     frontier_clearance_radius = float(LaunchConfiguration('frontier_clearance_radius').perform(context).strip())
     failed_goal_radius = float(LaunchConfiguration('failed_goal_radius').perform(context).strip())
     failed_goal_cooldown = float(LaunchConfiguration('failed_goal_cooldown').perform(context).strip())
@@ -895,10 +941,19 @@ def _build_all(context, pkg_share: str):
     slam_x_f = float(robots[0]['x'])
     slam_y_f = float(robots[0]['y'])
 
+    # Ackermann robots can't reach goals inside their turning radius.
+    min_goal_overrides = ','.join(
+        f"{r['name']}:0.8" for r in robots
+        if _robot_profile(r, pkg_share, drive_type, controller, robot_model)['drive_type'] == 'ackermann')
+
     for idx, robot in enumerate(robots):
         ns  = robot['name']
         x, y, z, yaw = robot['x'], robot['y'], robot['z'], robot['yaw']
         is_slam_robot = explore and (slam_mode == 'multi' or idx == 0)
+        profile = _robot_profile(robot, pkg_share, drive_type, controller, robot_model)
+        r_drive, r_template, r_urdf = profile['drive_type'], profile['template'], profile['urdf']
+        actions.append(LogInfo(msg=f'[multi_robot] {ns}: drive_type={r_drive} '
+                                   f'controller={profile["controller"]} urdf={r_urdf}'))
 
         # Convert Gazebo world coords → map frame coords for AMCL.
         # Map origin = robot1's starting world position, so offset by robot1's spawn.
@@ -915,13 +970,13 @@ def _build_all(context, pkg_share: str):
                 'yaw': float(yaw),
             }
         nav_map_topic = '/map_merged' if explore and slam_mode == 'multi' else '/map'
-        robot_params = _make_robot_params(template_yaml, ns, pkg_share, initial_pose, nav_map_topic,
+        robot_params = _make_robot_params(r_template, ns, pkg_share, initial_pose, nav_map_topic,
                                           local_scan_cloud=local_scan_cloud)
         actions.append(LogInfo(msg=f'[multi_robot] {ns}: nav2 params -> {robot_params} (map_topic={nav_map_topic})'))
 
         # Robot State Publisher — frame_prefix + namespace arg makes TF frames unique per robot
         rsp = _common.rsp_include(
-            pkg_share, os.path.join(pkg_share, 'urdf', urdf_filename),
+            pkg_share, os.path.join(pkg_share, 'urdf', r_urdf),
             frame_prefix=f'{ns}/', namespace=ns, lidar_type=lidar_type,
             lidar3d_height=lidar3d_height, lidar3d_vfov_deg=lidar3d_vfov_deg,
             enable_camera=enable_rgbd, enable_rgbd=enable_rgbd)
@@ -1004,7 +1059,7 @@ def _build_all(context, pkg_share: str):
         # via its own small lifecycle manager, independent of the shared
         # nav2_navigation_global_tf.launch.py bringup used by every drive_type.
         docking_actions = []
-        if drive_type == 'diff':
+        if r_drive == 'diff':
             docking_node = Node(
                 package='opennav_docking',
                 executable='opennav_docking',
@@ -1182,6 +1237,7 @@ def _build_all(context, pkg_share: str):
                     name='map_fusion',
                     output='screen',
                     parameters=[{
+                        'use_sim_time': True,
                         'robot_namespaces': aux_robots,
                         'base_map_topic': '/map',
                         'output_topic': frontier_map_topic,
@@ -1206,6 +1262,9 @@ def _build_all(context, pkg_share: str):
                     name='frontier_coordinator',
                     output='screen',
                     parameters=[{
+                        # Gazebo sim: goals must be stamped with sim time, otherwise Nav2's
+                        # controller sees wall-clock stamps vs sim-time TF ("Transform data too old").
+                        'use_sim_time': True,
                         'robot_namespaces': robot_ns_list,
                         'map_save_path': map_prefix,
                         'map_topic': frontier_map_topic,
@@ -1221,6 +1280,9 @@ def _build_all(context, pkg_share: str):
                         'goal_pullback': goal_pullback,
                         'hysteresis_radius': hysteresis_radius,
                         'hysteresis_gain': hysteresis_gain,
+                        'separation_weight': separation_weight,
+                        'separation_radius': separation_radius,
+                        'min_goal_distance_overrides': min_goal_overrides,
                         'frontier_clearance_radius': frontier_clearance_radius,
                         'failed_goal_radius': failed_goal_radius,
                         'failed_goal_cooldown': failed_goal_cooldown,
@@ -1261,30 +1323,32 @@ def _build_all(context, pkg_share: str):
                     package='rosnav_bot',
                     executable='mission_server.py',
                     name='mission_server',
-                    output='screen'),
+                    output='screen',
+                    parameters=[{'use_sim_time': True}]),
                 Node(
                     package='rosnav_bot',
                     executable='task_allocator.py',
                     name='task_allocator',
                     output='screen',
-                    parameters=[{'robots': robot_ns_list}]),
+                    parameters=[{'use_sim_time': True, 'robots': robot_ns_list}]),
                 Node(
                     package='rosnav_bot',
                     executable='fleet_health.py',
                     name='fleet_health_monitor',
-                    output='screen'),
+                    output='screen',
+                    parameters=[{'use_sim_time': True}]),
                 Node(
                     package='rosnav_bot',
                     executable='priority_collision_avoidance.py',
                     name='priority_collision_avoidance',
                     output='screen',
-                    parameters=[{'robot_namespaces': robot_ns_list}]),
+                    parameters=[{'use_sim_time': True, 'robot_namespaces': robot_ns_list}]),
                 Node(
                     package='rosnav_bot',
                     executable='deadlock_recovery.py',
                     name='deadlock_recovery',
                     output='screen',
-                    parameters=[{'robot_namespaces': robot_ns_list}]),
+                    parameters=[{'use_sim_time': True, 'robot_namespaces': robot_ns_list}]),
             ]))
         actions.append(LogInfo(
             msg=f'[multi_robot] fleet_mgmt stack will start at t=15s for {robot_ns_list}'))
@@ -1564,6 +1628,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'hysteresis_radius', default_value='2.0',
             description='Radius for keeping a robot near its current exploration region'),
+        DeclareLaunchArgument(
+            'separation_weight', default_value='0.0',
+            description='Soft score penalty (max) for frontiers near another robot\'s goal; 0 = off'),
+        DeclareLaunchArgument(
+            'separation_radius', default_value='6.0',
+            description='Distance (m) over which separation_weight fades to 0'),
         DeclareLaunchArgument(
             'hysteresis_gain', default_value='1.5',
             description='Weighted scorer bonus for current-region continuity'),
