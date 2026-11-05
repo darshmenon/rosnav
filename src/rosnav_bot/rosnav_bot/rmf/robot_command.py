@@ -258,4 +258,10 @@ class Nav2RobotCommand(adpt.RobotCommandHandle):
         if retries > self.cfg.max_retries:
             self._interrupt_rmf(f'giving up after {self.cfg.max_retries} nav goal retries')
             return
-        self._send_next_goal()
+        # Back off before retrying: instant retries burn through max_retries in
+        # milliseconds while Nav2/TF is still settling (seen at startup).
+        self.node.get_logger().info(
+            f'[{self.ns}] retrying nav goal in 2.0s ({retries}/{self.cfg.max_retries})')
+        t = threading.Timer(2.0, self._send_next_goal)
+        t.daemon = True
+        t.start()
