@@ -956,8 +956,11 @@ def _build_all(context, pkg_share: str):
     # ── Per-robot groups ──────────────────────────────────────────────────────
     # SLAM map origin = robot1's odom origin = robot1's Gazebo world start position.
     # All AMCL initial poses must be in map frame, so subtract robot1's world coords.
-    slam_x_f = float(robots[0]['x'])
-    slam_y_f = float(robots[0]['y'])
+    # explore:=false uses a pre-built map saved in the world frame, so no offset:
+    # subtracting robot1's spawn would mislocalise AMCL whenever robot1 is not
+    # spawned at the world origin (e.g. a safe-spawn relocation).
+    slam_x_f = float(robots[0]['x']) if explore else 0.0
+    slam_y_f = float(robots[0]['y']) if explore else 0.0
 
     # Ackermann robots can't reach goals inside their turning radius.
     min_goal_overrides = ','.join(
