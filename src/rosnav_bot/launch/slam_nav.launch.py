@@ -447,6 +447,9 @@ def _build_runtime_actions(context, pkg_share: str):
     if int(LaunchConfiguration('dynamic_obstacles').perform(context).strip() or 0) > 0:
         _enabled_filters.add('dynobs_keepout_filter')
     _params_file = _common.strip_inert_filters(_params_file, _enabled_filters)
+    lite = LaunchConfiguration('profile').perform(context).strip().lower() == 'lite'
+    if lite:
+        _params_file = _common.apply_lite_profile(_params_file)
     local_scan_cloud = _common.truthy(LaunchConfiguration('local_scan_cloud').perform(context))
     if local_scan_cloud:
         _params_file = _common.use_odom_scan_cloud(_params_file)
@@ -720,6 +723,8 @@ def _build_runtime_actions(context, pkg_share: str):
             os.path.join(pkg_share, 'launch', 'nav2_navigation_global_tf.launch.py') if use_mpc else
             os.path.join(get_package_share_directory('nav2_bringup'), 'launch', 'navigation_launch.py'))
         nav2_launch_args = {'use_sim_time': 'true', 'params_file': _params_file}
+        if lite:
+            nav2_launch_args['use_composition'] = 'True'   # one process for Nav2 servers
         mpc_actions = []
         if use_mpc:
             nav2_launch_args['controller_cmd_vel'] = 'cmd_vel_nav_dwb_unused'
@@ -1154,6 +1159,31 @@ def _build_runtime_actions(context, pkg_share: str):
         GroupAction(actions=_common.cslam_lidar_nodes(pkg_share))
         if run_cslam else LogInfo(msg='[slam_nav] C-SLAM disabled.'))
 
+    # ── Lidar odometry sidecar (optional): KISS-ICP or RKO-LIO ────────────
+    # Publishes /kiss/odometry or /rko_lio/odom only; never owns odom->base_link (the diff-drive EKF/wheel odom
+    # stays authoritative), so it is safe to run next to Nav2 and is scored by localization_accuracy_bench.py.
+    lidar_odom = LaunchConfiguration('lidar_odom').perform(context).strip().lower()
+    if lidar_odom not in ('none', '') and lidar_type != '3d':
+        print(f'[slam_nav] lidar_odom={lidar_odom} needs lidar_type:=3d — disabled')
+        lidar_odom = 'none'
+    if lidar_odom == 'kiss_icp':
+        lidar_odom_group = GroupAction(actions=[
+            LogInfo(msg='[slam_nav] lidar_odom=kiss_icp -> /kiss/odometry (publish_odom_tf:=false)'),
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(os.path.join(get_package_share_directory('kiss_icp'), 'launch', 'odometry.launch.py')),
+                launch_arguments={'topic': '/points', 'base_frame': 'base_link', 'publish_odom_tf': 'false',
+                                  'visualize': 'false', 'use_sim_time': 'true'}.items())])
+    elif lidar_odom == 'rko_lio':
+        lidar_odom_group = GroupAction(actions=[
+            LogInfo(msg='[slam_nav] lidar_odom=rko_lio -> /rko_lio/odom (own odom frame rko_odom, deskew off: sim cloud has no per-point time)'),
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(os.path.join(get_package_share_directory('rko_lio'), 'launch', 'odometry.launch.py')),
+                launch_arguments={'imu_topic': '/imu', 'lidar_topic': '/points', 'base_frame': 'base_link',
+                                  'odom_frame': 'rko_odom', 'autodetect': 'false', 'deskew': 'false',
+                                  'use_sim_time': 'true'}.items())])
+    else:
+        lidar_odom_group = LogInfo(msg='[slam_nav] lidar_odom disabled.')
+
     # ── Object Detection: YOLO (optional, off by default) ────────────────
     enable_yolo = LaunchConfiguration('enable_yolo')
     yolo_detector = GroupAction(
@@ -1258,6 +1288,16 @@ def _build_runtime_actions(context, pkg_share: str):
             ])
     else:
         slam_watchdog = LogInfo(msg='[slam_nav] slam_stall_watchdog off (slam_watchdog:=false, or not online slam_toolbox).')
+
+    # ── Supervisor (diagnostics + safe self-healing) ───────────────────────
+    if _common.truthy(LaunchConfiguration('supervisor').perform(context)):
+        supervisor_node = TimerAction(period=25.0, actions=[
+            LogInfo(msg='[slam_nav] rosnav_supervisor ENABLED - /diagnostics + costmap-clear self-heal; '
+                        'watch with: ros2 run rosnav_bot rosnav_top.py'),
+            Node(package='rosnav_bot', executable='rosnav_supervisor.py', name='rosnav_supervisor',
+                 output='screen', parameters=[{'use_sim_time': True, 'robots': ['']}])])
+    else:
+        supervisor_node = LogInfo(msg='[slam_nav] supervisor disabled (supervisor:=false).')
 
     # ── TF-freeze watchdog ─────────────────────────────────────────────────
     # controller_server's map->odom view can freeze ("Transform data too old"), stalling the
@@ -1416,6 +1456,7 @@ def _build_runtime_actions(context, pkg_share: str):
         spawn_robot,
         slam_or_localization,
         cslam_group,
+        lidar_odom_group,
         nav2,
         gs_keepout_group,
         gs_binary_group,
@@ -1429,6 +1470,7 @@ def _build_runtime_actions(context, pkg_share: str):
         gs_semantic_fusion,
         slam_debug_monitor,
         tf_watchdog,
+        supervisor_node,
         scan_cloud_node,
         slam_watchdog,
         posegraph_autosave_group,
@@ -1541,6 +1583,14 @@ def generate_launch_description():
         DeclareLaunchArgument(
             name='tf_relay_drop', default_value='',
             description='tf_relay:=true only: regex of child frames NOT forwarded to Nav2 (e.g. wheel|caster).'),
+        DeclareLaunchArgument(
+            name='profile', default_value='full', choices=['full', 'lite'],
+            description='lite = Raspberry-Pi-class Nav2: caps controller/costmap/planner rates and turns on '
+                        'use_composition (idea from EasyNav). Measure the saving with resource_bench.py.'),
+        DeclareLaunchArgument(
+            name='supervisor', default_value='false',
+            description='true = run rosnav_supervisor.py: continuous diagnostics on /diagnostics and safe '
+                        'self-healing (clears costmaps on a persistently stale map->odom). View: rosnav_top.py.'),
         DeclareLaunchArgument(
             name='tf_watchdog', default_value='false',
             description='EXPERIMENTAL, off by default: restart Nav2 via the lifecycle manager on a '
@@ -1674,7 +1724,8 @@ def generate_launch_description():
             description='Local controller: "dwb" (default, trajectory rollout), "mppi" '
                         '(nav2_mppi_controller, sampling-based optimization/MPC), or "rpp" '
                         '(nav2_regulated_pure_pursuit_controller, carrot-chasing pursuit), or "mpc" '
-                        '(scripts/mpc_controller.py, true NLP MPC; SLAM/VSLAM modes only). '
+                        '(scripts/mpc_controller.py, true NLP MPC; SLAM/VSLAM modes only), '
+                        '"rotation_shim" (rotate-in-place then RPP) or "graceful" (smooth-curvature). '
                         'Humble only — ignored on Jazzy, which defaults to MPPI.'),
         DeclareLaunchArgument(
             name='drive_type',
@@ -1718,6 +1769,10 @@ def generate_launch_description():
             default_value='2d',
             description='"2d" (default, LaserScan on /scan) or "3d" (16-channel PointCloud2 on '
                         '/points, gpu_lidar). Only supported for drive_type:=diff.'),
+        DeclareLaunchArgument(
+            name='lidar_odom', default_value='none',
+            description='"none" | "kiss_icp" | "rko_lio": run a lidar(-inertial) odometry sidecar (needs lidar_type:=3d). '
+                        'Publishes /kiss/odometry or /rko_lio/odom only; does not replace odom->base_link.'),
         DeclareLaunchArgument(
             name='lidar3d_height', default_value='0.25',
             description='3D lidar mount height (m), lidar_type:=3d only. Needs >=0.10m '

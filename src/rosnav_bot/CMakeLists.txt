@@ -102,6 +102,9 @@ install(
     scripts/pulse_rates.py
     scripts/nav2_bringup_watchdog.py
     scripts/rosnav_doctor.py
+    scripts/rosnav_supervisor.py
+    scripts/supervisor_core.py
+    scripts/rosnav_top.py
     scripts/mpc_controller.py
     scripts/tf_relay.py
     scripts/scan_to_odom_cloud.py
@@ -116,6 +119,8 @@ install(
     scripts/gen_privacy_zone_mask.py
     scripts/mapf_gazebo.py
     scripts/cbf_safety_filter.py
+    scripts/lidar_ring_time_adapter.py
+    scripts/resource_bench.py
     scripts/mapf_compare.py
   DESTINATION lib/${PROJECT_NAME}
 )
@@ -140,6 +145,9 @@ if(BUILD_TESTING)
   ament_add_pytest_test(test_mpc_core test/test_mpc_core.py)
   ament_add_pytest_test(test_pulse_rates test/test_pulse_rates.py)
   ament_add_pytest_test(test_rosnav_doctor test/test_rosnav_doctor.py)
+  ament_add_pytest_test(test_supervisor_core test/test_supervisor_core.py)
+  ament_add_pytest_test(test_rosnav_top test/test_rosnav_top.py)
+  ament_add_pytest_test(test_resource_bench test/test_resource_bench.py)
   ament_add_pytest_test(test_orb_slam3_occupancy_bridge test/test_orb_slam3_occupancy_bridge.py)
 endif()
 

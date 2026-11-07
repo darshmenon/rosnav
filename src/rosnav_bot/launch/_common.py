@@ -126,7 +126,7 @@ def urdf_filename_for(drive_type: str, robot_model: str = 'custom') -> str:
 def nav2_params_filename(controller: str, drive_type: str, ros_distro: str = None) -> str:
     """Pick the single-robot nav2 params file for a drive_type/controller/distro combo."""
     ros_distro = ros_distro or ROS_DISTRO
-    if controller in ('mppi', 'rpp', 'regulated_pure_pursuit', 'pure_pursuit') and (
+    if controller in ('mppi', 'rpp', 'regulated_pure_pursuit', 'pure_pursuit', 'rotation_shim', 'shim', 'graceful') and (
             drive_type in ('ackermann', 'mecanum') or ros_distro == 'jazzy'):
         import sys
         print(f"[nav2_params] WARNING: controller:={controller} is ignored for "
@@ -147,6 +147,11 @@ def nav2_params_filename(controller: str, drive_type: str, ros_distro: str = Non
     # third point of comparison alongside DWB (rollout) and MPPI (optimization).
     if controller in ('rpp', 'regulated_pure_pursuit', 'pure_pursuit'):
         return 'nav2_params_rpp.yaml'
+    # rotate-in-place shim wrapping RPP, and the smooth-curvature graceful controller
+    if controller in ('rotation_shim', 'shim'):
+        return 'nav2_params_rotation_shim.yaml'
+    if controller == 'graceful':
+        return 'nav2_params_graceful.yaml'
     return 'nav2_params.yaml'
 
 
@@ -287,6 +292,49 @@ def odom_scan_cloud_patch(data: dict, cloud_topic: str = '/scan_odom_cloud',
         'obstacle_min_range': old.get('obstacle_min_range', 0.0),
     }
     return True
+
+
+LITE_CAPS = {'controller_frequency': 10.0, 'update_frequency': 2.0, 'publish_frequency': 1.0,
+             'expected_planner_frequency': 1.0}
+
+
+def lite_profile_patch(data: dict) -> list:
+    """In-place: cap Nav2 loop rates for small CPUs (Raspberry Pi class). Only ever LOWERS a value.
+
+    EasyNav's Nav2 comparison on a Pi 4 needed composition and slower rates to run at all; this is the
+    same idea as one switch (`profile:=lite`, which also turns on use_composition). Returns the list of
+    'section.key old->new' changes so the launch file can log exactly what was cut.
+    """
+    changed = []
+
+    def walk(node, path):
+        if not isinstance(node, dict):
+            return
+        for k, v in node.items():
+            if k in LITE_CAPS and isinstance(v, (int, float)) and not isinstance(v, bool) and v > LITE_CAPS[k]:
+                changed.append(f"{'.'.join(path)}.{k} {v}->{LITE_CAPS[k]}")
+                node[k] = LITE_CAPS[k]
+            else:
+                walk(v, path + [str(k)])
+    walk(data, [])
+    return changed
+
+
+def apply_lite_profile(params_path: str) -> str:
+    """File version of lite_profile_patch. Returns the (possibly new) params path."""
+    import yaml
+    with open(params_path) as f:
+        data = yaml.safe_load(f)
+    changed = lite_profile_patch(data)
+    if not changed:
+        return params_path
+    out_path = params_path.replace('.yaml', '_lite.yaml')
+    with open(out_path, 'w') as f:
+        yaml.safe_dump(data, f)
+    print(f'[nav2_params] profile:=lite lowered {len(changed)} rates ({out_path}):')
+    for c in changed:
+        print(f'[nav2_params]   {c}')
+    return out_path
 
 
 def use_odom_scan_cloud(params_path: str, cloud_topic: str = '/scan_odom_cloud') -> str:
