@@ -5,20 +5,26 @@ import sys
 import types
 
 # leader_follower imports rclpy/nav2 at module level; stub them so the pure Trail logic is testable anywhere
-for m in ['visualization_msgs', 'visualization_msgs.msg', 'nav_msgs', 'nav_msgs.msg', 'rclpy', 'rclpy.action', 'rclpy.node', 'geometry_msgs', 'geometry_msgs.msg', 'nav2_msgs', 'nav2_msgs.action',
-          'tf2_ros']:
-    sys.modules.setdefault(m, types.ModuleType(m))
-sys.modules['rclpy.node'].Node = object
-sys.modules['geometry_msgs.msg'].Point = sys.modules['nav_msgs.msg'].Path = object
-sys.modules['visualization_msgs.msg'].Marker = sys.modules['visualization_msgs.msg'].MarkerArray = object
-sys.modules['rclpy.action'].ActionClient = object
-sys.modules['geometry_msgs.msg'].PoseStamped = sys.modules['geometry_msgs.msg'].Twist = object
-sys.modules['nav2_msgs.action'].NavigateToPose = object
-sys.modules['tf2_ros'].Buffer = sys.modules['tf2_ros'].TransformListener = object
+import unittest.mock
+
+# leader_follower imports rclpy/nav2 at module level; give it throw-away fakes for the import only, so the real
+# ROS modules (used by other test files) are never mutated.
+_names = ['visualization_msgs', 'visualization_msgs.msg', 'nav_msgs', 'nav_msgs.msg', 'rclpy', 'rclpy.action',
+          'rclpy.node', 'geometry_msgs', 'geometry_msgs.msg', 'nav2_msgs', 'nav2_msgs.action', 'tf2_ros']
+_fake = {m: types.ModuleType(m) for m in _names}
+_fake['rclpy.node'].Node = object
+_fake['geometry_msgs.msg'].Point = _fake['nav_msgs.msg'].Path = object
+_fake['visualization_msgs.msg'].Marker = _fake['visualization_msgs.msg'].MarkerArray = object
+_fake['rclpy.action'].ActionClient = object
+_fake['geometry_msgs.msg'].PoseStamped = _fake['geometry_msgs.msg'].Twist = object
+_fake['nav2_msgs.action'].NavigateToPose = object
+_fake['tf2_ros'].Buffer = _fake['tf2_ros'].TransformListener = object
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'scripts'))
 spec = importlib.util.spec_from_file_location(
     'leader_follower', pathlib.Path(__file__).resolve().parents[1] / 'scripts' / 'leader_follower.py')
 lf = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(lf)
+with unittest.mock.patch.dict(sys.modules, _fake):
+    spec.loader.exec_module(lf)
 
 
 def straight(n=30, step=0.1):
@@ -134,3 +140,19 @@ def test_keep_clear_pushes_glide_off_the_leader():
     assert lf.keep_clear((2.0, 0.0), 0.8) == (2.0, 0.0)                       # already clear: untouched
     assert math.isclose(math.hypot(*lf.keep_clear((0.1, 0.1), 0.8)), 0.8)     # inside: pushed out to r_min
     assert lf.keep_clear((0.0, 0.0), 0.8) == (0.8, 0.0)                       # on the leader: to its rear
+
+
+def test_cbf_blocks_head_on_but_passes_clear():
+    class Fake:
+        use_cbf, cbf_d, vmax, cbf_hits = True, 0.6, 0.35, 0
+        def __init__(self, nb): self._nb_list = nb
+        def neighbours(self, f): return self._nb_list
+        def get_logger(self):
+            return types.SimpleNamespace(info=lambda *_: None)
+    assert lf.cbf_filter is not None
+    # neighbour 0.7 m dead ahead, stationary: forward command must be cut to ~0 or less
+    v, w = lf.LeaderFollower.safe(Fake([(0.7, 0.0, 0.0, 0.0)]), 'r2', (0.0, 0.0, 0.0), 0.3, 0.0)
+    assert v < 0.1
+    # neighbour far away: untouched
+    v, w = lf.LeaderFollower.safe(Fake([(5.0, 0.0, 0.0, 0.0)]), 'r2', (0.0, 0.0, 0.0), 0.3, 0.2)
+    assert math.isclose(v, 0.3, abs_tol=1e-6) and math.isclose(w, 0.2, abs_tol=1e-6)

@@ -267,10 +267,12 @@ class NavBenchmark(Node):
         self.declare_parameter('success_tol_m', 0.5)
         # max AMCL-vs-ground-truth start error before a trial is declared invalid
         self.declare_parameter('loc_tol_m', 0.5)
+        self.declare_parameter('settle_s', 8.0)   # max wait for AMCL to catch up before a start counts as invalid
 
         self._label = self.get_parameter('label').value
         self._success_tol_m = float(self.get_parameter('success_tol_m').value)
         self._loc_tol_m = float(self.get_parameter('loc_tol_m').value)
+        self._settle_s = float(self.get_parameter('settle_s').value)
         self._out_dir = _out_dir(self.get_parameter('out_dir').value)
         self._goals = _load_goals(self.get_parameter('goals_file').value)
         odom_topic = self.get_parameter('odom_topic').value
@@ -372,6 +374,18 @@ class NavBenchmark(Node):
             start_gt = self._gt_map_xy
             loc_err = (_dist(start_map[0], start_map[1], start_gt[0], start_gt[1])
                        if start_map and start_gt else None)
+            # Right after the previous goal AMCL's map->odom lags the stopped robot; give it a few
+            # seconds to catch up before calling the start invalid (a persistent error still is).
+            t_settle = time.time()
+            while (loc_err is not None and loc_err > self._loc_tol_m
+                   and time.time() - t_settle < self._settle_s):
+                own_executor.spin_once(timeout_sec=0.2)
+                start_map, start_gt = self._map_pose_xy(), self._gt_map_xy
+                if start_map and start_gt:
+                    loc_err = _dist(start_map[0], start_map[1], start_gt[0], start_gt[1])
+            if loc_err is not None and time.time() - t_settle > 0.5:
+                self.get_logger().info(f'[nav] goal {i+1}: start localization settled to {loc_err:.2f} m '
+                                       f'after {time.time() - t_settle:.1f} s')
             if loc_err is not None and loc_err > self._loc_tol_m:
                 self.get_logger().warn(
                     f'[nav] goal {i+1}: INVALID start — AMCL pose is {loc_err:.2f} m from '

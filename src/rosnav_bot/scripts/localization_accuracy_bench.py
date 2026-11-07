@@ -39,7 +39,7 @@ class Bench(Node):
         self.model = self.get_parameter('model').value
         self.out = self.get_parameter('out').value
         self.gt = None
-        self.est = {'wheel_odom': None, 'ekf': None, 'slam(map->base)': None, 'gps_ekf': None, 'kiss_icp': None}
+        self.est = {'wheel_odom': None, 'ekf': None, 'slam(map->base)': None, 'gps_ekf': None, 'kiss_icp': None, 'rko_lio': None, 'lio_sam': None}
         self.align = {}
         self.buf = {}
         self.declare_parameter('align_n', 20)  # first N paired samples (rate 2 Hz -> 10 s) fit the SE(2) alignment
@@ -54,6 +54,8 @@ class Bench(Node):
         self.create_subscription(Odometry, '/odometry/filtered', lambda m: self.on_odo('ekf', m), 10)
         self.create_subscription(Odometry, '/odometry/global', lambda m: self.on_odo('gps_ekf', m), 10)
         self.create_subscription(Odometry, '/kiss/odometry', lambda m: self.on_odo('kiss_icp', m), 10)  # only if KISS-ICP runs
+        self.create_subscription(Odometry, '/lio_sam/mapping/odometry', lambda m: self.on_odo('lio_sam', m), qos_profile_sensor_data)  # only if LIO-SAM runs
+        self.create_subscription(Odometry, '/rko_lio/odom', lambda m: self.on_odo('rko_lio', m), 10)  # only if RKO-LIO runs
         self.tf_buffer = Buffer()
         TransformListener(self.tf_buffer, self)
         self.create_timer(1.0 / float(self.get_parameter('rate').value), self.tick)

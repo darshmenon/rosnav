@@ -24,6 +24,11 @@ from rclpy.action import ActionClient
 from rclpy.node import Node
 from tf2_ros import Buffer, TransformListener
 
+try:  # same-directory import (works for the installed script and for tests)
+    from cbf_safety_filter import cbf_filter
+except Exception:  # noqa: BLE001
+    cbf_filter = None
+
 
 def se2_apply(tx, ty, tyaw, x, y, yaw=0.0):
     """Apply the 2D transform (tx, ty, tyaw) to the pose (x, y, yaw): returns the pose in the parent frame."""
@@ -180,6 +185,8 @@ class LeaderFollower(Node):
         self.declare_parameter('vmax', 0.35)
         self.declare_parameter('accel', 0.4)          # m/s^2 limit: smooth speed changes keep the gap stable
         self.declare_parameter('speed_gain', 0.5)       # extra spacing (m) per m/s of leader speed
+        self.declare_parameter('cbf', True)             # control-barrier-function filter on every follower command
+        self.declare_parameter('cbf_safe_dist', 0.6)    # m, hard floor between any two robots (below the formation gap)
         self.declare_parameter('leader_timeout', 6.0)   # s of silent leader TF before a follower takes over
         self.leader = self.get_parameter('leader').value
         self.followers = [f for f in str(self.get_parameter('followers').value).split(',') if f]
@@ -190,6 +197,10 @@ class LeaderFollower(Node):
         self.vmax = float(self.get_parameter('vmax').value)
         self.accel = float(self.get_parameter('accel').value)
         self.dt = 1.0 / float(self.get_parameter('rate').value)
+        self.use_cbf = bool(self.get_parameter('cbf').value) and cbf_filter is not None
+        self.cbf_d = float(self.get_parameter('cbf_safe_dist').value)
+        self._nb = {}                # ns -> (x, y, t, vx, vy) for finite-difference neighbour velocity
+        self.cbf_hits = 0            # ticks where the filter altered a command (logged)
         self.cmd_pub = {f: self.create_publisher(Twist, f'/{f}/cmd_vel', 10) for f in self.followers}
         self.v_prev = {f: 0.0 for f in self.followers}
         self.off_cur = {}            # smoothed (back, lateral) slot offset per follower
@@ -255,6 +266,38 @@ class LeaderFollower(Node):
         except Exception:  # noqa: BLE001
             return None
 
+    def neighbours(self, f):
+        """[(x, y, vx, vy)] of every other robot in the convoy (map frame, finite-difference velocity)."""
+        now = self.get_clock().now().nanoseconds * 1e-9
+        out = []
+        for ns in [self.leader] + [o for o in self.followers if o != f]:
+            p = self.pose_of(ns)
+            if p is None:
+                continue
+            old = self._nb.get(ns)
+            vx = vy = 0.0
+            if old is not None:
+                dt = now - old[2]
+                if dt < 0.05:
+                    vx, vy = old[3], old[4]
+                    out.append((p[0], p[1], vx, vy)); continue
+                vx, vy = (p[0] - old[0]) / dt, (p[1] - old[1]) / dt
+            self._nb[ns] = (p[0], p[1], now, vx, vy)
+            out.append((p[0], p[1], vx, vy))
+        return out
+
+    def safe(self, f, fp, v, w):
+        """CBF-filter a follower command so no pair of robots ever closes inside cbf_safe_dist."""
+        if not self.use_cbf:
+            return v, w
+        v2, w2, n_inf = cbf_filter((v, w), fp, self.neighbours(f), safe_dist=self.cbf_d,
+                                   max_v=max(self.vmax, 0.1))
+        if abs(v2 - v) > 1e-3 or abs(w2 - w) > 1e-3:
+            self.cbf_hits += 1
+            if self.cbf_hits % 20 == 1:
+                self.get_logger().info(f'CBF {f}: v {v:.2f}->{v2:.2f} w {w:.2f}->{w2:.2f} (hits={self.cbf_hits})')
+        return (0.0, 0.0) if n_inf else (v2, w2)
+
     def drive(self, f, k, T, gap, prev_ahead):
         """Direct gap-regulated pursuit of the trail (trail projected to map with the current correction)."""
         fp = self.pose_of(f)
@@ -277,6 +320,7 @@ class LeaderFollower(Node):
         self.v_prev[f] = v
         tx, ty = tm.lookahead(i, max(0.5, min(1.2, 0.5 + 0.6 * v)))
         v_cmd, w = pursuit_cmd(fp[0], fp[1], fp[2], tx, ty, v)
+        v_cmd, w = self.safe(f, fp, v_cmd, w)
         msg = Twist()
         msg.linear.x, msg.angular.z = v_cmd, w
         self.cmd_pub[f].publish(msg)
@@ -306,6 +350,7 @@ class LeaderFollower(Node):
         v = self.v_prev[f] + max(-dv, min(dv, v_des - self.v_prev[f]))
         self.v_prev[f] = v
         v_cmd, w = pursuit_cmd(fp[0], fp[1], fp[2], sx, sy, v)
+        v_cmd, w = self.safe(f, fp, v_cmd, w)
         msg = Twist()
         msg.linear.x, msg.angular.z = v_cmd, w
         self.cmd_pub[f].publish(msg)
