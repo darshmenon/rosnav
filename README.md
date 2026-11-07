@@ -32,29 +32,28 @@ Deep dive → [`concepts.md`](concepts.md) · launch args → `ros2 launch rosna
 <details>
 <summary><h2>Contents</h2></summary>
 
-**Core**
+**Get started**
 - [1. Install](#1-install) (incl. [Docker](#docker-alternative-to-the-install-above))
 - [2. Map · save · navigate](#2-map--save--navigate)
 
-**Platforms & tuning**
+**Navigation & platforms**
 - [3. Controllers, SLAM backends & benchmarking](#3-controllers-slam-backends--benchmarking)
 - [4. Platforms — drive bases, chassis skins, how to switch](#4-platforms--drive-bases-chassis-skins-how-to-switch)
 - [5. Worlds](#5-worlds)
 - [6. Update YAML (tuning)](#6-update-yaml-tuning)
 
-**Fleet, explore & features**
+**Multi-robot & fleet**
+- [6b. Convoy & swarm formations](#6b-convoy--swarm-formations)
 - [7. MAPF · CBF](#7-mapf--cbf)
-- [8. Fleet & explore](#8-fleet--explore)
+- [8. Fleet & explore](#8-fleet--explore) (incl. convoy / leader-follower)
+- [13. Open-RMF](#13-open-rmf)
+- [14. Fleet CLI](#14-fleet-cli)
+
+**Perception, interaction & AI**
 - [9. Dynamic obstacles](#9-dynamic-obstacles)
 - [10. YOLO object detection](#10-yolo-object-detection)
 - [11. ArUco docking](#11-aruco-docking)
 - [12. LLM voice navigation](#12-llm-voice-navigation)
-
-**Fleet & multi-robot**
-- [13. Open-RMF](#13-open-rmf)
-- [14. Fleet CLI](#14-fleet-cli)
-
-**Research / advanced**
 - [15. Gaussian Splatting capture](#15-gaussian-splatting-capture)
 - [16. AI training (YOLO · Gaussian Splat keepout · RL)](#16-ai-training-yolo--gaussian-splat-keepout--rl)
 
@@ -133,7 +132,7 @@ Or let the robot explore alone: add `explore:=true` to the launch above.
 | <img src="images/frontier_maps/hospital.gif" width="260"> | <img src="images/frontier_maps/house.gif" width="200"> | <img src="images/frontier_maps/simple_rooms.gif" width="240"> |
 | 133.1k cells · 3.4 cm | 47.0k cells · 12.7 cm | 98.3k cells · 3.7 cm |
 
-Ready-made maps: `src/rosnav_bot/maps/map_{hospital,house,simple_rooms}.yaml` (+ RTAB-Map `map_cafe_rtab.yaml`, [3D views](#rtab-map-visual-slam-rgb-d-cafe)) — skip exploring and [navigate on them directly](#c--navigate-on-the-saved-map).
+Ready-made maps: `src/rosnav_bot/maps/map_{cafe,hospital,house,simple_rooms}.yaml` (+ [RTAB-Map 3D views](#rtab-map-visual-slam-rgb-d-cafe)) — skip exploring and [navigate on them directly](#c--navigate-on-the-saved-map).
 
 Exploration backend defaults to `builtin` (best result in the 2026-10-11 cafe test — see
 `concepts.md` §9 for the earlier comparison). Switch it with `explorer:=`:
@@ -272,12 +271,12 @@ Per-robot slam_toolbox maps merged into `/map_merged` (10x speed).
 
 ![RTAB-Map RGB-D visual SLAM exploring the cafe in RViz](images/rtabmap_visual_cafe.gif)
 
-Saved 2D map and exported 3D cloud:
+Exported 3D cloud:
 
-| 2D map | 3D cloud (RViz) | 3D cloud (MeshLab) |
-|:---:|:---:|:---:|
-| <img src="images/rtabmap/map_cafe_rtab.png" width="260"> | <img src="images/rtabmap/cafe_3d_cloud.png" width="260"> | <img src="images/rtabmap/cafe_3d_meshlab.png" width="260"> |
-| 111 m² · `src/rosnav_bot/maps/map_cafe_rtab.yaml` | 682k coloured points | `rtabmap-export --cloud` |
+| 3D cloud (RViz) | 3D cloud (MeshLab) |
+|:---:|:---:|
+| <img src="images/rtabmap/cafe_3d_cloud.png" width="260"> | <img src="images/rtabmap/cafe_3d_meshlab.png" width="260"> |
+| 682k coloured points | `rtabmap-export --cloud` |
 
 #### Frontier exploration
 
@@ -500,6 +499,21 @@ More → [`concepts.md`](concepts.md).
 
 ---
 
+## 6b. Convoy & swarm formations
+
+```bash
+ros2 launch rosnav_bot multi_robot.launch.py world_name:=arena_square robot_count:=3 explore:=false \
+  prebuilt_localization:=static follow:=true follow_spacing:=1.0
+ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -r cmd_vel:=/robot1/cmd_vel   # drive the leader
+ros2 param set /leader_follower formation wedge   # column | line | wedge | diamond | echelon | circle — live, slots glide
+```
+
+![Leader-follower convoy cycling column, wedge, line, diamond, circle, echelon in RViz](images/convoy_leader_follower.gif)
+
+<sub>`rviz/convoy.rviz` · gap held at 1.06 m ±0.07 in column mode · gap speed-adaptive · next robot takes over if the leader dies · details → [`concepts.md` §43](concepts.md)</sub>
+
+---
+
 ## 7. MAPF · CBF
 
 <p align="center"><img src="images/mapf/gazebo_16robots.gif" alt="16 diff-drive robots following a CBS/ECBS plan on a Gazebo grid" width="460"/></p>
@@ -527,6 +541,10 @@ ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi      # → /map_me
 ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi collab_loop_closure:=false  # static known-pose merge only
 ros2 launch rosnav_bot multi_robot.launch.py slam_mode:=multi lidar_type:=3d slam_algo:=3d rviz:=true  # RTAB-Map 3D SLAM, view cloud_map in RViz
 ros2 launch rosnav_bot multi_robot.launch.py merge_scans:=true     # → /map_fused
+
+# Convoy: robot2..N trail robot1 along its path (gap widens with speed; next robot takes over if the leader dies)
+ros2 launch rosnav_bot multi_robot.launch.py robot_count:=3 explore:=false follow:=true follow_spacing:=1.0
+ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -r cmd_vel:=/robot1/cmd_vel   # drive the leader
 
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital safety:=true
 ros2 run rosnav_bot mission_server.py patrol robot1 1,2,0 3,4,90
@@ -780,7 +798,7 @@ MASK_ONLY=1 NPZ=$HOME/gs_data/cafe_points_final.npz \
   bash src/rosnav_bot/scripts/gs_train_keepout.sh cafe
 
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=cafe \
-  gs_keepout_mask:=src/rosnav_bot/maps/gs_keepout_cafe.yaml
+  gs_keepout_mask:=src/rosnav_bot/maps/gs_keepout_cafe_final.yaml
 ```
 
 ### C — RL local planner (PPO)

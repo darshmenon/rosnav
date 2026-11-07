@@ -1,0 +1,86 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.9
+      Class: rviz_default_plugins/Map
+      Enabled: true
+      Name: Map
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /map
+      Value: true
+    - Class: rviz_default_plugins/Path
+      Color: 255; 255; 255
+      Enabled: false
+      Line Style: Billboards
+      Line Width: 0.05
+      Name: Leader trail
+      Topic:
+        Value: /convoy/trail
+      Value: false
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Gap lines and slots
+      Topic:
+        Value: /convoy/markers
+      Value: true
+    - Class: rviz_default_plugins/RobotModel
+      Description Source: Topic
+      Description Topic:
+        Value: /robot1/robot_description
+      Enabled: true
+      Name: Leader robot1
+      TF Prefix: robot1
+      Value: true
+    - Class: rviz_default_plugins/RobotModel
+      Description Source: Topic
+      Description Topic:
+        Value: /robot2/robot_description
+      Enabled: true
+      Name: Follower robot2
+      TF Prefix: robot2
+      Value: true
+    - Class: rviz_default_plugins/RobotModel
+      Description Source: Topic
+      Description Topic:
+        Value: /robot3/robot_description
+      Enabled: true
+      Name: Follower robot3
+      TF Prefix: robot3
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Enabled: false
+      Name: TF
+      Value: false
+  Enabled: true
+  Global Options:
+    Background Color: 38; 38; 44
+    Fixed Frame: map
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Angled convoy view
+      Target Frame: <Fixed Frame>
+      Distance: 9.0
+      Pitch: 0.85
+      Yaw: 2.35
+      Focal Point:
+        X: 1.2
+        Y: 1.0
+        Z: 0
+    Saved: ~
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 900
+  Width: 1400

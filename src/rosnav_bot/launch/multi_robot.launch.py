@@ -693,6 +693,8 @@ def _build_all(context, pkg_share: str):
         raise ValueError('explore_localization must be one of: static, amcl')
     fleet_mgmt   = _truthy(LaunchConfiguration('fleet_mgmt').perform(context))
     merge_scans  = _truthy(LaunchConfiguration('merge_scans').perform(context))
+    follow       = _truthy(LaunchConfiguration('follow').perform(context))
+    follow_spacing = float(LaunchConfiguration('follow_spacing').perform(context))
     slam_mode = LaunchConfiguration('slam_mode').perform(context).strip().lower()
     collab_loop_closure = _truthy(LaunchConfiguration('collab_loop_closure').perform(context))
     frontier_detector = LaunchConfiguration('frontier_detector').perform(context).strip()
@@ -1271,6 +1273,21 @@ def _build_all(context, pkg_share: str):
         actions.append(LogInfo(
             msg='[multi_robot] merge_scans ignored in slam_mode:=multi; using /map_merged from map_merge_known'))
 
+    # ── Convoy / leader-follower (opt-in, follow:=true) ───────────────────────
+    if follow and len(robots) > 1:
+        actions.append(TimerAction(
+            period=25.0,
+            actions=[
+                LogInfo(msg=f'[multi_robot] follow:=true — {robots[0]["name"]} leads, '
+                            f'{[r["name"] for r in robots[1:]]} trail at {follow_spacing} m'),
+                Node(package='rosnav_bot', executable='leader_follower.py', name='leader_follower',
+                     output='screen',
+                     parameters=[{'use_sim_time': True, 'leader': robots[0]['name'],
+                                  'followers': ','.join(r['name'] for r in robots[1:]),
+                                  'spacing': follow_spacing}])]))
+    elif follow:
+        actions.append(LogInfo(msg='[multi_robot] follow:=true needs robot_count >= 2 — ignored'))
+
     # ── Exploration (explore mode only) ───────────────────────────────────────
     robot_ns_list = ','.join(r['name'] for r in robots)
     robot_namespaces = [r['name'] for r in robots]
@@ -1582,6 +1599,14 @@ def generate_launch_description():
             'robots_json', default_value='',
             description='Optional exact robot list JSON, e.g. '
                         '\'[{"name":"robot1","x":-2,"y":-1},{"name":"robot2","x":-0.8,"y":-1}]\''),
+        DeclareLaunchArgument(
+            'follow', default_value='false',
+            description='true = convoy mode: robot2..N trail robot1 (leader) at `follow_spacing` m '
+                        'via leader_follower.py. Use with explore:=false; drive robot1 with teleop '
+                        '(/robot1/cmd_vel) or its own Nav2 goals.'),
+        DeclareLaunchArgument(
+            'follow_spacing', default_value='1.0',
+            description='Path distance in metres between consecutive robots when follow:=true.'),
         DeclareLaunchArgument(
             'merge_scans', default_value='false',
             description='true = fuse non-SLAM robots\' scans into unknown /map cells '

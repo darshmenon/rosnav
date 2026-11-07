@@ -35,6 +35,7 @@ install(
     scripts/navigation.py
     scripts/orb_pose_to_amcl.py
     scripts/kidnap_eval.py
+    scripts/leader_follower.py
     scripts/pid_controller.py
     scripts/llm_nav.py
     scripts/bt_server.py

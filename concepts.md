@@ -2790,3 +2790,17 @@ H = F (height filter, no normals segmentation) with `Grid/RangeMax` 6, `NoiseFil
 ### Offline merge accuracy (2026-11-03)
 `map_merge_known.py` now has pure `project_grid` / `merge_grids` (same output as before, covered by `test/test_map_merge_known.py` on the real cafe map: overlap reproduces the world, a rotated + shifted robot frame is undone by its pose, OCCUPIED > FREE > UNKNOWN, bounding box + margin, empty/absurd input). `scripts/merge_accuracy_offline.py [map.yaml]` splits a saved map into two robots (20% overlap), perturbs robot B's pose and scores the merge with the `map_accuracy.py` metrics. Cafe: F1 1.00 at 0.1 m, 0.99 at 0.2 m, 0.93 at 0.4 m position error; 0.99 / 0.99 / 0.95 at 1 / 2 / 5 deg yaw error. Small overlap, so optimistic for dense overlap. Also tested without a graph: the coordinator spurious-success guard (`test_frontier_coordinator_spurious.py`) and the `/fleet/health` stall rule (`progress_stalled`).
 - Accuracy tests on the real cafe map (no sim): `test_collab_loop_closure.py` - the C-SLAM matcher recovers translation error within one 0.1 m step and yaw within one 0.02 rad step, and fails as expected outside its 0.5 m window; `test_frontier_detection_accuracy.py` - on a partly explored map every coordinator frontier is near a real free/unknown boundary with its goal on a known-free cell, every boundary cluster of 0.5 m or more is detected (recall), and a fully explored map yields none.
+
+## 43. Convoy / leader-follower swarm (2026-11-07)
+
+`scripts/leader_follower.py`, enabled by `multi_robot.launch.py follow:=true` (use `explore:=false prebuilt_localization:=static`).
+
+- **Trail in the odom frame.** The leader's breadcrumb trail is stored in its own `odom` frame (continuous) and projected into `map` only when used, so an AMCL/SLAM correction moves the whole trail consistently instead of teleporting a crumb. Earlier versions kept the trail in `map`: followers chased 5-8 m "jumps" whenever AMCL relocalized.
+- **Direct gap-regulated pursuit (`control:=direct`, default).** Pure pursuit on the trail steers each follower; speed = leader speed (feed-forward) + `kp` x gap error (feedback), limited to `accel` m/s^2. Measured in `arena_square`: gap to the leader 1.09 m mean (1.04-1.12) at a 1.06 m target, 0 leader jumps. The older Nav2 goal mode (`control:=nav2`) gave 0.9-4.4 m (stop-and-go).
+- **Speed-adaptive spacing.** gap = `spacing` + `speed_gain` x leader speed (capped at 3x), so the convoy stretches as it speeds up.
+- **Leader failover.** If the leader's `odom->base_link` stays stale for `leader_timeout` s, the first follower is promoted (seen in a real run when robot1's Nav2 bring-up failed).
+- **Formations.** `formation:=column|line|wedge|diamond|echelon|circle` (set live with `ros2 param set /leader_follower formation <name>`). Non-column modes hold leader-relative slots (`formation_slots`/`slot_world`, unit-tested) and glide at `transition_speed` m/s when switched. They drive directly (no planner), so use open floor; the collision monitor is still the safety net.
+- **Overlays** (`/convoy/markers`, `/convoy/trail`): green/yellow/red gap lines with the live distance in metres, orange slot markers; `rviz/convoy.rviz` is the matching config.
+- **`arena_square` world** (`worlds/arena_square.world`, 30x30 m closed, two off-centre markers to break scan-matching symmetry) with an exact map rendered from the geometry by `scripts/gen_arena_map.py` (`maps/map_arena_square.*`).
+- Tests: `test/test_leader_follower_trail.py` (13).
+
