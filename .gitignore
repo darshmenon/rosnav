@@ -91,3 +91,13 @@ robocloud.md
 # Raw exploration-sweep logs (keep the json/csv summaries the chart scripts read)
 sweep_logs/*.log
 sweep_logs/run_logs/
+
+# Personal working notes (todo / doing lists): never commit
+/todo.md
+/doing.md
+todo_for_blog.md
+
+# Local diagnostics and map scratch (probe logs, TF dumps, pre-long-run backups, rejected maps)
+images/diagnostics/
+src/rosnav_bot/maps/_backup_before_long/
+src/rosnav_bot/maps/_broken/

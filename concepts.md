@@ -537,6 +537,11 @@ so a `benchmark.py mode:=nav` run across all three is apples-to-apples.
   a MarkerArray display in RViz to actually watch the velocity-sample generation;
   it's wired into `slam_explore.rviz` already (disabled by default, enable when
   `controller:=mppi`).
+- **Rotation shim / Graceful** (`controller:=rotation_shim`, `controller:=graceful`;
+  `nav2_params_rotation_shim.yaml`, `nav2_params_graceful.yaml`) — shim rotates in place
+  toward the path before handing over to RPP (fixes RPP's wide arcs on sharp first turns);
+  graceful drives to a moving target pose with smooth curvature (Park & Kuipers).
+  Humble, diff-drive only; selection + plugin names unit-tested, not yet benchmarked.
 - **RPP** (`nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController`,
   `controller:=rpp`) — carrot-chasing pursuit controller: picks a lookahead point
   on the path and steers a circular arc toward it, regulating speed down on tight
@@ -2802,5 +2807,29 @@ H = F (height filter, no normals segmentation) with `Grid/RangeMax` 6, `NoiseFil
 - **Formations.** `formation:=column|line|wedge|diamond|echelon|circle` (set live with `ros2 param set /leader_follower formation <name>`). Non-column modes hold leader-relative slots (`formation_slots`/`slot_world`, unit-tested) and glide at `transition_speed` m/s when switched. They drive directly (no planner), so use open floor; the collision monitor is still the safety net.
 - **Overlays** (`/convoy/markers`, `/convoy/trail`): green/yellow/red gap lines with the live distance in metres, orange slot markers; `rviz/convoy.rviz` is the matching config.
 - **`arena_square` world** (`worlds/arena_square.world`, 30x30 m closed, two off-centre markers to break scan-matching symmetry) with an exact map rendered from the geometry by `scripts/gen_arena_map.py` (`maps/map_arena_square.*`).
-- Tests: `test/test_leader_follower_trail.py` (13).
+- **CBF safety layer (`cbf:=true`, default; `cbf_safe_dist` 0.6 m).** Every follower command (column and formation modes) passes through `cbf_filter` from `cbf_safety_filter.py` with the leader and all other followers as neighbours (finite-difference velocities), so slots can never push two robots inside the barrier distance; an infeasible QP stops the robot. Logged as `CBF robotN: v a->b` (rate-limited). Unique angle: formation slots are a soft goal, the barrier is a hard constraint. Not yet obstacle-aware (robots only); LaserScan points as extra barriers are the next step.
+- Tests: `test/test_leader_follower_trail.py` (15).
 
+
+## 44. Lidar odometry sidecars: KISS-ICP, RKO-LIO & LIO-SAM (2026-11-07)
+
+`slam_nav.launch.py lidar_type:=3d lidar_odom:=kiss_icp|rko_lio` runs a lidar(-inertial) odometry node next to the stack. It publishes `/kiss/odometry` or `/rko_lio/odom` only and never owns `odom->base_link` (RKO-LIO uses its own `rko_odom` frame), so it is safe beside Nav2/SLAM. RKO-LIO is `ros-humble-rko-lio` (apt); the sim cloud has no per-point time field, so `deskew:=false` is required (otherwise every scan is dropped).
+
+**LIO-SAM** (official ros2 branch, built outside the repo in `~/lio_ws`: `colcon build --packages-select lio_sam`) runs with `ros2 launch rosnav_bot lio_sam_sim.launch.py` (after `source ~/lio_ws/install/setup.bash`), config `config/lio_sam_sim.yaml`. Getting it to run on the sim needed four fixes, each a real bug:
+1. **Missing fields.** The gz cloud has only x,y,z; `scripts/lidar_ring_time_adapter.py` adds `ring` (from elevation) and `time` (from azimuth) and republishes `/points_lio`.
+2. **Stamp at sweep end.** gpu_lidar stamps a cloud at the END of its sweep, LIO-SAM expects the START, so it waited for IMU samples that did not exist yet. The adapter shifts the stamp by `stamp_shift_s` = -0.1.
+3. **Malformed record.** The first adapter wrote 22-byte records but declared `point_step` 20 with `time` at an unaligned offset; LIO-SAM read garbage timestamps. Now an explicit aligned 24-byte layout, locked by a unit test.
+4. **TF.** With lidar frame == base frame LIO-SAM publishes TF with an empty `frame_id`; it now uses a separate `lio_base` joined to `laser_frame` by a static transform, and its `/tf` is remapped to `/lio_tf` so the robot's `base_link` never gets a second parent. Also best-effort QoS on its odometry topic (`/lio_sam/mapping/odometry`) - the bench subscribes with sensor QoS.
+
+Benchmark (`scripts/benchmark_kiss_icp.sh cafe`, 120 s slow circle, ~11-13 m of ground-truth path, windowed SE(2) alignment to Gazebo ground truth; the script starts KISS-ICP, RKO-LIO and LIO-SAM together):
+
+| estimator | RMSE (m) | final drift (% path) | yaw RMSE (deg) |
+|---|---|---|---|
+| wheel odom | 0.44-1.11 | 14-28 | 55-74 |
+| EKF | 0.19-0.26 | 0.7-3.8 | 0.2 |
+| slam_toolbox map->base | 0.19-0.26 | 3-3.3 | 0.3-4.8 |
+| **KISS-ICP** | **0.055-0.064** (4 runs) | **0.4-0.6** | 0.7-1.9 |
+| LIO-SAM (no loop closure) | 0.082 (1 run) | 1.2 | 4.4 |
+| RKO-LIO (no deskew) | 0.107-0.155 (4 runs) | 0.7-2.3 | 1.2-1.6 |
+
+Runs differ because the machine is shared and loaded (the robot's path varies between runs); read the ranking, not the third decimal. KISS-ICP is best and most consistent; LIO-SAM is second but has the worst yaw (the IMU orientation is noisy and the cloud is only ~7 Hz under load); RKO-LIO is third without deskew. The slow flat circle does not exercise the IMU much, so a faster run with sharp turns (or a rougher world) is the fair test for the LIO methods. FAST-LIO2: `Ericsii/FAST_LIO_ROS2` needs a stub `livox_ros_driver2` message package and the same ring/time cloud; not benchmarked (the official repo could not be downloaded reliably on this network).
