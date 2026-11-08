@@ -1574,6 +1574,7 @@ Gazebo after the fix.
 | `benchmark_slam.sh` | Headless matrix over `slam_algo` values; wraps `benchmark.py` | env: `WORLD`, `DURATION_S`, `ALGOS`, `OUT_DIR` |
 | `check_odometry.py` | Debug odometry data | — |
 | `nav2_doctor.py` | Why is the robot not moving? TF freeze / dead node / flapping-goal / zero-cmd_vel diagnosis (standalone: github.com/darshmenon/nav2_doctor) | `ros2 run rosnav_bot nav2_doctor.py --ns robot1` |
+| `sync_standalone_tools.sh` | Copies `nav2_fault_inject` + `nav_explore_eval` (and tests) from `~/<repo>` into `tools/` + `test/<repo>/`. Fault injection: `python3 -m nav2_fault_inject.cli run scenario.yaml --check` with `PYTHONPATH=src/rosnav_bot/tools/nav2_fault_inject` freezes nodes and asserts nav2_doctor flags each fault (`expect:`), exit 1 on FAIL. Live-verified on the maze sim: freezing `parameter_bridge` 6 s → `SCAN_STALE` seen in 2.9 s, healthy 1.9 s after resume | `scripts/sync_standalone_tools.sh` |
 | `scan_quality_gate.py` | Find / reject malformed LaserScans before SLAM (see §12) | `mode` (`monitor`\|`gate`), `scan_in`, `scan_out`, `min_valid_ratio`, `min_valid_beams`, `max_nan_ratio` |
 | `smoke_amr_matrix.sh` | Headless smoke of all five AMRs (diff/mecanum/ackermann/mir100/husky): topics + short drive (see §17b) | env: `WORLD`, `BOOT_WAIT_S`, `DRIVE_S`, `LOG_DIR` |
 | `reset_pose.py` | Reset robot pose in simulation | `world_name`, `robot_name`, `reset_x/y/z/yaw` |

@@ -220,3 +220,10 @@ def test_goal_timeout_zero_disables_expiry():
     node = _goal_node(sent_ago=9999.0, timeout=0.0)
     node._expire_stale_goals()
     assert node._state['r1'] == fc._State.NAVIGATING
+
+
+def test_unknown_reach_not_applied_when_robot_is_on_known_free_space():
+    # robot stands on a known-free cell cut off from the blob by unknown cells: strict search
+    rows = [[0, 0, -1, -1, 0]]
+    d = _grid_node(rows, 5.0)._path_distance_map((4.5, 0.5))
+    assert not (d[0, :2] < float('inf')).any()

@@ -630,7 +630,11 @@ class FrontierCoordinator(Node):
         dist = np.full((h, w), np.inf, dtype=np.float32)
         seed = _world_to_cell(robot_pos[0], robot_pos[1], msg.info)
         reach = getattr(self, '_unknown_reach', 0.0)
-        if reach > 0.0 and 0 <= seed[0] < h and 0 <= seed[1] < w:
+        # Only when the robot is NOT standing in known free space. A robot whose own map already
+        # covers its cell (e.g. each robot's SLAM map in slam_mode:=multi) keeps the strict
+        # known-free search: carving unknown cells there picked frontiers Nav2 then could not reach.
+        in_known_free = 0 <= seed[0] < h and 0 <= seed[1] < w and bool(free[seed])
+        if reach > 0.0 and not in_known_free and 0 <= seed[0] < h and 0 <= seed[1] < w:
             # unknown cells right around the robot are passable (not occupied ones)
             rc = int(math.ceil(reach / msg.info.resolution))
             y0, y1 = max(0, seed[0] - rc), min(h, seed[0] + rc + 1)

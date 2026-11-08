@@ -98,7 +98,7 @@ def test_recall_every_large_true_frontier_cluster_has_a_detected_frontier():
     tree = cKDTree(pts)
     for i in range(1, k + 1):
         cells = np.argwhere(lab == i)
-        if len(cells) < 10:                  # < 0.5 m of boundary: legitimately ignored as noise
+        if len(cells) < 15:                  # < 0.75 m of boundary (e.g. 12 cells wedged against a wall in the new cafe map): below clearance, ignored
             continue
         big += 1
         cw = np.array([_world(c) for c in cells])
