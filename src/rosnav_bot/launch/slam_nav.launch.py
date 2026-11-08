@@ -1419,6 +1419,16 @@ def _build_runtime_actions(context, pkg_share: str):
             )
         )
 
+    # Nav2 lifecycle bringup can abort on a lost get_state reply (DDS service-discovery race) and Nav2 has
+    # no retry, leaving every server inactive. Retry RESET + STARTUP; never kill the manager (no respawn here).
+    nav2_bringup_watchdog = TimerAction(period=20.0, actions=[
+        LogInfo(msg='[slam_nav] nav2_bringup_watchdog ENABLED - retries Nav2 lifecycle bringup if it aborted '
+                    '(grace 45s, max 4 retries)'),
+        Node(package='rosnav_bot', executable='nav2_bringup_watchdog.py',
+             name='nav2_bringup_watchdog', output='screen',
+             parameters=[{'robots': [''], 'restart_manager': False, 'use_sim_time': True}]),
+    ])
+
     if use_orbslam3:
         mode = 'ORB-SLAM3+frontier' if actions else 'ORB-SLAM3'
     elif use_slam:
@@ -1481,16 +1491,6 @@ def _build_runtime_actions(context, pkg_share: str):
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('rosnav_bot')
-
-    # Nav2 lifecycle bringup can abort on a lost get_state reply (DDS service-discovery race) and Nav2 has
-    # no retry, leaving every server inactive. Retry RESET + STARTUP; never kill the manager (no respawn here).
-    nav2_bringup_watchdog = TimerAction(period=20.0, actions=[
-        LogInfo(msg='[slam_nav] nav2_bringup_watchdog ENABLED - retries Nav2 lifecycle bringup if it aborted '
-                    '(grace 45s, max 4 retries)'),
-        Node(package='rosnav_bot', executable='nav2_bringup_watchdog.py',
-             name='nav2_bringup_watchdog', output='screen',
-             parameters=[{'robots': [''], 'restart_manager': False, 'use_sim_time': True}]),
-    ])
 
     return LaunchDescription([
         DeclareLaunchArgument(
