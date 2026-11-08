@@ -113,3 +113,15 @@ def test_fully_explored_map_has_no_frontiers_and_runs_fast():
     fr = n._find_frontiers([(0.0, 0.0)])
     assert time.time() - t < 2.0
     assert len(fr) == 0
+
+
+def test_diagonal_fov_edge_is_one_frontier_not_fragments():
+    """A depth-camera wedge leaves a diagonal free/unknown edge; 4-connected clustering shattered it into
+    pieces smaller than min_frontier_size, so the explorer said 'exploration complete' at ~6% explored."""
+    grid = np.full((200, 200), -1, dtype=np.int8)
+    yy, xx = np.mgrid[0:200, 0:200]
+    grid[(yy > 40) & (yy < 160) & (xx > 40) & (xx < 160) & (xx - 40 > (yy - 40) * 0.8)] = 0   # wedge with a slanted edge
+    n = _node(grid)
+    fr = n._find_frontiers([(OX + 120 * RES, OY + 100 * RES)])
+    assert fr, 'diagonal frontier edge was fragmented below min_frontier_size'
+    assert max(f['size'] for f in fr) >= 20

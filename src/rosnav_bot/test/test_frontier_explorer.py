@@ -408,3 +408,24 @@ def test_instant_success_on_far_goal_is_still_spurious():
     obj._result_cb(_Future(succ))
     assert obj._visited == []
     assert obj._spurious_streak == 1 and obj._hold_goals_until > 0.0
+
+
+def test_map_jump_distance_and_wraparound_angle():
+    mj = frontier_explorer.map_jump
+    assert mj(None, (0, 0, 0)) == (0.0, 0.0) and mj((0, 0, 0), None) == (0.0, 0.0)
+    d, a = mj((0.0, 0.0, 0.0), (3.0, 4.0, 90.0))
+    assert abs(d - 5.0) < 1e-9 and abs(a - 90.0) < 1e-9
+    assert abs(mj((0, 0, 179.0), (0, 0, -179.0))[1] - 2.0) < 1e-9          # wraps through 180
+
+
+def test_map_frame_jumped_only_on_big_steps_and_updates_baseline():
+    ex = make_bare(_map_jump_m=1.0, _map_jump_deg=20.0, _last_map_odom=None)
+    poses = iter([(0, 0, 0), (0.2, 0, 3), (6.46, 0, 67.6), (6.5, 0, 68.0)])
+    ex._map_odom_pose = lambda: next(poses)
+    assert [ex._map_frame_jumped() for _ in range(4)] == [False, False, True, False]   # first poll sets baseline, small step ignored
+
+
+def test_map_frame_jump_can_be_disabled():
+    ex = make_bare(_map_jump_m=0.0, _map_jump_deg=0.0, _last_map_odom=None)
+    ex._map_odom_pose = lambda: (99, 99, 99)
+    assert ex._map_frame_jumped() is False

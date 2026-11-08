@@ -106,6 +106,15 @@ def _yaw_deg(q) -> float:
     return math.degrees(math.atan2(siny_cosp, cosy_cosp))
 
 
+def map_jump(prev, cur):
+    """(distance_m, angle_deg) between two map->odom poses (x, y, yaw_deg); (0, 0) if either is unknown."""
+    if prev is None or cur is None:
+        return 0.0, 0.0
+    d = math.hypot(cur[0] - prev[0], cur[1] - prev[1])
+    a = abs((cur[2] - prev[2] + 180.0) % 360.0 - 180.0)
+    return d, a
+
+
 class FrontierExplorer(Node):
     def __init__(self):
         super().__init__('frontier_explorer')
@@ -132,6 +141,11 @@ class FrontierExplorer(Node):
         self.declare_parameter('empty_frontier_max_wait', 15)
         self.declare_parameter('max_visited_relax_streak', 8)
         self.declare_parameter('goal_timeout', 60.0)
+        # A map->odom step this big (a loop closure, or ORB-SLAM3 starting a new Atlas map after tracking loss:
+        # seen as 6.5 m / 68 deg) moves the whole map frame, so the active goal now points somewhere else.
+        # Cancel it (without blacklisting) and re-plan. 0 disables.
+        self.declare_parameter('map_jump_cancel_m', 1.0)
+        self.declare_parameter('map_jump_cancel_deg', 20.0)
         self.declare_parameter('frontier_detector', 'wfd')
         self.declare_parameter('frontier_scorer', 'utility')
         self.declare_parameter('learned_model_path', '')
@@ -221,6 +235,9 @@ class FrontierExplorer(Node):
         self._max_visited_relax_streak = int(
             self.get_parameter('max_visited_relax_streak').value)
         self._goal_timeout = self.get_parameter('goal_timeout').value
+        self._map_jump_m = self.get_parameter('map_jump_cancel_m').value
+        self._map_jump_deg = self.get_parameter('map_jump_cancel_deg').value
+        self._last_map_odom = None
         self._map_topic = self.get_parameter('map_topic').value
         self._detector = self.get_parameter('frontier_detector').value.strip().lower()
         self._scorer = self.get_parameter('frontier_scorer').value.strip().lower()
@@ -437,6 +454,19 @@ class FrontierExplorer(Node):
             self._save_proc = None
         if not self._navigating and time.monotonic() < self._hold_goals_until:
             return
+        jumped = self._map_frame_jumped()
+        if self._navigating and jumped:
+            self.get_logger().warn(
+                'map->odom jumped (loop closure / new SLAM map): the active goal is in the old frame — '
+                'cancelling it without blacklisting and re-planning.')
+            if self._current_goal_handle is not None:
+                self._current_goal_handle.cancel_goal_async()
+                self._ignore_next_result = True
+            self._navigating = False
+            self._current_goal_handle = None
+            self._current_frontier_meta = None
+            return
+
         if self._navigating:
             elapsed = time.monotonic() - self._goal_sent_time
             timed_out = elapsed > self._goal_timeout
@@ -699,7 +729,10 @@ class FrontierExplorer(Node):
             while queue:
                 y, x = queue.popleft()
                 cluster.append((y, x))
-                for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+                # 8-connected: a diagonal sensor-FOV edge only touches at cell corners; with 4-connectivity it
+                # shatters into fragments below min_frontier_size and the explorer reports "no frontiers".
+                for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1),
+                               (y - 1, x - 1), (y - 1, x + 1), (y + 1, x - 1), (y + 1, x + 1)):
                     if ny < 0 or ny >= height or nx < 0 or nx >= width:
                         continue
                     if visited[ny, nx] or not mask[ny, nx]:
@@ -1379,6 +1412,24 @@ class FrontierExplorer(Node):
             self.get_logger().debug(
                 f'Waiting for TF {self._goal_frame} -> {self._base_frame}')
             return None
+
+    def _map_odom_pose(self):
+        try:
+            tf = self._tf_buffer.lookup_transform(self._goal_frame, 'odom', rclpy.time.Time())
+        except Exception:
+            return None
+        tr = tf.transform.translation
+        return (tr.x, tr.y, _yaw_deg(tf.transform.rotation))
+
+    def _map_frame_jumped(self) -> bool:
+        """True once when map->odom steps by more than the configured distance/angle since the last poll."""
+        if not self._map_jump_m and not self._map_jump_deg:
+            return False
+        cur = self._map_odom_pose()
+        d, a = map_jump(self._last_map_odom, cur)
+        if cur is not None:
+            self._last_map_odom = cur
+        return bool((self._map_jump_m and d >= self._map_jump_m) or (self._map_jump_deg and a >= self._map_jump_deg))
 
     def _localization_summary(self) -> str:
         parts = []

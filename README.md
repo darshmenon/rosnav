@@ -14,12 +14,12 @@
 **Nav2 + SLAM in Gazebo — single command**
 
 ```bash
-ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
+ros2 launch rosnav_bot slam_nav.launch.py world_name:=cafe explore:=true
 ```
 
-![3D lidar, camera, costmap, and Gaussian Splat overlay in RViz](images/gs_overview_3d_lidar.png)
+![Camera, costmap and Gaussian Splat overlay in RViz (cafe)](images/gs_overview_3d_lidar.png)
 
-<p><sub>3D lidar point cloud · camera · costmap · Gaussian Splat semantic markers — all in one RViz config (<code>rviz/gs_overview.rviz</code>)</sub></p>
+<p><sub>Camera · costmap · Gaussian Splat points · robot model — one RViz config (<code>rviz/gs_overview.rviz</code>; the 3D lidar layer is off in this shot)</sub></p>
 
 </div>
 
@@ -66,7 +66,7 @@ Deep dive → [`concepts.md`](concepts.md) · launch args → `ros2 launch rosna
 
 ## Standalone tools
 
-Spun out of this repo, each works on any Nav2 stack: [nav2_doctor](https://github.com/darshmenon/nav2_doctor) (why isn't my robot moving?) · [nav_explore_eval](https://github.com/darshmenon/nav_explore_eval) (score an exploration run) · [nav2_fault_inject](https://github.com/darshmenon/nav2_fault_inject) (freeze nodes to test recovery, `--check` asserts the doctor notices). Vendored copies + tests live in `src/rosnav_bot/tools/`.
+Spun out of this repo, each works on any Nav2 stack: [nav2_doctor](https://github.com/darshmenon/nav2_doctor) (why isn't my robot moving?) · [nav_explore_eval](https://github.com/darshmenon/nav_explore_eval) (score an exploration run) · [nav2_fault_inject](https://github.com/darshmenon/nav2_fault_inject) (freeze nodes to test recovery, `--check` asserts the doctor notices) · slam_doctor (is my SLAM healthy? loop closures, tracking loss, map stalls). Vendored copies + tests live in `src/rosnav_bot/tools/`.
 
 ---
 

@@ -877,7 +877,9 @@ class FrontierCoordinator(Node):
             while queue:
                 y, x = queue.popleft()
                 cluster.append((y, x))
-                for ny, nx in ((y-1,x),(y+1,x),(y,x-1),(y,x+1)):
+                # 8-connected: a diagonal sensor-FOV edge is a staircase of cells that touch only at corners;
+                # 4-connectivity shatters it into fragments below min_frontier_size (=> 'no frontiers').
+                for ny, nx in ((y-1,x),(y+1,x),(y,x-1),(y,x+1),(y-1,x-1),(y-1,x+1),(y+1,x-1),(y+1,x+1)):
                     if 0 <= ny < h and 0 <= nx < w and not seen[ny, nx] and mask[ny, nx]:
                         seen[ny, nx] = True
                         queue.append((ny, nx))
