@@ -7,7 +7,7 @@ import argparse
 import time
 from dataclasses import dataclass
 
-__version__ = '0.2.0'
+__version__ = '0.2.1'
 
 NAV2_NODES = ['controller_server', 'planner_server', 'bt_navigator',
               'behavior_server', 'smoother_server', 'waypoint_follower']
@@ -107,7 +107,7 @@ class Doctor:
 
         if len(self.goal_times) >= FLAP_COUNT:
             f.append(Finding('WARN', 'GOAL_FLAPPING',
-                             f'{len(self.goal_times)} new goals in {FLAP_WINDOW_S:.0f}s - explorer/goal source is oscillating (add hysteresis)'))
+                             f'{len(self.goal_times)} goals cancelled/aborted in {FLAP_WINDOW_S:.0f}s - explorer/goal source is oscillating (add hysteresis)'))
 
         if self.goal_active:
             a = self._age('cmd_vel', now)
@@ -166,17 +166,19 @@ def main(argv=None):
     node.create_subscription(Twist, f'{ns}/cmd_vel',
                              lambda m: d.cmd(m.linear.x, m.angular.z, clock()), sd)
 
-    known = set()
+    seen_active, counted = set(), set()
 
     def on_status(m):
+        # Flapping = goals CANCELED/ABORTED before finishing; a new goal after SUCCEEDED is normal exploring.
         active = False
         for s in m.status_list:
             gid = bytes(s.goal_info.goal_id.uuid).hex()
-            if gid not in known:
-                known.add(gid)
-                d.goal(clock())
-            if s.status in (1, 2):   # ACCEPTED / EXECUTING
+            if s.status in (1, 2):                       # ACCEPTED / EXECUTING
+                seen_active.add(gid)
                 active = True
+            elif s.status in (5, 6) and gid in seen_active and gid not in counted:   # CANCELED / ABORTED
+                counted.add(gid)
+                d.goal(clock())
         d.goal_active = active
     node.create_subscription(GoalStatusArray, f'{ns}/navigate_to_pose/_action/status', on_status, rel)
 
