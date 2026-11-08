@@ -1573,6 +1573,7 @@ Gazebo after the fix.
 | `benchmark.py` | SLAM coverage / Nav2 goal / AMCL covariance benchmarks + offline `mode:=report` | `mode`, `label`, `duration_sec`, `out_dir`, `goals_file`, `inputs` |
 | `benchmark_slam.sh` | Headless matrix over `slam_algo` values; wraps `benchmark.py` | env: `WORLD`, `DURATION_S`, `ALGOS`, `OUT_DIR` |
 | `check_odometry.py` | Debug odometry data | — |
+| `nav2_doctor.py` | Why is the robot not moving? TF freeze / dead node / flapping-goal / zero-cmd_vel diagnosis (standalone: github.com/darshmenon/nav2_doctor) | `ros2 run rosnav_bot nav2_doctor.py --ns robot1` |
 | `scan_quality_gate.py` | Find / reject malformed LaserScans before SLAM (see §12) | `mode` (`monitor`\|`gate`), `scan_in`, `scan_out`, `min_valid_ratio`, `min_valid_beams`, `max_nan_ratio` |
 | `smoke_amr_matrix.sh` | Headless smoke of all five AMRs (diff/mecanum/ackermann/mir100/husky): topics + short drive (see §17b) | env: `WORLD`, `BOOT_WAIT_S`, `DRIVE_S`, `LOG_DIR` |
 | `reset_pose.py` | Reset robot pose in simulation | `world_name`, `robot_name`, `reset_x/y/z/yaw` |
