@@ -1458,6 +1458,7 @@ def _build_runtime_actions(context, pkg_share: str):
         cslam_group,
         lidar_odom_group,
         nav2,
+        nav2_bringup_watchdog,
         gs_keepout_group,
         gs_binary_group,
         gs_speed_group,
@@ -1480,6 +1481,16 @@ def _build_runtime_actions(context, pkg_share: str):
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('rosnav_bot')
+
+    # Nav2 lifecycle bringup can abort on a lost get_state reply (DDS service-discovery race) and Nav2 has
+    # no retry, leaving every server inactive. Retry RESET + STARTUP; never kill the manager (no respawn here).
+    nav2_bringup_watchdog = TimerAction(period=20.0, actions=[
+        LogInfo(msg='[slam_nav] nav2_bringup_watchdog ENABLED - retries Nav2 lifecycle bringup if it aborted '
+                    '(grace 45s, max 4 retries)'),
+        Node(package='rosnav_bot', executable='nav2_bringup_watchdog.py',
+             name='nav2_bringup_watchdog', output='screen',
+             parameters=[{'robots': [''], 'restart_manager': False, 'use_sim_time': True}]),
+    ])
 
     return LaunchDescription([
         DeclareLaunchArgument(

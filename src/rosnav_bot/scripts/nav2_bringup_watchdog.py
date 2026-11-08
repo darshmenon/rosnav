@@ -14,7 +14,8 @@ appear is reported as a warning every `period_s * 3` instead of being skipped si
 
 Parameters: robots (list), grace_s (default 45), period_s (default 10), max_retries (default 4),
 call_timeout_s (default 20), restart_after (default 2: consecutive unanswered calls before the
-manager process is restarted).
+manager process is restarted), restart_manager (default true; false when the launch does not
+respawn the manager, e.g. single-robot slam_nav.launch.py).
 
 A manager that hung waiting for a lost lifecycle reply never answers again, so after
 `restart_after` unanswered calls the watchdog SIGTERMs that one process; the launch respawns it
@@ -45,6 +46,8 @@ class Nav2BringupWatchdog(Node):
         self._call_timeout = float(self.get_parameter('call_timeout_s').value)
         self.declare_parameter('restart_after', 2)
         self._restart_after = int(self.get_parameter('restart_after').value)
+        self.declare_parameter('restart_manager', True)
+        self._restart_ok = bool(self.get_parameter('restart_manager').value)
         self._no_reply = {}
         self._termed = set()          # pids already sent SIGTERM: a repeat gets SIGKILL
         self._robots = list(self.get_parameter('robots').value)
@@ -57,13 +60,18 @@ class Nav2BringupWatchdog(Node):
         self._busy = {r: False for r in self._robots}
         self._busy_since = {r: 0.0 for r in self._robots}
         self._unready_warned = {r: 0.0 for r in self._robots}
-        self._is_active = {r: self.create_client(Trigger, f'/{r}/lifecycle_manager_navigation/is_active')
+        # robots may contain '' for a single un-namespaced robot (slam_nav.launch.py)
+        self._is_active = {r: self.create_client(Trigger, f'{self._ns(r)}/lifecycle_manager_navigation/is_active')
                            for r in self._robots}
-        self._manage = {r: self.create_client(ManageLifecycleNodes, f'/{r}/lifecycle_manager_navigation/manage_nodes')
+        self._manage = {r: self.create_client(ManageLifecycleNodes, f'{self._ns(r)}/lifecycle_manager_navigation/manage_nodes')
                         for r in self._robots}
         self.create_timer(float(self.get_parameter('period_s').value), self._tick)
         self.get_logger().info(f'Nav2 bringup watchdog for {self._robots} (grace {self._grace:.0f}s, '
                                f'max {self._max} retries)')
+
+    @staticmethod
+    def _ns(r):
+        return f'/{r}' if r else ''
 
     def _tick(self):
         up = (self.get_clock().now() - self._t0).nanoseconds / 1e9
@@ -127,7 +135,10 @@ class Nav2BringupWatchdog(Node):
             try:
                 with open(f'/proc/{d}/cmdline', 'rb') as f:
                     args = f.read().decode(errors='replace').split('\0')
-                if f'__node:=lifecycle_manager_navigation' not in args or f'__ns:=/{r}' not in args:
+                if '__node:=lifecycle_manager_navigation' not in args:
+                    continue
+                ns_args = [a for a in args if a.startswith('__ns:=')]
+                if (f'__ns:=/{r}' not in args) if r else (ns_args and ns_args != ['__ns:=/']):
                     continue
                 with open(f'/proc/{d}/environ', 'rb') as f:
                     env = dict(kv.split('=', 1) for kv in f.read().decode(errors='replace').split('\0')
@@ -139,6 +150,11 @@ class Nav2BringupWatchdog(Node):
         return pids
 
     def _restart_manager(self, r, quiet=False):
+        if not self._restart_ok:     # launch does not respawn this manager: killing it would leave none
+            if not quiet:
+                self.get_logger().warn(f'[{r}] manager unresponsive; restart_manager:=false so only '
+                                       f'RESET + STARTUP retries are used')
+            return
         pids = self._manager_pids(r)
         if not pids:
             if not quiet:

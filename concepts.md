@@ -2790,6 +2790,7 @@ H = F (height filter, no normals segmentation) with `Grid/RangeMax` 6, `NoiseFil
 
 ### nav2_bringup_watchdog and rosnav_doctor (2026-11-03)
 - `scripts/nav2_bringup_watchdog.py` (always launched by `multi_robot.launch.py`, 20 s in): under load a Nav2 lifecycle manager can abort bringup (`get_state ... async_send_request failed`) and that robot then rejects every goal. The watchdog polls `/<robot>/lifecycle_manager_navigation/is_active` and, after a 45 s grace, calls `manage_nodes` RESET then STARTUP (max 4 retries). In a 4-robot prebuilt-map run it reported all four robots active.
+- 2026-11-08: single-robot `slam_nav.launch.py` now starts the same watchdog at t=20 s (`robots: ['']` = no namespace, `restart_manager: false` because that launch does not respawn the manager). Before this, a headless maze run lost Nav2 to `planner_server/get_state ... (timeout)` and stayed inactive forever; running the patched watchdog on that stuck sim brought all Nav2 servers active and the explorer started sending goals.
 - `scripts/rosnav_doctor.py` (`ros2 run rosnav_bot rosnav_doctor.py [--robots a,b] [--sample 5] [--json]`): per-robot `map->odom` / `odom->base_link` age, Nav2 active, odom and scan Hz, `/map` growth, then a named likely cause. Diagnosis is the pure function `diagnose()` (7 unit tests). Exit 0/1/2 = OK/WARN/ERROR.
 - Caveat: with the shared machine at load 90+ the fleet tests are not reliable (aborts, fake successes, ~half-speed sim); retest on a quiet machine.
 
@@ -2834,3 +2835,21 @@ Benchmark (`scripts/benchmark_kiss_icp.sh cafe`, 120 s slow circle, ~11-13 m of 
 | RKO-LIO (no deskew) | 0.107-0.155 (4 runs) | 0.7-2.3 | 1.2-1.6 |
 
 Runs differ because the machine is shared and loaded (the robot's path varies between runs); read the ranking, not the third decimal. KISS-ICP is best and most consistent; LIO-SAM is second but has the worst yaw (the IMU orientation is noisy and the cloud is only ~7 Hz under load); RKO-LIO is third without deskew. The slow flat circle does not exercise the IMU much, so a faster run with sharp turns (or a rougher world) is the fair test for the LIO methods. FAST-LIO2: `Ericsii/FAST_LIO_ROS2` needs a stub `livox_ros_driver2` message package and the same ring/time cloud; not benchmarked (the official repo could not be downloaded reliably on this network).
+
+## 45. Distorted SLAM map: cause and fix (written 2026-11-08 from history)
+
+Reconstructed from `EXPLORATION_TESTING_NOTES.md` and commits `cfd6b49`, `7cd34d8`, `63abfac`; the drift mechanism was never fully root-caused, so treat the cause as the best-supported hypothesis.
+
+**Symptom (warehouse, 2026-08-25):** the `map->odom` yaw offset kept growing (146 -> 166 deg in ~15 s) instead of settling. The saved map had long diagonal streaks and warped shelf rows. Nav2 then failed to plan to any frontier and `backup`/`spin` aborted with `Pose Goes Off Grid`, because the costmap no longer matched the real `/scan`.
+
+**Cause (hypothesis):** yaw drift from wheel slip during failed recoveries. Bad poses fed `slam_toolbox` scan matching, which wrote plausible-but-wrong cells and poisoned later matches. No IMU was simulated in the worlds, so nothing corrected the yaw.
+
+**Fixes, in order:**
+1. Gazebo IMU system plugin added to every world (`7cd34d8`); `mapper_params_online_async.yaml` retuned; `robot_localization` EKF fuses wheel odom + IMU gyro.
+2. Fewer recovery retries (outer `RecoveryNode` 8->4, default BT 6->3) and `explore_nav_stable.xml` (no full spin), so a bad goal fails and is blacklisted before recovery motion corrupts odometry.
+3. `mapper_params_online_async_warehouse_stable.yaml`: 7 m scan range, stronger local/loop match responses, narrower loop-search windows, fewer near-duplicate scans. Use it via `slam_params_file:=...`.
+4. ORB-SLAM3 bridge rebuilds its grid on drift (`63abfac`).
+
+**How to detect it:** `map->odom` yaw ramping by more than ~100 deg, or a saved PGM with diagonal streaks. Candidate first check for `nav2_doctor`.
+
+**If it returns:** compare `slam_toolbox_mode:=online_sync` and a `do_loop_closing:false` profile; call the `slam_toolbox` map-reset service when recoveries repeatedly fail.
