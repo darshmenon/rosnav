@@ -449,7 +449,13 @@ class FrontierCoordinator(Node):
             if self._recently_failed(fx, fy):
                 n_failed += 1
                 continue
-            if frontier.get('suspicious_ratio', 0.0) >= self._suspect_hard_ratio:
+            # Cold start: before any goal has been assigned or finished the known-free bubble is
+            # tiny and every frontier looks "large vs clearance" - don't hard-reject then (the
+            # soft penalty in the scorer still applies), or the fleet never leaves the spawn.
+            cold = (getattr(self, '_succeeded_goals', 1) + getattr(self, '_failed_goals', 1) == 0
+                    and not any(g is not None for g in getattr(self, '_assigned', {1: 1}).values()))
+            if (not cold
+                    and frontier.get('suspicious_ratio', 0.0) >= self._suspect_hard_ratio):
                 n_suspicious += 1
                 continue
             if (not allow_tiny and getattr(self, '_min_gain', 0.0) > 0.0

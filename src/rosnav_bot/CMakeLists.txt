@@ -44,6 +44,7 @@ install(
     scripts/frontier_explorer.py
     scripts/check_odometry.py
     scripts/nav2_doctor.py
+    scripts/map_timelapse.py
     scripts/reset_pose.py
     scripts/visual_amcl_fusion.py
     scripts/summarize_vslam_variants.py

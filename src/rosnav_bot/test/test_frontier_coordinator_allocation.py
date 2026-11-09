@@ -227,3 +227,37 @@ def test_unknown_reach_not_applied_when_robot_is_on_known_free_space():
     rows = [[0, 0, -1, -1, 0]]
     d = _grid_node(rows, 5.0)._path_distance_map((4.5, 0.5))
     assert not (d[0, :2] < float('inf')).any()
+
+
+# ----------------------------------------------------------------------
+# Cold start: a suspicious-only frontier must still be pickable before any goal exists
+# ----------------------------------------------------------------------
+def _cold_node(assigned=None, done=0):
+    obj = fc.FrontierCoordinator.__new__(fc.FrontierCoordinator)
+    obj._assigned = assigned or {'r1': None, 'r2': None}
+    obj._succeeded_goals, obj._failed_goals = done, 0
+    obj._visited, obj._revisit_r, obj._assign_r = [], 0.3, 1.0
+    obj._suspect_hard_ratio, obj._suspect_ratio, obj._suspect_penalty = 6.0, 3.0, 8.0
+    obj._min_gain = 0.0
+    obj._path_distance_map = lambda pos: None
+    obj._frontier_path_distance = lambda fr, pd: 2.0
+    obj._costmap_allows = lambda x, y, ns: True
+    obj._recently_failed = lambda x, y: False
+    obj._min_goal_for = lambda ns: 0.2
+    obj._score_frontier = lambda fr, d, ns: 1.0
+    return obj
+
+
+_SUSPECT = {'point': (1.0, 1.0), 'suspicious_ratio': 12.0, 'size_m': 5.0, 'info_gain': 1.0}
+
+
+def test_cold_start_picks_suspicious_frontier():
+    goal, pick = _cold_node()._pick([dict(_SUSPECT)], (0.0, 0.0), 'r1')
+    assert goal == (1.0, 1.0) and pick['n_suspicious'] == 0
+
+
+def test_after_first_goal_suspicious_frontier_rejected():
+    goal, pick = _cold_node(done=1)._pick([dict(_SUSPECT)], (0.0, 0.0), 'r1')
+    assert goal is None and pick['n_suspicious'] == 1
+    goal, pick = _cold_node(assigned={'r1': None, 'r2': (3.0, 3.0)})._pick([dict(_SUSPECT)], (0.0, 0.0), 'r1')
+    assert goal is None and pick['n_suspicious'] == 1
