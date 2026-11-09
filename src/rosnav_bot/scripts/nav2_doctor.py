@@ -19,7 +19,11 @@ FLAP_COUNT = 4         # goals cancelled/aborted inside the window => flapping
 PROGRESS_S = 15.0      # goal active this long with no movement => NO_PROGRESS
 AMCL_COV_MAX = 0.5     # AMCL x/y covariance (m^2) above which localisation is uncertain
 PROGRESS_M = 0.1       # minimum displacement (m) that counts as movement
-DRIVE_S = 5.0          # cmd_vel non-zero this long with no odom movement => CMD_NO_MOTION
+MAP_WIN_S = 60.0       # window for MAP_STALL
+MAP_ACTIVE_S = 10.0    # seconds of non-zero cmd_vel in the window before an unchanged map is suspicious
+SCAN_LEAD_S = 0.5      # scan stamps this far ahead of the newest odom TF => SCAN_TF_AHEAD
+IDLE_S = 45.0          # stack up this long, no goal ever seen and robot never commanded => IDLE_NO_GOALS
+DRIVE_S = 5.0         # cmd_vel non-zero this long with no odom movement => CMD_NO_MOTION
 SKEW_S = 1.0           # TF stamp vs wall clock difference that counts as clock skew
 
 
@@ -42,7 +46,10 @@ HINTS = {
     'NO_PROGRESS': 'check progress_checker params and for an obstacle; see recovery behaviours in the BT log',
     'AMCL_UNCERTAIN': 'publish /initialpose in RViz, check the map matches the world, and that /scan is reaching AMCL',
     'NO_CMD_SUBSCRIBER': 'remap: `ros2 topic info /cmd_vel -v`; match the driver topic (cmd_vel_smoothed, velocity_smoother)',
-    'CMD_NO_MOTION': 'check e-stop, motor enable and that the driver converts cmd_vel; `ros2 topic echo /odom`',
+    'MAP_STALL': 'SLAM gets no usable scans: check scan->odom TF errors ("extrapolation"), the scan topic/frame and that SLAM subscribes to the right /scan',
+    'SCAN_TF_AHEAD': 'TF is lagging the laser (slow sim / overloaded TF publisher): consumers doing lookup at the scan stamp fail with "extrapolation into the future" - slow the sim down, fix the TF source rate, or let consumers fall back to the latest transform',
+    'IDLE_NO_GOALS': 'the goal source (explorer / mission node) may have quit early - check its log for "exploration complete" or filtered frontiers',
+    'CMD_NO_MOTION':'check e-stop, motor enable and that the driver converts cmd_vel; `ros2 topic echo /odom`',
     'CLOCK_SKEW': 'sync clocks (chrony) or set use_sim_time consistently on every node',
     'INFLATION_SMALL': 'raise inflation_layer.inflation_radius above robot_radius (or footprint circumradius)',
     'RECOVERY_LOOP': 'find what keeps failing planning/control: read planner/controller logs, check costmap for phantom obstacles, loosen goal tolerance',
@@ -106,6 +113,11 @@ class Doctor:
         self.skew = None            # worst recent |TF stamp - clock| in seconds
         self.recoveries = []        # times a recovery behaviour started
         self.params = {}            # costmap params: inflation_radius, robot_radius
+        self.map_hist = []          # (time, free_cells) per /map message
+        self.cmd_secs = set()       # whole seconds in which cmd_vel was non-zero
+        self.scan_stamp = None      # newest scan header stamp (s)
+        self.tf_stamp = None        # newest odom->base TF header stamp (s)
+        self.ever_goal = False      # a goal was ever active/cancelled/aborted
         self.amcl_cov = None        # worst of AMCL x/y variance (m^2) from /amcl_pose
 
     # ---- inputs -------------------------------------------------------
@@ -126,11 +138,23 @@ class Doctor:
     def cmd(self, linear, angular, now):
         self.seen('cmd_vel', now)
         if abs(linear) > 1e-3 or abs(angular) > 1e-3:
+            self.cmd_secs.add(int(now))
             self.last_cmd_nonzero = now
             if self.cmd_since is None:
                 self.cmd_since = now
         else:
             self.cmd_since = None
+
+    def stamps(self, scan=None, tf=None):
+        if scan is not None:
+            self.scan_stamp = scan
+        if tf is not None:
+            self.tf_stamp = tf
+
+    def map_msg(self, free_cells, now):
+        self.seen('map', now)
+        self.map_hist.append((now, free_cells))
+        self.map_hist = [m for m in self.map_hist if now - m[0] <= MAP_WIN_S * 2]
 
     def recovery(self, node_name, now):
         if any(w in node_name.lower() for w in RECOVERY_WORDS):
@@ -138,6 +162,7 @@ class Doctor:
             self.recoveries = [t for t in self.recoveries if now - t <= RECOVERY_WINDOW_S]
 
     def goal(self, now):
+        self.ever_goal = True
         self.goal_times.append(now)
         self.goal_times = [t for t in self.goal_times if now - t <= self.flap_window_s]
 
@@ -148,6 +173,8 @@ class Doctor:
         self.poses = [p for p in self.poses if now - p[0] <= keep]
 
     def set_goal_active(self, active, now):
+        if active:
+            self.ever_goal = True
         if active and not self.goal_active:
             self.goal_since = now
         elif not active:
@@ -245,6 +272,27 @@ class Doctor:
                     f.append(Finding('ERROR', 'CMD_NO_MOTION',
                                      f'cmd_vel non-zero for {now - self.cmd_since:.0f}s but odom moved {moved:.2f}m - '
                                      'chassis/driver not obeying, e-stop, or odom frozen'))
+
+        if (not self.ever_goal and self.last_cmd_nonzero is None and age_tf is not None
+                and age_tf <= self.stale_s and self.started is not None
+                and now - self.started >= max(IDLE_S, self.startup_s)):
+            f.append(Finding('WARN', 'IDLE_NO_GOALS',
+                             f'stack alive for {now - self.started:.0f}s but no goal was ever sent and the robot '
+                             'was never commanded to move - goal source may have quit early'))
+
+        if self.scan_stamp is not None and self.tf_stamp is not None \
+                and self.scan_stamp - self.tf_stamp > SCAN_LEAD_S:
+            f.append(Finding('WARN', 'SCAN_TF_AHEAD',
+                             f'scan stamps are {self.scan_stamp - self.tf_stamp:.1f}s ahead of the newest odom TF - '
+                             'transform lookups at the scan time will fail (extrapolation into the future)'))
+
+        win = [m for m in self.map_hist if now - m[0] <= MAP_WIN_S]
+        active = len([t for t in self.cmd_secs if now - t <= MAP_WIN_S])
+        if (len(win) >= 2 and win[-1][0] - win[0][0] >= MAP_WIN_S * 0.75 and active >= MAP_ACTIVE_S
+                and win[-1][1] - win[0][1] < max(20, 0.002 * max(win[-1][1], 1))):
+            f.append(Finding('WARN', 'MAP_STALL',
+                             f'cmd_vel active {active}s of the last {MAP_WIN_S:.0f}s but /map free cells '
+                             f'went {win[0][1]} -> {win[-1][1]} - SLAM is not integrating scans'))
 
         if self.skew is not None and self.skew > SKEW_S:
             f.append(Finding('WARN', 'CLOCK_SKEW',
@@ -349,13 +397,20 @@ def main(argv=None):
             if st.sec or st.nanosec:   # zero stamp = unstamped, nothing to compare
                 skew = node.get_clock().now().nanoseconds / 1e9 - (st.sec + st.nanosec / 1e9)
             d.tf(t.header.frame_id, t.child_frame_id, clock(), skew)
+            if t.child_frame_id.lstrip('/').endswith('base_link') and t.header.frame_id.lstrip('/').endswith('odom') \
+                    and (st.sec or st.nanosec):
+                d.stamps(tf=st.sec + st.nanosec / 1e9)
     node.create_subscription(TFMessage, f'{ns}/tf', on_tf, rel)
     node.create_subscription(Odometry, f'{ns}/odom', lambda m: d.pose(m.pose.pose.position.x, m.pose.pose.position.y, clock()), sd)
     node.create_subscription(PoseWithCovarianceStamped, f'{ns}/amcl_pose',
                              lambda m: d.amcl(m.pose.covariance[0], m.pose.covariance[7], clock()), rel)
-    node.create_subscription(LaserScan, f'{ns}/scan', lambda m: d.seen('scan', clock()), sd)
+    node.create_subscription(LaserScan, f'{ns}/scan', lambda m: (d.seen('scan', clock()), d.stamps(scan=m.header.stamp.sec + m.header.stamp.nanosec / 1e9)), sd)
     node.create_subscription(OccupancyGrid, f'{ns}/local_costmap/costmap',
                              lambda m: d.seen('local_costmap', clock()), rel)
+    from rclpy.qos import DurabilityPolicy
+    mapq = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+    node.create_subscription(OccupancyGrid, f'{ns}/map',
+                             lambda m: d.map_msg(sum(1 for v in m.data if v == 0), clock()), mapq)
     node.create_subscription(Twist, f'{ns}/cmd_vel',
                              lambda m: d.cmd(m.linear.x, m.angular.z, clock()), sd)
 

@@ -354,6 +354,7 @@ class FrontierExplorer(Node):
         self._spurious_streak = 0
         self._hold_goals_until = 0.0
         self._last_cold_spin = 0.0
+        self._cold_wait_start = None
         self._cold_spin_proc = None
         self._visited_relax_streak = 0
         self._failed_frontiers: list[dict] = []
@@ -546,6 +547,22 @@ class FrontierExplorer(Node):
                 f'failed={pick.get("n_failed", 0)} '
                 f'suspicious={pick.get("n_suspicious", 0)} '
                 f'unreachable={pick.get("n_unreachable", 0)} scorer={self._scorer}')
+            if self._iteration == 0:
+                # Nothing sent yet: every candidate being filtered (suspicious,
+                # cramped, cold-start bubble) is a startup artifact, not
+                # completion. Spin to grow the map and retry for a while.
+                now = time.monotonic()
+                if self._cold_wait_start is None:
+                    self._cold_wait_start = now
+                if now - self._cold_wait_start < 90.0:
+                    self._cold_start_spin(pos)
+                    if now - self._last_status_log >= 10.0:
+                        self.get_logger().warn(
+                            f'No usable frontier before first goal ({reason}) — '
+                            f'treating as cold start, spinning and waiting '
+                            f'({now - self._cold_wait_start:.0f}/90s).')
+                        self._last_status_log = now
+                    return
             if not self._confirm_empty(reason):
                 return
             self.get_logger().info(f'No usable frontier ({reason}) — exploration complete.')
@@ -1122,7 +1139,11 @@ class FrontierExplorer(Node):
             if self._recently_failed(fx, fy):
                 n_failed += 1
                 continue
-            if frontier.get('suspicious_ratio', 0.0) >= self._suspect_hard_ratio:
+            # Before the first goal the known-free bubble is tiny, so every
+            # frontier looks "large vs. clearance". Don't hard-reject then —
+            # the soft penalty in the scorer still applies.
+            if (getattr(self, '_iteration', 1) > 0
+                    and frontier.get('suspicious_ratio', 0.0) >= self._suspect_hard_ratio):
                 n_suspicious += 1
                 continue
             d = self._frontier_path_distance(frontier, path_distances)

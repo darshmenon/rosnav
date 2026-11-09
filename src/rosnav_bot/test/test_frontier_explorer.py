@@ -429,3 +429,37 @@ def test_map_frame_jump_can_be_disabled():
     ex = make_bare(_map_jump_m=0.0, _map_jump_deg=0.0, _last_map_odom=None)
     ex._map_odom_pose = lambda: (99, 99, 99)
     assert ex._map_frame_jumped() is False
+
+
+# ----------------------------------------------------------------------
+# Cold start: all candidates filtered before the first goal != "complete"
+# ----------------------------------------------------------------------
+def _cold_explorer():
+    pick = {'n_total': 1, 'n_visited': 0, 'n_costmap': 0, 'n_near': 0,
+            'n_failed': 0, 'n_suspicious': 1, 'n_unreachable': 0}
+    spins, finished = [], []
+    e = make_bare(
+        _save_proc=None, _navigating=False, _hold_goals_until=0.0, _map=object(),
+        _iteration=0, _cold_wait_start=None, _last_status_log=0.0, _scorer='utility',
+        _empty_streak=0, _max_empty_wait=3, _last_map_update=1.0, _last_goal_done=0.0)
+    e._map_frame_jumped = lambda: False
+    e._robot_position = lambda: (0.0, 0.0)
+    e._find_frontiers = lambda pos: [{'point': (1.0, 1.0)}]
+    e._best_frontier = lambda fr, pos: (None, pick)
+    e._cold_start_spin = lambda pos: spins.append(pos)
+    e._finish_exploration = lambda: finished.append(True)
+    return e, spins, finished
+
+
+def test_cold_start_all_filtered_waits_instead_of_finishing():
+    e, spins, finished = _cold_explorer()
+    e._explore()
+    assert finished == [] and len(spins) == 1
+
+
+def test_cold_start_gives_up_after_wait_window():
+    e, spins, finished = _cold_explorer()
+    e._explore()
+    e._cold_wait_start -= 100.0
+    e._explore()
+    assert finished == [True]
