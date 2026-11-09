@@ -17,11 +17,12 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends \
             python3-pip python3-pytest python3-numpy python3-yaml python3-scipy python3-pil \
+            python3-matplotlib python3-opencv python3-rich python3-imageio \
             ros-humble-ament-cmake-pytest ros-humble-rosidl-default-generators \
             ros-humble-rosidl-default-runtime ros-humble-action-msgs \
             ros-humble-nav2-msgs ros-humble-nav-msgs ros-humble-geometry-msgs \
             ros-humble-tf2-ros ros-humble-rclpy
-          pip3 install gymnasium
+          pip3 install gymnasium "numpy<2"
 
       - name: Build rosnav_bot
         shell: bash
@@ -29,10 +30,14 @@ jobs:
           source /opt/ros/humble/setup.bash
           colcon build --packages-select rosnav_bot --event-handlers console_direct+
 
-      - name: Run tests
+      - name: Run registered colcon tests
         shell: bash
         run: |
           source /opt/ros/humble/setup.bash
           colcon test --packages-select rosnav_bot \
             --ctest-args -R "test_frontier" --event-handlers console_direct+
           colcon test-result --verbose
+
+      - name: Run full unit-test suite (same command contributors run locally)
+        shell: bash
+        run: src/rosnav_bot/scripts/run_tests.sh

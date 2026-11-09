@@ -2858,3 +2858,7 @@ Reconstructed from `EXPLORATION_TESTING_NOTES.md` and commits `cfd6b49`, `7cd34d
 **How to detect it:** `map->odom` yaw ramping by more than ~100 deg, or a saved PGM with diagonal streaks. Candidate first check for `nav2_doctor`.
 
 **If it returns:** compare `slam_toolbox_mode:=online_sync` and a `do_loop_closing:false` profile; call the `slam_toolbox` map-reset service when recoveries repeatedly fail.
+
+## Running the tests
+
+`src/rosnav_bot/scripts/run_tests.sh` runs every unit test with no simulator or GPU: the rosnav tests, then each vendored tool (`nav2_fault_inject`, `slam_doctor`, `nav_explore_eval`) as its own pytest session, and exits non-zero on any failure. Extra arguments go to pytest (`run_tests.sh -k frontier`). It sources `/opt/ros/humble` or `jazzy` if ROS is not already sourced. Tests needing an optional package (rclpy, OpenCV, matplotlib) skip with a reason. CI runs the same script after the build, so a green CI means the same thing as a green local run. Checked in a clean environment on 2026-11-09: 323 tests pass (219 rosnav, 33 + 23 + 48 tools).

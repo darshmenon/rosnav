@@ -9,6 +9,10 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 
 ROOT = os.path.join(os.path.dirname(__file__), '..')
+# Private DDS graph per test run: a high per-process domain and loopback only, so a sim or another ROS system
+# running on the same machine (or CI neighbour) can never leak a /map into these tests.
+_DOM = 200 + os.getpid() % 28
+os.environ['ROS_LOCALHOST_ONLY'] = '1'
 sys.path.insert(0, os.path.dirname(__file__)); sys.path.insert(0, ROOT)
 from test_metrics import room, write_map
 
@@ -38,7 +42,7 @@ class FakeSlam(Node):
 def test_record_reports_progress(tmp_path):
     g = room()
     truth = write_map(tmp_path, 'truth', g)
-    os.environ['ROS_DOMAIN_ID'] = '171'
+    os.environ['ROS_DOMAIN_ID'] = str(_DOM)
     rclpy.init(); node = FakeSlam(g, speed=6.0)            # 60 cols revealed in ~10s
     ex = SingleThreadedExecutor(); ex.add_node(node)
     th = threading.Thread(target=ex.spin, daemon=True); th.start()
@@ -61,7 +65,7 @@ def test_record_reports_progress(tmp_path):
 
 def test_record_without_map_fails_cleanly(tmp_path):
     truth = write_map(tmp_path, 'truth', room())
-    env = dict(os.environ, ROS_DOMAIN_ID='172')
+    env = dict(os.environ, ROS_DOMAIN_ID=str(_DOM + 1), ROS_LOCALHOST_ONLY='1')
     p = subprocess.run([sys.executable, '-m', 'nav_explore_eval.cli', 'record', '--truth', truth,
                         '--out', str(tmp_path / 'x.json'), '--duration', '3', '--interval', '1'],
                        capture_output=True, text=True, cwd=ROOT, env=env, timeout=30)

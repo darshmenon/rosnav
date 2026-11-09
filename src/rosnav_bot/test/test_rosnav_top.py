@@ -5,14 +5,22 @@ import os
 import sys
 import types
 
-# rosnav_top imports rclpy lazily inside main(), so the module itself loads without ROS.
-_spec = importlib.util.spec_from_file_location(
-    'rosnav_top', os.path.join(os.path.dirname(__file__), '..', 'scripts', 'rosnav_top.py'))
-top = importlib.util.module_from_spec(_spec)
-sys.modules['rosnav_top'] = top
-_spec.loader.exec_module(top)
+import pytest
 
-from rich.console import Console
+# `rich` is optional. Do not skip at module level: launch_testing's pytest hook imports test modules
+# itself, and a module-level skip/ImportError there aborts the whole session. Mark the tests instead.
+_HAS_RICH = importlib.util.find_spec('rich') is not None
+pytestmark = pytest.mark.skipif(not _HAS_RICH, reason='rich not installed')
+
+if _HAS_RICH:
+    # rosnav_top imports rclpy lazily inside main(), so the module itself loads without ROS.
+    _spec = importlib.util.spec_from_file_location(
+        'rosnav_top', os.path.join(os.path.dirname(__file__), '..', 'scripts', 'rosnav_top.py'))
+    top = importlib.util.module_from_spec(_spec)
+    sys.modules['rosnav_top'] = top
+    _spec.loader.exec_module(top)
+
+    from rich.console import Console
 
 SNAP = {'mitigate': True,
         'robots': {'robot1': {'level': 'ERROR', 'findings': [['ERROR', 'map->odom stale (3.0s)']], 'mitigations': 2},

@@ -43,7 +43,7 @@ def test_pad_frames_makes_all_frames_the_same_size():
 
 
 def test_cropped_frames_can_be_written_as_gif(tmp_path):
-    import imageio.v2 as imageio
+    imageio = pytest.importorskip('imageio.v2')   # inside the test: a module-level skip can abort the session
     g1 = np.full((60, 80), -1, dtype=np.int8); g1[25:35, 35:45] = 0
     g2 = np.full((60, 80), -1, dtype=np.int8); g2[10:50, 10:70] = 0
     frames = mod.pad_frames([mod.render(g, _info(80, 60), {'': [(0, 0)]}, t) for g, t in ((g1, 1.0), (g2, 5.0))])

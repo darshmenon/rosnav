@@ -68,6 +68,8 @@ Deep dive → [`concepts.md`](concepts.md) · launch args → `ros2 launch rosna
 
 Spun out of this repo, each works on any Nav2 stack: [nav2_doctor](https://github.com/darshmenon/nav2_doctor) (why isn't my robot moving?) · [nav_explore_eval](https://github.com/darshmenon/nav_explore_eval) (score an exploration run) · [nav2_fault_inject](https://github.com/darshmenon/nav2_fault_inject) (freeze nodes to test recovery, `--check` asserts the doctor notices) · slam_doctor (is my SLAM healthy? loop closures, tracking loss, map stalls). Vendored copies + tests live in `src/rosnav_bot/tools/`.
 
+Run all unit tests (no simulator needed, about 1 minute, same as CI): `src/rosnav_bot/scripts/run_tests.sh`
+
 ---
 
 ## 1. Install
