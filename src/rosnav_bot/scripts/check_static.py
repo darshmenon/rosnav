@@ -11,6 +11,7 @@ Checks (each prints OK/FAIL/SKIP, exit code 1 on any FAIL):
           references links that exist, with exactly one root link
   worlds  every worlds/*.world and *.sdf is well-formed XML
   launch  every launch file imports and builds a LaunchDescription (skipped without launch_ros)
+  closure every box-built world is enclosed: the spawn point cannot reach the outside (mesh/include worlds skip)
 """
 import argparse
 import importlib.util
@@ -139,8 +140,109 @@ def check_launch():
                 record('launch', name, 'FAIL', msg)
 
 
+# worlds that are open on purpose (no walls to leak through)
+OPEN_WORLDS = {'empty', 'outdoor', 'outdoor_arena', 'outdoor_rocks', 'rough_terrain', 'garden', 'lake_house',
+               'multi_terrain', 'multi_terrain_robot_diff'}
+
+
+def _pose6(text):
+    v = [float(x) for x in (text or '0 0 0 0 0 0').split()] + [0.0] * 6
+    return v[:6]
+
+
+def world_wall_boxes(path, z_lo=0.1, z_hi=0.5):
+    """(cx, cy, sx, sy, yaw) of every static box collision that blocks a 2D lidar plane (z in [z_lo, z_hi])."""
+    import math
+    root = ET.parse(path).getroot()
+    out = []
+
+    def walk(el, x, y, z, yaw):
+        for ch in el:
+            if ch.tag in ('model', 'link', 'collision'):
+                px, py, pz, r, pi, ya = _pose6(ch.findtext('pose'))
+                c, s = math.cos(yaw), math.sin(yaw)
+                nx, ny, nz, nyaw = x + c * px - s * py, y + s * px + c * py, z + pz, yaw + ya
+                if ch.tag == 'collision':
+                    box = ch.find('geometry/box/size')
+                    if box is not None and abs(r) < 0.05 and abs(pi) < 0.05:
+                        sx, sy, sz = [float(v) for v in box.text.split()]
+                        if nz - sz / 2 <= z_hi and nz + sz / 2 >= z_lo:
+                            out.append((nx, ny, sx, sy, nyaw))
+                else:
+                    walk(ch, nx, ny, nz, nyaw)
+    world = root.find('world') if root.find('world') is not None else root
+    walk(world, 0.0, 0.0, 0.0, 0.0)
+    return out
+
+
+def world_leaks(boxes, start=(0.0, 0.0), res=0.05, pad=2.0):
+    """True when `start` can reach the outside of the wall boxes (4-connected flood fill)."""
+    import numpy as np
+    from collections import deque
+    xs = [b[0] + sgn * (b[2] / 2 + b[3] / 2) for b in boxes for sgn in (-1, 1)]
+    ys = [b[1] + sgn * (b[2] / 2 + b[3] / 2) for b in boxes for sgn in (-1, 1)]
+    x0, x1, y0, y1 = min(xs) - pad, max(xs) + pad, min(ys) - pad, max(ys) + pad
+    W, H = int((x1 - x0) / res) + 1, int((y1 - y0) / res) + 1
+    occ = np.zeros((H, W), dtype=bool)
+    gx = x0 + (np.arange(W) + 0.5) * res
+    gy = y0 + (np.arange(H) + 0.5) * res
+    for cx, cy, sx, sy, yaw in boxes:
+        import math
+        r = math.hypot(sx, sy) / 2 + res
+        c0, c1 = max(0, int((cx - r - x0) / res)), min(W, int((cx + r - x0) / res) + 1)
+        r0, r1 = max(0, int((cy - r - y0) / res)), min(H, int((cy + r - y0) / res) + 1)
+        X, Y = np.meshgrid(gx[c0:c1], gy[r0:r1])
+        dx, dy = X - cx, Y - cy
+        u = dx * math.cos(yaw) + dy * math.sin(yaw)
+        v = -dx * math.sin(yaw) + dy * math.cos(yaw)
+        occ[r0:r1, c0:c1] |= (np.abs(u) <= sx / 2 + res / 2) & (np.abs(v) <= sy / 2 + res / 2)
+    sr, sc = int((start[1] - y0) / res), int((start[0] - x0) / res)
+    if not (0 <= sr < H and 0 <= sc < W) or occ[sr, sc]:
+        # start inside a wall/furniture: use the nearest free cell
+        free = np.argwhere(~occ[max(sr - 40, 0):sr + 40, max(sc - 40, 0):sc + 40])
+        if not len(free):
+            return None
+        d = np.abs(free - np.array([min(sr, 40), min(sc, 40)])).sum(axis=1)
+        sr, sc = free[d.argmin()] + np.array([max(sr - 40, 0), max(sc - 40, 0)])
+    seen = np.zeros_like(occ)
+    q = deque([(sr, sc)])
+    seen[sr, sc] = True
+    while q:
+        r, c = q.popleft()
+        if r in (0, H - 1) or c in (0, W - 1):
+            return True
+        for nr, nc in ((r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)):
+            if 0 <= nr < H and 0 <= nc < W and not occ[nr, nc] and not seen[nr, nc]:
+                seen[nr, nc] = True
+                q.append((nr, nc))
+    return False
+
+
+def check_closure():
+    for path in files('worlds', '.world', '.sdf'):
+        name = os.path.splitext(os.path.basename(path))[0]
+        if name in OPEN_WORLDS:
+            record('closure', name, 'SKIP', 'open by design')
+            continue
+        try:
+            boxes = world_wall_boxes(path)
+        except Exception as e:  # noqa: BLE001
+            record('closure', name, 'FAIL', f'cannot parse geometry: {e}')
+            continue
+        if len(boxes) < 6:
+            record('closure', name, 'SKIP', f'only {len(boxes)} wall boxes (mesh/include world)')
+            continue
+        leak = world_leaks(boxes)
+        if leak is None:
+            record('closure', name, 'SKIP', 'no free cell near the origin')
+        elif leak:
+            record('closure', name, 'FAIL', 'the spawn area is connected to the outside (gap in the walls)')
+        else:
+            record('closure', name, 'OK', f'({len(boxes)} boxes)')
+
+
 CHECKS = {'python': check_python, 'yaml': check_yaml, 'urdf': check_urdf,
-          'worlds': check_worlds, 'launch': check_launch}
+          'worlds': check_worlds, 'closure': check_closure, 'launch': check_launch}
 
 
 def main():

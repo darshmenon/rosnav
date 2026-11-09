@@ -20,6 +20,7 @@ import rclpy
 from nav_msgs.msg import OccupancyGrid, Odometry
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
+import tf2_ros
 
 COLORS = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#46f0f0']
 
@@ -108,6 +109,8 @@ def render(grid, info, trails, elapsed, scale=3, rotate=0):
         ax.plot(xs[-1], ys[-1], 'o', color=c, ms=7, mec='white', label=ns or 'robot')
     if len(trails) > 1 or any(trails):
         ax.legend(loc='lower right', fontsize=8, framealpha=0.7)
+    ax.set_xlim(extent[0], extent[1])
+    ax.set_ylim(extent[2], extent[3])     # trails outside the map are clipped, never stretch the view
     ax.axis('off')
     area = free * info.resolution ** 2
     fig.text(0.01, 0.01, f't={elapsed:5.0f}s   free {area:6.1f} m2   occupied {occ} cells',
@@ -128,19 +131,39 @@ class Timelapse(Node):
             OccupancyGrid, '/map', self._on_map,
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                        reliability=ReliabilityPolicy.RELIABLE))
+        self._tf = tf2_ros.Buffer()
+        self._tf_listener = tf2_ros.TransformListener(self._tf, self)
+        self._tf_ok = {}
         for ns in robots:
             topic = f'/{ns}/odom' if ns else '/odom'
             self.create_subscription(Odometry, topic, lambda m, ns=ns: self._on_odom(ns, m), qos_profile_sensor_data)
+        self.create_timer(0.25, self._poll_tf)
+
+    def _poll_tf(self):
+        """Robot position in the MAP frame from TF (map -> <ns>/base_link). Robots whose map->odom is offset
+        (static localization) would otherwise be drawn in the wrong place from raw odometry."""
+        for ns in self.trails:
+            frame = f'{ns}/base_link' if ns else 'base_link'
+            try:
+                t = self._tf.lookup_transform('map', frame, rclpy.time.Time())
+            except Exception:  # noqa: BLE001 - TF not ready yet: odom fallback keeps drawing
+                continue
+            self._tf_ok[ns] = True
+            self._add_point(ns, t.transform.translation.x, t.transform.translation.y)
+
+    def _add_point(self, ns, x, y):
+        t = self.trails[ns]
+        if not t or (x - t[-1][0]) ** 2 + (y - t[-1][1]) ** 2 > 0.0025:
+            t.append((x, y))
 
     def _on_map(self, m):
         self.info = m.info
         self.grid = np.array(m.data, dtype=np.int8).reshape(m.info.height, m.info.width)
 
     def _on_odom(self, ns, m):
-        p = (m.pose.pose.position.x, m.pose.pose.position.y)
-        t = self.trails[ns]
-        if not t or (p[0] - t[-1][0]) ** 2 + (p[1] - t[-1][1]) ** 2 > 0.0025:
-            t.append(p)
+        if self._tf_ok.get(ns):          # TF gives the true map-frame pose; odom only until it is available
+            return
+        self._add_point(ns, m.pose.pose.position.x, m.pose.pose.position.y)
 
 
 def main():

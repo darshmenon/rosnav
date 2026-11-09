@@ -96,6 +96,8 @@
     <model name='wall_west'><static>true</static><pose>-11 0 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.2 16 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>0.2 16 2.5</size></box></geometry><material><ambient>0.88 0.86 0.82 1</ambient><diffuse>0.88 0.86 0.82 1</diffuse></material></visual></link></model>
     <!-- East wall: 2 m entry gap at y = -1 to +1 -->
     <model name='wall_east_n'><static>true</static><pose>11 4.5 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.2 7 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>0.2 7 2.5</size></box></geometry><material><ambient>0.88 0.86 0.82 1</ambient><diffuse>0.88 0.86 0.82 1</diffuse></material></visual></link></model>
+    <!-- closes the open corridor end so lidar cannot see out and exploration can finish -->
+    <model name='wall_east_gap'><static>true</static><pose>11 0 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.2 2.0 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>0.2 2.0 2.5</size></box></geometry><material><ambient>0.8 0.8 0.8 1</ambient><diffuse>0.8 0.8 0.8 1</diffuse></material></visual></link></model>
     <model name='wall_east_s'><static>true</static><pose>11 -4.5 1.25 0 0 0</pose><link name='link'><collision name='c'><geometry><box><size>0.2 7 2.5</size></box></geometry></collision><visual name='v'><geometry><box><size>0.2 7 2.5</size></box></geometry><material><ambient>0.88 0.86 0.82 1</ambient><diffuse>0.88 0.86 0.82 1</diffuse></material></visual></link></model>
 
     <!-- ── North corridor wall (y=1.2) — 4 door openings 1.2 m wide ──────── -->

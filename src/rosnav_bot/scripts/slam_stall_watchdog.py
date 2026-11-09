@@ -71,21 +71,32 @@ class SlamStallWatchdog(Node):
         self.declare_parameter('max_restarts', 5)
         self.declare_parameter('process_match', 'slam_toolbox_node')
         self.declare_parameter('posegraph_path', '')
+        # fleet use (one watchdog per SLAM robot): prefixed frames, absolute scan topic, namespaced service
+        self.declare_parameter('map_frame', 'map')
+        self.declare_parameter('odom_frame', 'odom')
+        self.declare_parameter('base_frame', 'base_link')
+        self.declare_parameter('scan_topic', '/scan')
+        self.declare_parameter('deserialize_service', '/slam_toolbox/deserialize_map')
+        self.declare_parameter('process_also_match', '')   # e.g. '__ns:=/robot1' so only this robot's SLAM is killed
         self._stale = float(self.get_parameter('stale_sec').value)
         self._grace = float(self.get_parameter('startup_grace').value)
         self._cool = float(self.get_parameter('cooldown_sec').value)
         self._max = int(self.get_parameter('max_restarts').value)
         self._match = str(self.get_parameter('process_match').value)
         self._pg = str(self.get_parameter('posegraph_path').value).strip()
+        self._map_f = str(self.get_parameter('map_frame').value)
+        self._odom_f = str(self.get_parameter('odom_frame').value)
+        self._base_f = str(self.get_parameter('base_frame').value)
+        self._also = str(self.get_parameter('process_also_match').value)
         self._last_pose = None            # (x, y, yaw) of the odom frame in the map frame, while SLAM was healthy
         self._restore_at = None           # wall time after which to reload the pose graph
         self._restore_done_by = 0.0
-        self._deser = self.create_client(DeserializePoseGraph, '/slam_toolbox/deserialize_map')
+        self._deser = self.create_client(DeserializePoseGraph, str(self.get_parameter('deserialize_service').value))
         # A stale map->odom is only slam_toolbox's fault if scans are still reaching it. If /scan is silent
         # (e.g. scan_quality_gate rejecting everything) a restart cannot help and just throws the map away.
         self._last_scan_wall = 0.0
         self._warned_no_scan = 0.0
-        self.create_subscription(LaserScan, '/scan', self._on_scan, qos_profile_sensor_data)
+        self.create_subscription(LaserScan, str(self.get_parameter('scan_topic').value), self._on_scan, qos_profile_sensor_data)
 
         self._buf = tf2_ros.Buffer()
         self._tl = tf2_ros.TransformListener(self._buf, self)
@@ -115,8 +126,8 @@ class SlamStallWatchdog(Node):
         if now_wall - self._last_restart < self._cool:
             return
         up = (self.get_clock().now() - self._start).nanoseconds / 1e9
-        a_mo = self._age('map', 'odom')
-        a_ob = self._age('odom', 'base_link')
+        a_mo = self._age(self._map_f, self._odom_f)
+        a_ob = self._age(self._odom_f, self._base_f)
         if a_mo is not None:
             self._seen = True
             if a_mo < 3.0:
@@ -153,7 +164,7 @@ class SlamStallWatchdog(Node):
         """Keep the last healthy map->odom. The robot keeps driving while slam_toolbox is hung, so after
         a restart its map pose is rebuilt as (this map->odom) x (live odom->base_link), not the stale pose."""
         try:
-            t = self._buf.lookup_transform('map', 'odom', Time()).transform
+            t = self._buf.lookup_transform(self._map_f, self._odom_f, Time()).transform
         except Exception:
             return
         self._last_pose = (t.translation.x, t.translation.y, self._yaw(t.rotation))
@@ -161,7 +172,7 @@ class SlamStallWatchdog(Node):
     def _pose_in_old_map(self):
         mx, my, myaw = self._last_pose
         try:
-            t = self._buf.lookup_transform('odom', 'base_link', Time()).transform
+            t = self._buf.lookup_transform(self._odom_f, self._base_f, Time()).transform
         except Exception:
             return None
         ox, oy, oyaw = t.translation.x, t.translation.y, self._yaw(t.rotation)
@@ -177,7 +188,7 @@ class SlamStallWatchdog(Node):
             return
         if not self._deser.wait_for_service(timeout_sec=0.2):
             return                       # new slam_toolbox not up yet
-        a_new = self._age('map', 'odom')
+        a_new = self._age(self._map_f, self._odom_f)
         if a_new is None or a_new > 2.0:
             return                       # service is advertised but the new node is not processing scans yet
         pose = self._pose_in_old_map()
@@ -196,7 +207,7 @@ class SlamStallWatchdog(Node):
                                              else 'pose-graph restore call FAILED'))
 
     def _kill_slam(self, a_mo, up):
-        victims = [(p, c) for p, c in _children_of(os.getppid()) if self._match in c]
+        victims = [(p, c) for p, c in _children_of(os.getppid()) if self._match in c and self._also in c]
         if not victims:
             self.get_logger().error(
                 f'map->odom stale ({a_mo}) but no "{self._match}" child of launch pid {os.getppid()} found')

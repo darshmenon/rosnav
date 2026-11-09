@@ -712,6 +712,7 @@ def _build_all(context, pkg_share: str):
     hysteresis_radius = float(LaunchConfiguration('hysteresis_radius').perform(context).strip())
     hysteresis_gain = float(LaunchConfiguration('hysteresis_gain').perform(context).strip())
     separation_weight = float(LaunchConfiguration('separation_weight').perform(context).strip())
+    slam_watchdog_on = LaunchConfiguration('slam_watchdog').perform(context).strip().lower() in ('true', '1')
     separation_radius = float(LaunchConfiguration('separation_radius').perform(context).strip())
     frontier_clearance_radius = float(LaunchConfiguration('frontier_clearance_radius').perform(context).strip())
     failed_goal_radius = float(LaunchConfiguration('failed_goal_radius').perform(context).strip())
@@ -867,17 +868,30 @@ def _build_all(context, pkg_share: str):
         # SLAM Toolbox (robot1's 2D lidar → shared /map)
         actions += [
             LogInfo(msg=f'[multi_robot] SLAM mode — map will be auto-saved to {map_prefix}'),
+            # Started directly (the stock online_async_launch.py is just this one Node) so it can respawn:
+            # slam_stall_watchdog.py kills a hung slam_toolbox and respawn brings up a fresh one.
             TimerAction(
                 period=6.0,
-                actions=[IncludeLaunchDescription(
-                    PythonLaunchDescriptionSource(
-                        os.path.join(slam_pkg, 'launch', 'online_async_launch.py')),
-                    launch_arguments={
-                        'slam_params_file': os.path.join(
-                            pkg_share, 'config', 'mapper_params_multirobot.yaml'),
-                        'use_sim_time': 'true',
-                    }.items())]),
+                actions=[Node(
+                    package='slam_toolbox',
+                    executable='async_slam_toolbox_node',
+                    name='slam_toolbox',
+                    output='screen',
+                    parameters=[os.path.join(pkg_share, 'config', 'mapper_params_multirobot.yaml'),
+                                {'use_sim_time': True}],
+                    respawn=True,
+                    respawn_delay=2.0)]),
         ]
+        if slam_watchdog_on:
+            _slam_ns = robots[0]['name']
+            actions.append(TimerAction(period=30.0, actions=[
+                LogInfo(msg=f'[multi_robot] slam_stall_watchdog ENABLED for {_slam_ns} (restarts slam_toolbox if map->odom goes stale)'),
+                Node(package='rosnav_bot', executable='slam_stall_watchdog.py',
+                     name='slam_stall_watchdog', output='screen',
+                     parameters=[{'use_sim_time': True,
+                                  'map_frame': 'map', 'odom_frame': f'{_slam_ns}/odom',
+                                  'base_frame': f'{_slam_ns}/base_link',
+                                  'scan_topic': f'/{_slam_ns}/scan'}])]))
     elif explore:
         init_poses = _init_poses_for_merge(robots)
         # Static map → robotN/map so Nav2 can resolve map→base_link while each
@@ -1140,6 +1154,8 @@ def _build_all(context, pkg_share: str):
                 name='slam_toolbox',
                 namespace=ns,
                 output='screen',
+                respawn=True,            # slam_stall_watchdog kills a hung node; this brings a fresh one up
+                respawn_delay=2.0,
                 parameters=[_make_slam_params(slam_template_yaml, ns), {'use_sim_time': True}],
                 remappings=[
                     ('tf', '/tf'),
@@ -1184,6 +1200,18 @@ def _build_all(context, pkg_share: str):
                 # defines the map seed. Starting at 6 s it sometimes took an early scan (1.7 m star, 8 occupied
                 # cells) and the map then stayed 3.6 m2 while every frontier was marked visited.
                 slam_actions.append(TimerAction(period=14.0 + robot_stagger, actions=[slam_node]))
+                if slam_watchdog_on:
+                    slam_actions.append(TimerAction(period=30.0 + robot_stagger, actions=[
+                        LogInfo(msg=f'[multi_robot] {ns}: slam_stall_watchdog ENABLED (restarts its slam_toolbox if map->odom goes stale)'),
+                        Node(package='rosnav_bot', executable='slam_stall_watchdog.py',
+                             name='slam_stall_watchdog', namespace=ns, output='screen',
+                             parameters=[{'use_sim_time': True,
+                                          'map_frame': 'map', 'odom_frame': f'{ns}/odom',
+                                          'base_frame': f'{ns}/base_link',
+                                          'scan_topic': f'/{ns}/scan',
+                                          'deserialize_service': f'/{ns}/slam_toolbox/deserialize_map',
+                                          'process_also_match': f'__ns:=/{ns}'}],
+                             remappings=[('/tf', '/tf'), ('/tf_static', '/tf_static')])]))
                 if run_cslam:
                     slam_actions.append(TimerAction(
                         period=8.0 + robot_stagger,
@@ -1686,6 +1714,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'hysteresis_radius', default_value='2.0',
             description='Radius for keeping a robot near its current exploration region'),
+        DeclareLaunchArgument(
+            'slam_watchdog', default_value='true',
+            description='Per SLAM robot, restart its slam_toolbox if map->odom goes stale while scans still arrive '
+                        '(scan/TF recovery, same node as slam_nav.launch.py)'),
         DeclareLaunchArgument(
             'separation_weight', default_value='0.0',
             description='Soft score penalty (max) for frontiers near another robot\'s goal; 0 = off'),

@@ -2685,7 +2685,9 @@ Still unsolved, but narrowed down (slam_toolbox + RGB-D unless noted):
 - `slam_stall_watchdog.py` (on by default, `slam_watchdog:=true`): if `map->odom` is stale while `/scan` still
   arrives, SIGKILLs slam_toolbox (exact child PID only) and the launch `respawn=True` restarts it; with an
   autosaved pose graph it reloads it at the odom-propagated pose. If `/scan` is silent it does nothing
-  (that was the scan-gate bug, a restart cannot help).
+  (that was the scan-gate bug, a restart cannot help). `multi_robot.launch.py` runs the same watchdog for the SLAM
+  robot (`slam_watchdog:=true`, frames/topic passed as parameters, `process_also_match` so only that robot's SLAM is
+  killed) and starts slam_toolbox as a direct `respawn=True` node instead of the stock include.
 - `tf_freeze_watchdog.py` is **experimental and off** (`tf_watchdog:=false`): the controller's error is logged by a
   non-node logger and never reaches `/rosout`, and a manual Nav2 lifecycle RESET deadlocked in costmap cleanup.
 
@@ -2870,4 +2872,4 @@ After both: cafe, 3 robots, 300 s, exploration finished (0 frontiers left), 28 g
 
 ## Running the tests
 
-`src/rosnav_bot/scripts/run_tests.sh` runs every unit test with no simulator or GPU: the rosnav tests, then each vendored tool (`nav2_fault_inject`, `slam_doctor`, `nav_explore_eval`) as its own pytest session, and exits non-zero on any failure. Extra arguments go to pytest (`run_tests.sh -k frontier`). It sources `/opt/ros/humble` or `jazzy` if ROS is not already sourced. Tests needing an optional package (rclpy, OpenCV, matplotlib) skip with a reason. `--group exploration|navigation|tools|other|fault_inject|slam_doctor|explore_eval` runs one slice. CI runs 12 parallel checks (build + colcon tests, five static checks from `check_static.py`, four rosnav test slices, and the three tool suites) so a failure names the area. The slices together cover every test once (`other` is the catch-all). Checked in a clean `ros:humble` container on 2026-11-09: 324 tests pass (220 rosnav, 33 + 23 + 48 tools).
+`src/rosnav_bot/scripts/run_tests.sh` runs every unit test with no simulator or GPU: the rosnav tests, then each vendored tool (`nav2_fault_inject`, `slam_doctor`, `nav_explore_eval`) as its own pytest session, and exits non-zero on any failure. Extra arguments go to pytest (`run_tests.sh -k frontier`). It sources `/opt/ros/humble` or `jazzy` if ROS is not already sourced. Tests needing an optional package (rclpy, OpenCV, matplotlib) skip with a reason. `--group exploration|navigation|tools|other|fault_inject|slam_doctor|explore_eval` runs one slice. CI runs 12 parallel checks (build + colcon tests, five static checks from `check_static.py`, four rosnav test slices, and the three tool suites) so a failure names the area. The slices together cover every test once (`other` is the catch-all). `check_static.py --only closure` flood-fills every box-built world from its spawn point and fails if it reaches the outside (mesh/include worlds and the open outdoor worlds skip); it found open corridor ends in `hospital` and `office`, now closed with a wall segment each. Checked in a clean `ros:humble` container on 2026-11-09: 324 tests pass (220 rosnav, 33 + 23 + 48 tools).
