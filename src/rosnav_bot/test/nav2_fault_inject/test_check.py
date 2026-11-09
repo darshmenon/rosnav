@@ -33,3 +33,15 @@ def test_normalize_validates():
 def test_parse_report():
     assert parse_report('{"time": 5, "ok": false, "findings": [{"level":"ERROR","code":"X","msg":"m"}]}') == {'time': 5.0, 'ok': False, 'codes': {'X'}}
     assert parse_report('garbage') is None and parse_report('{"x":1}') is None
+
+
+def test_doctor_cmd_from_env(monkeypatch):
+    monkeypatch.setenv('NAV2_DOCTOR_CMD', 'ros2 run rosnav_bot nav2_doctor.py --json')
+    from nav2_fault_inject.check import DoctorWatcher
+    assert DoctorWatcher().cmd == ['ros2', 'run', 'rosnav_bot', 'nav2_doctor.py', '--json']
+
+
+def test_explicit_cmd_beats_env(monkeypatch):
+    monkeypatch.setenv('NAV2_DOCTOR_CMD', 'from-env')
+    from nav2_fault_inject.check import DoctorWatcher
+    assert DoctorWatcher('mine --json').cmd == ['mine', '--json']

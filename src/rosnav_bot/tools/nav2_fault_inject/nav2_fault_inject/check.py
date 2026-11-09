@@ -4,6 +4,9 @@ Reports come from `nav2_doctor --json` (one object per line: {time, ok, findings
 """
 import json
 import shlex
+import shutil
+import os
+import importlib.util
 import subprocess
 import sys
 import threading
@@ -76,10 +79,17 @@ class DoctorWatcher:
     """Runs a doctor command and collects its JSON reports on a thread."""
 
     def __init__(self, cmd=None, ns=''):
+        cmd = cmd or os.environ.get('NAV2_DOCTOR_CMD')
         if cmd:
             self.cmd = shlex.split(cmd)
         else:
-            self.cmd = [sys.executable, '-m', 'nav2_doctor.doctor', '--json', '--period', '1', '--startup-grace', '0']
+            if importlib.util.find_spec('nav2_doctor'):
+                base = [sys.executable, '-m', 'nav2_doctor.doctor']
+            elif shutil.which('nav2_doctor'):
+                base = ['nav2_doctor']
+            else:
+                base = [sys.executable, '-m', 'nav2_doctor.doctor']   # will fail with the install hint
+            self.cmd = base + ['--json', '--period', '1', '--startup-grace', '0']
             if ns:
                 self.cmd += ['--ns', ns]
         self.reports, self._proc, self._thr, self.stderr = [], None, None, ''

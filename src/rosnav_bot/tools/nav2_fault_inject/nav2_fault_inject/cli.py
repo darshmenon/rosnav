@@ -56,7 +56,7 @@ def main(argv=None):
                     if not w.wait_for_first(20):
                         w.stop()
                         print(f'error: doctor produced no report ({" ".join(w.cmd[:3])}...): {w.stderr.strip() or "no output"}\n'
-                              'install nav2_doctor (pip install nav2_doctor / colcon) or pass --doctor-cmd', file=sys.stderr)
+                              'install nav2_doctor (pip install nav2_doctor / colcon), set NAV2_DOCTOR_CMD, or pass --doctor-cmd', file=sys.stderr)
                         return 2
                     tl = run_scenario(tuples, a.domain, inj, marks=marks)
                     time.sleep(max([normalize(f['expect'])['clear_within'] for f in faults] + [0]) + 1)
