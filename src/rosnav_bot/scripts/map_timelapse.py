@@ -38,7 +38,31 @@ def pad_frames(frames, fill=255):
     return out
 
 
-def render(grid, info, trails, elapsed, scale=3):
+def rotate_view(grid, info, trails, quarter_turns):
+    """Rotate the map and trails by quarter_turns x 90 deg counter-clockwise (world frame).
+
+    Returns (grid, extent, trails) where extent = (x0, x1, y0, y1) of the rotated image for imshow
+    (origin='lower'). Cell (row, col) sits at x = ox + col*res, y = oy + row*res.
+    """
+    k = quarter_turns % 4
+    res, ox, oy = info.resolution, info.origin.position.x, info.origin.position.y
+    R, C = grid.shape
+    if k == 0:
+        g, ext = grid, (ox, ox + C * res, oy, oy + R * res)
+        f = lambda x, y: (x, y)
+    elif k == 1:      # (x, y) -> (-y, x)
+        g, ext = grid.T[:, ::-1], (-(oy + R * res), -oy, ox, ox + C * res)
+        f = lambda x, y: (-y, x)
+    elif k == 2:      # (x, y) -> (-x, -y)
+        g, ext = grid[::-1, ::-1], (-(ox + C * res), -ox, -(oy + R * res), -oy)
+        f = lambda x, y: (-x, -y)
+    else:             # (x, y) -> (y, -x)
+        g, ext = grid.T[::-1, :], (oy, oy + R * res, -(ox + C * res), -ox)
+        f = lambda x, y: (y, -x)
+    return np.ascontiguousarray(g), ext, {ns: [f(x, y) for x, y in t] for ns, t in trails.items()}
+
+
+def render(grid, info, trails, elapsed, scale=3, rotate=0):
     """RGB uint8 image of the map with trails; unknown dark grey, free white, occupied black."""
     import matplotlib
     matplotlib.use('Agg')
@@ -46,7 +70,11 @@ def render(grid, info, trails, elapsed, scale=3):
     # crop to the known area (+ margin and any robot positions) so early frames are not mostly empty grey
     res, ox, oy = info.resolution, info.origin.position.x, info.origin.position.y
     known = np.argwhere(grid != -1)
-    pts = [p for t in trails.values() for p in t]
+    h0, w0 = grid.shape
+    # odom of robots whose map->odom is offset (static localization) can lie outside the map: ignore those
+    # points when sizing the crop, or the frame stretches over empty space
+    pts = [p for t in trails.values() for p in t
+           if ox <= p[0] <= ox + w0 * res and oy <= p[1] <= oy + h0 * res]
     if len(known):
         r0, c0 = known.min(axis=0)
         r1, c1 = known.max(axis=0)
@@ -60,6 +88,7 @@ def render(grid, info, trails, elapsed, scale=3):
         oy, ox = oy + r0 * res, ox + c0 * res
         info = types.SimpleNamespace(resolution=res, origin=types.SimpleNamespace(
             position=types.SimpleNamespace(x=ox, y=oy)))
+    grid, extent, trails = rotate_view(grid, info, trails, rotate)
     h, w = grid.shape
     img = np.full((h, w), 0.35)
     img[grid == 0] = 1.0
@@ -69,8 +98,7 @@ def render(grid, info, trails, elapsed, scale=3):
     fig = plt.figure(figsize=(max(w * scale / 100, 3.0), max(h * scale / 100, 2.0) + 0.5), dpi=100)
     ax = fig.add_axes([0, 0.5 / (max(h * scale / 100, 2.0) + 0.5), 1, max(h * scale / 100, 2.0) / (max(h * scale / 100, 2.0) + 0.5)])
     ax.imshow(img, cmap='gray', vmin=0, vmax=1, origin='lower',
-              extent=(info.origin.position.x, info.origin.position.x + w * info.resolution,
-                      info.origin.position.y, info.origin.position.y + h * info.resolution))
+              extent=extent)
     for i, (ns, pts) in enumerate(sorted(trails.items())):
         if not pts:
             continue
@@ -121,6 +149,8 @@ def main():
     ap.add_argument('--period', type=float, default=4.0, help='seconds between frames')
     ap.add_argument('--duration', type=float, default=120.0, help='total recording seconds')
     ap.add_argument('--out', default='map_timelapse.gif')
+    ap.add_argument('--rotate', type=int, default=0, choices=[0, 90, 180, 270],
+                    help='rotate the picture counter-clockwise (degrees), e.g. 90 to turn a tall map landscape')
     ap.add_argument('--fps', type=float, default=6.0, help='GIF playback frames per second')
     args = ap.parse_args()
 
@@ -132,7 +162,7 @@ def main():
         rclpy.spin_once(node, timeout_sec=0.2)
         el = time.time() - t0
         if el >= next_t and node.grid is not None:
-            frames.append(render(node.grid, node.info, node.trails, el))
+            frames.append(render(node.grid, node.info, node.trails, el, rotate=args.rotate // 90))
             next_t += args.period
             node.get_logger().info(f'frame {len(frames)} at {el:.0f}s')
     node.destroy_node()

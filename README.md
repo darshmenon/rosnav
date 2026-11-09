@@ -265,7 +265,9 @@ ros2 launch rosnav_bot multi_robot_multi_slam.launch.py world:=cafe robot_count:
 
 Per-robot slam_toolbox maps merged into `/map_merged` (10x speed).
 
-![Two-robot C-SLAM map merging in RViz](images/cslam_map_merging_cafe.gif)
+| Two-robot C-SLAM map merging | 3-robot fleet exploration (cafe, closed) |
+|:--:|:--:|
+| <img src="images/cslam_map_merging_cafe.gif" alt="Two-robot C-SLAM map merging in RViz" width="420"> | <img src="images/fleet_cafe_exploration.gif" alt="3 robots exploring the cafe until no frontiers are left" width="300"> |
 
 #### RTAB-Map 3D lidar
 

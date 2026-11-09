@@ -1180,7 +1180,10 @@ def _build_all(context, pkg_share: str):
             # SLAM handles localisation for this robot.
             slam_actions = []
             if slam_mode == 'multi':
-                slam_actions.append(TimerAction(period=6.0 + robot_stagger, actions=[slam_node]))
+                # Start SLAM only after the robots have spawned and settled: the first scan it integrates
+                # defines the map seed. Starting at 6 s it sometimes took an early scan (1.7 m star, 8 occupied
+                # cells) and the map then stayed 3.6 m2 while every frontier was marked visited.
+                slam_actions.append(TimerAction(period=14.0 + robot_stagger, actions=[slam_node]))
                 if run_cslam:
                     slam_actions.append(TimerAction(
                         period=8.0 + robot_stagger,

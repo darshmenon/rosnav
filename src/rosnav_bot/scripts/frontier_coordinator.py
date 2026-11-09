@@ -78,6 +78,28 @@ _MAP_QOS = QoSProfile(
 from visualization_msgs.msg import Marker, MarkerArray
 
 
+
+def split_frontier(cluster, res, max_len_m=3.0):
+    """Cut a long frontier cluster into pieces of about max_len_m each (cells are (row, col)).
+
+    Ring-like clusters (centroid far from every cell) are ordered by angle around the centroid, others by
+    their projection on the principal axis. Short clusters come back unchanged.
+    """
+    n_parts = int(math.ceil(len(cluster) * res / max_len_m))
+    if n_parts <= 1:
+        return [cluster]
+    pts = np.asarray(cluster, dtype=float)
+    c = pts.mean(axis=0)
+    d = pts - c
+    radius = np.hypot(d[:, 0], d[:, 1])
+    if radius.min() > 0.3 * radius.max():                       # ring / arc
+        key = np.arctan2(d[:, 0], d[:, 1])
+    else:                                                        # elongated: principal axis
+        _, _, vt = np.linalg.svd(d, full_matrices=False)
+        key = d @ vt[0]
+    order = np.argsort(key)
+    return [[cluster[i] for i in idx] for idx in np.array_split(order, n_parts) if len(idx)]
+
 class _State(Enum):
     IDLE = auto()
     NAVIGATING = auto()
@@ -234,6 +256,8 @@ class FrontierCoordinator(Node):
         self._last_frontier_count = 0
         self._failed_goals = 0
         self._succeeded_goals = 0
+        self._cold_spin_at, self._cold_spin_proc, self._cold_spin_n = {}, {}, {}
+        self._nudges, self._nudge_pubs, self._nudge_timer = {}, {}, None
         self._nav_ready: dict[str, bool] = {r: False for r in self._robots}
         self._last_nav_wait_warn: dict[str, float] = {r: 0.0 for r in self._robots}
         self._tf_ready: dict[str, bool] = {r: False for r in self._robots}
@@ -362,6 +386,7 @@ class FrontierCoordinator(Node):
                         f'taken={pick["n_taken"]} costmap={pick["n_costmap"]} '
                         f'near={pick["n_near"]} suspicious={pick.get("n_suspicious", 0)} '
                         f'unreachable={pick.get("n_unreachable", 0)})')
+                    self._cold_spin(r)
                     continue
                 self._assigned[r] = goal
                 self._assigned_meta[r] = pick
@@ -425,11 +450,53 @@ class FrontierCoordinator(Node):
                 self._last_tf_wait_warn[robot] = elapsed
         return positions
 
+    def _cold_spin(self, ns):
+        """Fleet still cold (fewer than 3 goals reached) and this robot has nothing to go to: the known map is
+        only the first lidar integration. slam_toolbox integrates a new scan only after real forward travel
+        (a hand test: rotating changed nothing, 2 m forward took the map from 3.6 to 38 m2), and the first cold
+        goal can be under 0.5 m away - so the map never grows. Nudge the robot ~0.8 m forward (open loop,
+        /<ns>/cmd_vel; the collision monitor still guards it). At most 2 nudges per robot."""
+        if getattr(self, '_succeeded_goals', 99) >= 3:
+            return False
+        now = time.monotonic()
+        if self._cold_spin_n.get(ns, 0) >= 2:
+            return False
+        if now - self._cold_spin_at.setdefault(ns, -1e9) < 45.0 or ns in self._nudges:
+            return False
+        self._cold_spin_at[ns] = now
+        self._cold_spin_n[ns] = self._cold_spin_n.get(ns, 0) + 1
+        self.get_logger().warn(f'[{ns}] no frontier yet and the map is still tiny - nudging 0.8 m forward so SLAM integrates new scans.')
+        try:
+            self._start_nudge(ns)
+        except Exception as e:  # noqa: BLE001
+            self.get_logger().warn(f'[{ns}] cold-start nudge could not start: {e}')
+            return False
+        return True
+
+    def _start_nudge(self, ns):
+        from geometry_msgs.msg import Twist
+        if ns not in self._nudge_pubs:
+            self._nudge_pubs[ns] = self.create_publisher(Twist, f'/{ns}/cmd_vel', 10)
+        if self._nudge_timer is None:
+            self._nudge_timer = self.create_timer(0.1, self._nudge_tick)
+        self._nudges[ns] = time.monotonic() + 3.2          # 0.25 m/s * 3.2 s = 0.8 m
+
+    def _nudge_tick(self):
+        from geometry_msgs.msg import Twist
+        now = time.monotonic()
+        for ns, end in list(self._nudges.items()):
+            msg = Twist()
+            if now < end:
+                msg.linear.x = 0.25
+            else:
+                del self._nudges[ns]                        # one zero command to stop
+            self._nudge_pubs[ns].publish(msg)
+
     def _elapsed_sec(self):
         return (self.get_clock().now() - self._start_time).nanoseconds / 1e9
 
     # ------------------------------------------------------------------
-    def _pick(self, frontiers, robot_pos, ns, collect=None, allow_tiny=False):
+    def _pick(self, frontiers, robot_pos, ns, collect=None, allow_tiny=False, allow_suspicious=False):
         """Pick a frontier through the selected scorer plugin.
 
         Returns (goal_xy | None, diagnostics dict).
@@ -454,7 +521,7 @@ class FrontierCoordinator(Node):
             # soft penalty in the scorer still applies), or the fleet never leaves the spawn.
             cold = (getattr(self, '_succeeded_goals', 1) + getattr(self, '_failed_goals', 1) == 0
                     and not any(g is not None for g in getattr(self, '_assigned', {1: 1}).values()))
-            if (not cold
+            if (not cold and not allow_suspicious
                     and frontier.get('suspicious_ratio', 0.0) >= self._suspect_hard_ratio):
                 n_suspicious += 1
                 continue
@@ -498,7 +565,15 @@ class FrontierCoordinator(Node):
 
         if best is None and n_tiny and not allow_tiny:
             # only tiny frontiers are left: take them rather than stop exploring early
-            return self._pick(frontiers, robot_pos, ns, collect=collect, allow_tiny=True)
+            return self._pick(frontiers, robot_pos, ns, collect=collect, allow_tiny=True,
+                              allow_suspicious=allow_suspicious)
+
+        if best is None and n_suspicious and not allow_suspicious:
+            # every remaining frontier looks suspicious (e.g. one big perimeter of a small known bubble,
+            # seen in the cafe fleet run: pool=1 suspicious=1 forever after the first goal). Rather than
+            # idle, take the best of them; failures are blacklisted so a bad one cannot loop.
+            return self._pick(frontiers, robot_pos, ns, collect=collect, allow_tiny=allow_tiny,
+                              allow_suspicious=True)
 
         diag = {
             'n_total': len(frontiers),
@@ -891,20 +966,25 @@ class FrontierCoordinator(Node):
                         queue.append((ny, nx))
             if len(cluster) < self._min_size:
                 continue
-            goal_cell, clearance = self._place_safe_goal(
-                cluster, free, unknown, occupied, res)
-            if goal_cell is None:
-                continue
-            cy, cx = goal_cell
-            result.append({
-                'point': (ox + (cx + 0.5) * res, oy + (cy + 0.5) * res),
-                'goal_cell': (int(cy), int(cx)),
-                'size': len(cluster),
-                'size_m': len(cluster) * res,
-                'info_gain': self._info_gain(cluster, unknown, res),
-                'clearance': clearance,
-                'suspicious_ratio': self._suspicious_frontier_ratio(len(cluster) * res, clearance),
-            })
+            # A long frontier (e.g. the whole ring around the first lidar view) would otherwise offer ONE
+            # goal; once that is visited nothing else is offered and the fleet idles. Offer several.
+            for part in split_frontier(cluster, res, getattr(self, '_split_len_m', 3.0)):
+                if len(part) < self._min_size:
+                    continue
+                goal_cell, clearance = self._place_safe_goal(
+                    part, free, unknown, occupied, res)
+                if goal_cell is None:
+                    continue
+                cy, cx = goal_cell
+                result.append({
+                    'point': (ox + (cx + 0.5) * res, oy + (cy + 0.5) * res),
+                    'goal_cell': (int(cy), int(cx)),
+                    'size': len(part),
+                    'size_m': len(part) * res,
+                    'info_gain': self._info_gain(part, unknown, res),
+                    'clearance': clearance,
+                    'suspicious_ratio': self._suspicious_frontier_ratio(len(part) * res, clearance),
+                })
         return result
 
     def _place_safe_goal(self, cluster, free, unknown, occupied, resolution):

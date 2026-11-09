@@ -2859,6 +2859,15 @@ Reconstructed from `EXPLORATION_TESTING_NOTES.md` and commits `cfd6b49`, `7cd34d
 
 **If it returns:** compare `slam_toolbox_mode:=online_sync` and a `do_loop_closing:false` profile; call the `slam_toolbox` map-reset service when recoveries repeatedly fail.
 
+### Fleet cold start (fixed 2026-11-09)
+
+A 3-robot cafe fleet used to reach 1 goal in 240 s and map ~4-13 m2. Two causes, both in the first seconds:
+
+1. **One goal per frontier cluster.** The first lidar view gives one ring-shaped frontier; the coordinator turned each cluster into a single goal, so once it was reached everything counted as "visited". `split_frontier()` now cuts long clusters (rings by angle around the centroid, lines along the principal axis) into ~3 m pieces, each with its own goal; if the only frontier left is marked suspicious it is taken instead of idling.
+2. **slam_toolbox only integrates a new scan after real forward travel.** The map seed is a tiny first integration, and the first cold goal can be under 0.5 m away, so the robot barely moves and the map never grows (hand test: rotating changed nothing, driving 2 m forward took the map from 3.6 to 38 m2). While fewer than 3 goals have succeeded, an idle robot with no usable frontier now gets a ~0.8 m open-loop forward nudge on `/<ns>/cmd_vel` (the collision monitor still guards it), at most twice per robot.
+
+After both: cafe, 3 robots, 300 s, exploration finished (0 frontiers left), 28 goals reached, 115 m2. The cafe is a mesh with a door and see-through gaps, so `worlds/cafe.world` has a perimeter fence just outside it; without it lidar rays escape and exploration cannot finish.
+
 ## Running the tests
 
-`src/rosnav_bot/scripts/run_tests.sh` runs every unit test with no simulator or GPU: the rosnav tests, then each vendored tool (`nav2_fault_inject`, `slam_doctor`, `nav_explore_eval`) as its own pytest session, and exits non-zero on any failure. Extra arguments go to pytest (`run_tests.sh -k frontier`). It sources `/opt/ros/humble` or `jazzy` if ROS is not already sourced. Tests needing an optional package (rclpy, OpenCV, matplotlib) skip with a reason. CI runs the same script after the build, so a green CI means the same thing as a green local run. Checked in a clean environment on 2026-11-09: 323 tests pass (219 rosnav, 33 + 23 + 48 tools).
+`src/rosnav_bot/scripts/run_tests.sh` runs every unit test with no simulator or GPU: the rosnav tests, then each vendored tool (`nav2_fault_inject`, `slam_doctor`, `nav_explore_eval`) as its own pytest session, and exits non-zero on any failure. Extra arguments go to pytest (`run_tests.sh -k frontier`). It sources `/opt/ros/humble` or `jazzy` if ROS is not already sourced. Tests needing an optional package (rclpy, OpenCV, matplotlib) skip with a reason. `--group exploration|navigation|tools|other|fault_inject|slam_doctor|explore_eval` runs one slice. CI runs 12 parallel checks (build + colcon tests, five static checks from `check_static.py`, four rosnav test slices, and the three tool suites) so a failure names the area. The slices together cover every test once (`other` is the catch-all). Checked in a clean `ros:humble` container on 2026-11-09: 324 tests pass (220 rosnav, 33 + 23 + 48 tools).

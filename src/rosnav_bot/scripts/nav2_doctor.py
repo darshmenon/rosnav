@@ -105,6 +105,7 @@ class Doctor:
         self.goal_since = None   # when the current goal became active
         self.last = {}           # stream name -> last receipt time
         self.tf_edges = {}       # (parent, child) -> last receipt time
+        self.static_edges = set()   # (parent, child) from /tf_static: published once, never stale
         self.lifecycle = {}      # node -> state label or None (unreachable)
         self.goal_times = []     # times a goal id first appeared
         self.goal_active = False
@@ -136,6 +137,10 @@ class Doctor:
         if skew is not None:
             self.skew = abs(skew)
         self.tf_edges[(parent.lstrip('/'), child.lstrip('/'))] = now
+
+    def tf_static(self, parent, child):
+        """A /tf_static edge (e.g. a fixed map->odom when localization is static): counts as present, never stale."""
+        self.static_edges.add((parent.lstrip('/'), child.lstrip('/')))
 
     def cmd(self, linear, angular, now):
         self.seen('cmd_vel', now)
@@ -209,7 +214,7 @@ class Doctor:
                     f.append(Finding('ERROR', 'TF_EDGE_STALE',
                                      f'transform {p}->{c} stopped {a:.1f}s ago while other TF is alive'))
 
-        has_map_odom = any(p.endswith('map') and c.endswith('odom') for p, c in self.tf_edges)
+        has_map_odom = any(p.endswith('map') and c.endswith('odom') for p, c in set(self.tf_edges) | self.static_edges)
         if age_tf is not None and not has_map_odom:
             f.append(Finding('WARN', 'NO_MAP_ODOM', 'no map->odom transform - SLAM/AMCL not localizing'))
 
@@ -416,6 +421,16 @@ def main(argv=None):
     node.create_subscription(TFMessage, f'{ns}/tf', on_tf, rel)
     if ns:   # shared global /tf with frame prefixes (multi-robot): see on_tf
         node.create_subscription(TFMessage, '/tf', lambda m: on_tf(m, True), rel)
+    def on_tf_static(m, shared=False):
+        for t in m.transforms:
+            if shared and not tf_belongs_to(args.ns, t.header.frame_id, t.child_frame_id):
+                continue
+            d.tf_static(t.header.frame_id, t.child_frame_id)
+    from rclpy.qos import DurabilityPolicy as _Dur
+    latched = QoSProfile(depth=100, durability=_Dur.TRANSIENT_LOCAL)
+    node.create_subscription(TFMessage, f'{ns}/tf_static', on_tf_static, latched)
+    if ns:
+        node.create_subscription(TFMessage, '/tf_static', lambda m: on_tf_static(m, True), latched)
     node.create_subscription(Odometry, f'{ns}/odom', lambda m: d.pose(m.pose.pose.position.x, m.pose.pose.position.y, clock()), sd)
     node.create_subscription(PoseWithCovarianceStamped, f'{ns}/amcl_pose',
                              lambda m: d.amcl(m.pose.covariance[0], m.pose.covariance[7], clock()), rel)

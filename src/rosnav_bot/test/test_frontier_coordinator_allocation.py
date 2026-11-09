@@ -256,8 +256,61 @@ def test_cold_start_picks_suspicious_frontier():
     assert goal == (1.0, 1.0) and pick['n_suspicious'] == 0
 
 
-def test_after_first_goal_suspicious_frontier_rejected():
+def test_after_first_goal_suspicious_frontier_loses_to_a_normal_one():
+    good = dict(_SUSPECT, point=(2.0, 2.0), suspicious_ratio=0.5)
+    goal, pick = _cold_node(done=1)._pick([dict(_SUSPECT), good], (0.0, 0.0), 'r1')
+    assert goal == (2.0, 2.0) and pick['n_suspicious'] == 1
+
+
+def test_only_suspicious_frontier_left_is_taken_not_idled():
+    # cafe fleet run: pool=1 suspicious=1 after the first goal left every robot idle forever
     goal, pick = _cold_node(done=1)._pick([dict(_SUSPECT)], (0.0, 0.0), 'r1')
-    assert goal is None and pick['n_suspicious'] == 1
-    goal, pick = _cold_node(assigned={'r1': None, 'r2': (3.0, 3.0)})._pick([dict(_SUSPECT)], (0.0, 0.0), 'r1')
-    assert goal is None and pick['n_suspicious'] == 1
+    assert goal == (1.0, 1.0)
+    goal, _ = _cold_node(assigned={'r1': None, 'r2': (3.0, 3.0)})._pick([dict(_SUSPECT)], (0.0, 0.0), 'r1')
+    assert goal == (1.0, 1.0)
+
+
+class _SpinLog:
+    def warn(self, *_): pass
+
+
+def _spin_node(done):
+    obj = fc.FrontierCoordinator.__new__(fc.FrontierCoordinator)
+    obj._succeeded_goals, obj._cold_spin_at, obj._cold_spin_proc, obj._cold_spin_n = done, {}, {}, {}
+    obj._nudges, obj.started = {}, []
+    obj._start_nudge = lambda ns: (obj.started.append(ns), obj._nudges.__setitem__(ns, 1e18))
+    obj.get_logger = lambda: _SpinLog()
+    return obj
+
+
+def test_cold_nudge_runs_once_per_cooldown():
+    n = _spin_node(1)
+    assert n._cold_spin('robot1') is True and n.started == ['robot1']
+    n._nudges.clear()
+    assert n._cold_spin('robot1') is False            # cooldown
+    assert n._cold_spin('robot2') is True             # other robot independent
+
+
+def test_cold_nudge_skipped_once_fleet_has_progressed():
+    assert _spin_node(3)._cold_spin('robot1') is False
+
+
+def test_cold_nudge_capped_at_two_per_robot():
+    n = _spin_node(0)
+    assert n._cold_spin('robot1') is True
+    n._nudges.clear(); n._cold_spin_at['robot1'] = -1e9
+    assert n._cold_spin('robot1') is True
+    n._nudges.clear(); n._cold_spin_at['robot1'] = -1e9
+    assert n._cold_spin('robot1') is False
+
+
+def test_split_frontier_ring_gives_several_parts_covering_all_cells():
+    import math as m
+    ring = sorted({(int(50 + 40 * m.sin(a / 200 * 6.2832)), int(50 + 40 * m.cos(a / 200 * 6.2832))) for a in range(200)})
+    parts = fc.split_frontier(ring, 0.05, 3.0)            # ~ 250 cells * 0.05 = 12 m -> 4+ parts
+    assert len(parts) >= 4 and sum(len(p) for p in parts) == len(ring)
+
+
+def test_split_frontier_short_cluster_unchanged():
+    cl = [(0, i) for i in range(20)]
+    assert fc.split_frontier(cl, 0.05, 3.0) == [cl]
