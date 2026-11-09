@@ -4,6 +4,8 @@ ROOT = os.path.join(os.path.dirname(__file__), '..')
 sys.path.insert(0, ROOT)
 from nav2_fault_inject import faults
 from nav2_fault_inject.faults import Injector, Proc, find, hang, list_procs, parse_scenario, run_scenario
+_DOM = 200 + os.getpid() % 25   # per-process ROS domain: never collides with a sim on a shared machine
+os.environ['ROS_LOCALHOST_ONLY'] = '1'
 
 
 def fake_proc(root, pid, args, domain='5'):
@@ -139,11 +141,11 @@ def state(pid):
 def test_real_process_is_frozen_then_resumed(tmp_path):
     out = tmp_path / 'tick'
     code = f"import time\nwhile True:\n    open({str(out)!r},'a').write('x'); time.sleep(0.05)"
-    env = dict(os.environ, ROS_DOMAIN_ID='177')
+    env = dict(os.environ, ROS_DOMAIN_ID=str(_DOM + 2))
     child = subprocess.Popen([sys.executable, '-c', code, '--ros-args', '-r', '__node:=victim'], env=env)
     try:
         time.sleep(0.5)
-        os.environ['ROS_DOMAIN_ID'] = '177'
+        os.environ['ROS_DOMAIN_ID'] = str(_DOM + 2)
         cli = subprocess.Popen([sys.executable, '-m', 'nav2_fault_inject.cli', 'hang', 'victim', '--for', '1.5'],
                                cwd=ROOT, env=env, stdout=subprocess.PIPE, text=True)
         time.sleep(0.7)
@@ -159,7 +161,7 @@ def test_real_process_is_frozen_then_resumed(tmp_path):
 
 
 def test_cli_ctrl_c_resumes(tmp_path):
-    env = dict(os.environ, ROS_DOMAIN_ID='178')
+    env = dict(os.environ, ROS_DOMAIN_ID=str(_DOM + 3))
     child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)', '__node:=victim2'], env=env)
     try:
         time.sleep(0.4)
@@ -175,7 +177,7 @@ def test_cli_ctrl_c_resumes(tmp_path):
 
 def test_cli_unknown_node_exit_2():
     p = subprocess.run([sys.executable, '-m', 'nav2_fault_inject.cli', 'hang', 'nonexistent_node', '--for', '1'],
-                       cwd=ROOT, capture_output=True, text=True, env=dict(os.environ, ROS_DOMAIN_ID='179'))
+                       cwd=ROOT, capture_output=True, text=True, env=dict(os.environ, ROS_DOMAIN_ID=str(_DOM + 4)))
     assert p.returncode == 2 and 'no process for node' in p.stderr
 
 

@@ -5,6 +5,8 @@ import subprocess
 import sys
 import time
 
+_DOM = str(200 + os.getpid() % 25)   # per-process ROS domain, never collides with a sim on a shared machine
+
 _SCRIPT = os.path.join(os.path.dirname(__file__), '..', 'scripts', 'nav2_bringup_watchdog.py')
 
 
@@ -27,10 +29,10 @@ def _spawn(domain, ns):
 
 def test_manager_pids_matches_only_own_domain_and_robot(monkeypatch):
     find = _load()
-    monkeypatch.setenv('ROS_DOMAIN_ID', '88')
-    mine = _spawn('88', 'robotT')
+    monkeypatch.setenv('ROS_DOMAIN_ID', _DOM)
+    mine = _spawn(_DOM, 'robotT')
     other_domain = _spawn('99', 'robotT')
-    other_robot = _spawn('88', 'robotU')
+    other_robot = _spawn(_DOM, 'robotU')
     try:
         time.sleep(0.5)
         assert find(None, 'robotT') == [mine.pid]

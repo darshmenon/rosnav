@@ -13,6 +13,8 @@ except ImportError:                                   # unit-only CI job has no 
     rclpy = None
 pytestmark = pytest.mark.skipif(rclpy is None, reason='needs rclpy')
 import slam_doctor
+_DOM = 200 + os.getpid() % 25   # per-process ROS domain: never collides with a sim on a shared machine
+os.environ['ROS_LOCALHOST_ONLY'] = '1'
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(slam_doctor.__file__)))   # repo root, or the vendored tools dir
 HERE = os.path.abspath(__file__)
@@ -72,9 +74,9 @@ def doctor(domain, secs, *extra):
 
 
 def test_correction_is_logged_and_events_file_written(tmp_path):
-    th = start_graph(183, 16, jump_at=6.0, freeze_map=False); time.sleep(1.5)
+    th = start_graph(_DOM, 16, jump_at=6.0, freeze_map=False); time.sleep(1.5)
     ev = tmp_path / 'ev.jsonl'
-    r, rep = doctor(183, 10, '--events', str(ev))
+    r, rep = doctor(_DOM, 10, '--events', str(ev))
     th.wait()
     assert rep['summary']['corrections'] >= 1 and rep['summary']['largest_correction_m'] >= 0.35
     assert any('"correction"' in l for l in ev.read_text().splitlines())
@@ -83,8 +85,8 @@ def test_correction_is_logged_and_events_file_written(tmp_path):
 
 def test_frozen_map_while_moving_is_an_error():
     import slam_doctor.core as c
-    th = start_graph(184, 13); time.sleep(1.5)
-    env_stall = dict(os.environ, ROS_DOMAIN_ID='184', PYTHONPATH=PP)
+    th = start_graph(_DOM + 1, 13); time.sleep(1.5)
+    env_stall = dict(os.environ, ROS_DOMAIN_ID=str(_DOM + 1), PYTHONPATH=PP)
     code = ("import slam_doctor.core as c; c.STALL_S=3.0; c.STALL_TRAVEL_M=1.0; "
             "import sys; from slam_doctor.doctor import main; sys.exit(main(['--json','--once','8']))")
     r = subprocess.run([sys.executable, '-c', code], cwd=ROOT, env=env_stall, capture_output=True, text=True, timeout=60)

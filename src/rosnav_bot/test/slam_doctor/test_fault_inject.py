@@ -17,6 +17,8 @@ pytestmark = pytest.mark.skipif(nav2_fault_inject is None, reason='needs nav2_fa
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(slam_doctor.__file__)))
 FI = os.path.dirname(os.path.dirname(os.path.abspath(nav2_fault_inject.__file__))) if nav2_fault_inject else ''
+_DOM = 200 + os.getpid() % 25   # per-process ROS domain: never collides with a sim on a shared machine
+os.environ['ROS_LOCALHOST_ONLY'] = '1'
 PP = os.pathsep.join([ROOT, FI, os.environ.get('PYTHONPATH', '')])
 GRAPH = '''
 import importlib.util as u
@@ -26,7 +28,7 @@ m._run_graph(%d, 40, freeze_map=False)
 
 
 def test_frozen_slam_is_flagged_then_recovers(tmp_path):
-    dom = '185'
+    dom = str(_DOM)
     env = dict(os.environ, ROS_DOMAIN_ID=dom, PYTHONPATH=PP)
     graph_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test_integration.py')
     victim = subprocess.Popen([sys.executable, '-c', GRAPH % (graph_py, int(dom)), '--ros-args', '-r', '__node:=fake_slam'],

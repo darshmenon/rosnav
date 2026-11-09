@@ -7,6 +7,9 @@ import time
 
 import nav2_fault_inject
 
+_DOM = 200 + os.getpid() % 25   # per-process ROS domain: never collides with a sim on a shared machine
+os.environ['ROS_LOCALHOST_ONLY'] = '1'
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(nav2_fault_inject.__file__)))   # works in the repo and when vendored
 
 DOCTOR = r'''
@@ -39,13 +42,13 @@ def run_check(tmp_path, domain, expect_code, doc_code='SCAN_STALE'):
 
 
 def test_check_passes_when_doctor_notices_and_stack_recovers(tmp_path):
-    r, _ = run_check(tmp_path, '181', 'SCAN_STALE')
+    r, _ = run_check(tmp_path, str(_DOM), 'SCAN_STALE')
     assert r.returncode == 0, r.stdout + r.stderr
     assert 'PASS' in r.stdout and 'detect SCAN_STALE' in r.stdout
 
 
 def test_check_fails_when_expected_code_never_appears(tmp_path):
-    r, _ = run_check(tmp_path, '182', 'ODOM_STALE')
+    r, _ = run_check(tmp_path, str(_DOM + 1), 'ODOM_STALE')
     assert r.returncode == 1, r.stdout + r.stderr
     assert 'FAIL' in r.stdout and 'not seen' in r.stdout
 

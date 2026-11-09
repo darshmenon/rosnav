@@ -6,9 +6,26 @@ on:
   pull_request:
 
 jobs:
-  build-and-test:
+  check:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-22.04
     container: ros:humble
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "build + colcon tests",      build: true,  run: "colcon test --packages-select rosnav_bot --ctest-args -R test_frontier --event-handlers console_direct+ && colcon test-result --verbose" }
+          - { name: "static: python syntax",     build: false, run: "python3 src/rosnav_bot/scripts/check_static.py --only python" }
+          - { name: "static: yaml configs",      build: false, run: "python3 src/rosnav_bot/scripts/check_static.py --only yaml" }
+          - { name: "static: robot models",      build: false, run: "python3 src/rosnav_bot/scripts/check_static.py --only urdf" }
+          - { name: "static: worlds",            build: false, run: "python3 src/rosnav_bot/scripts/check_static.py --only worlds" }
+          - { name: "static: launch files",      build: true,  run: "python3 src/rosnav_bot/scripts/check_static.py --only launch" }
+          - { name: "tests: exploration",        build: false, run: "src/rosnav_bot/scripts/run_tests.sh --group exploration" }
+          - { name: "tests: navigation + fleet", build: false, run: "src/rosnav_bot/scripts/run_tests.sh --group navigation" }
+          - { name: "tests: tools + doctors",    build: false, run: "src/rosnav_bot/scripts/run_tests.sh --group tools" }
+          - { name: "tests: everything else",    build: false, run: "src/rosnav_bot/scripts/run_tests.sh --group other" }
+          - { name: "tool: nav2_fault_inject",   build: false, run: "src/rosnav_bot/scripts/run_tests.sh --group fault_inject" }
+          - { name: "tool: slam_doctor + nav_explore_eval", build: false, run: "src/rosnav_bot/scripts/run_tests.sh --group slam_doctor && src/rosnav_bot/scripts/run_tests.sh --group explore_eval" }
     steps:
       - uses: actions/checkout@v4
 
@@ -21,23 +38,19 @@ jobs:
             ros-humble-ament-cmake-pytest ros-humble-rosidl-default-generators \
             ros-humble-rosidl-default-runtime ros-humble-action-msgs \
             ros-humble-nav2-msgs ros-humble-nav-msgs ros-humble-geometry-msgs \
-            ros-humble-tf2-ros ros-humble-rclpy
+            ros-humble-tf2-ros ros-humble-rclpy ros-humble-xacro
           pip3 install gymnasium "numpy<2"
 
       - name: Build rosnav_bot
+        if: matrix.build
         shell: bash
         run: |
           source /opt/ros/humble/setup.bash
           colcon build --packages-select rosnav_bot --event-handlers console_direct+
 
-      - name: Run registered colcon tests
+      - name: ${{ matrix.name }}
         shell: bash
         run: |
           source /opt/ros/humble/setup.bash
-          colcon test --packages-select rosnav_bot \
-            --ctest-args -R "test_frontier" --event-handlers console_direct+
-          colcon test-result --verbose
-
-      - name: Run full unit-test suite (same command contributors run locally)
-        shell: bash
-        run: src/rosnav_bot/scripts/run_tests.sh
+          if [ -f install/setup.bash ]; then source install/setup.bash; fi
+          ${{ matrix.run }}
