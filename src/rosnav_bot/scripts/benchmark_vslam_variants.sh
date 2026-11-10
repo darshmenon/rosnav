@@ -7,7 +7,7 @@
 #   O-<stem> = same, with docker/orb_slam3/params/<stem>.yaml swapped in as the ORB config (tuning runs)
 # Usage: scripts/benchmark_vslam_variants.sh [world] [seconds_per_variant] [variants...]
 #   e.g. scripts/benchmark_vslam_variants.sh cafe 420 A B C D
-# Env: ROS_DOMAIN_ID (default 201 — NOT the shared default; kills only this domain's processes)
+# Env: EXTRA_ARGS (appended launch args, e.g. controller:=rpp), ROS_DOMAIN_ID (default 201 — NOT the shared default; kills only this domain's processes)
 # Output: $OUT (default /tmp/vslam_bench_<world>/) per-variant log + map, then
 #         docs/benchmarks/BENCHMARK_VSLAM_VARIANTS.md.
 set -u
@@ -59,6 +59,7 @@ run_variant(){
     K-*)   ARGS="slam_algo:=2d controller:=${V#K-}";;
     *) log "unknown variant $V"; return;;
   esac
+  ARGS="$ARGS ${EXTRA_ARGS:-}"   # e.g. EXTRA_ARGS="controller:=rpp" to pair a SLAM variant with a controller
   rm -f "$OUT/$V.db" "$OUT/$V.log" "$OUT/$V.acc.log"
   kill_domain
   log "variant $V: ros2 launch ... $ARGS (${SECS}s)"
@@ -88,7 +89,10 @@ run_variant(){
   done
   echo "$nudges" > "$OUT/$V.nudges"
   echo "$(timeout 8 ros2 topic echo /clock --once --field clock.sec 2>/dev/null | num)" > "$OUT/$V.simsec"   # sim seconds reached (RTF check)
-  ros2 run nav2_map_server map_saver_cli -f "$OUT/map_$V" --ros-args -p use_sim_time:=true > "$OUT/$V.mapsave.log" 2>&1
+  for try in 1 2 3; do   # one failed save ('Failed to spin map subscription') must not lose the run's map
+    ros2 run nav2_map_server map_saver_cli -f "$OUT/map_$V" --ros-args -p use_sim_time:=true -p save_map_timeout:=10.0 > "$OUT/$V.mapsave.log" 2>&1
+    [ -s "$OUT/map_$V.pgm" ] && break; log "  $V: map save attempt $try failed, retrying"; sleep 3
+  done
   log "variant $V done (map: $(ls $OUT/map_$V.pgm 2>/dev/null || echo MISSING))"
   kill_domain
 }
