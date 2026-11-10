@@ -8,7 +8,7 @@ import json
 import time
 from dataclasses import dataclass
 
-__version__ = '0.4.0'
+__version__ = '0.5.0'
 
 NAV2_NODES = ['controller_server', 'planner_server', 'bt_navigator',
               'behavior_server', 'smoother_server', 'waypoint_follower']
