@@ -116,6 +116,7 @@ def map_jump(prev, cur):
 
 
 class FrontierExplorer(Node):
+    _goals_reached = 0   # goals genuinely reached this session (cold-start guard)
     def __init__(self):
         super().__init__('frontier_explorer')
 
@@ -336,6 +337,7 @@ class FrontierExplorer(Node):
         self._costmap: OccupancyGrid | None = None
         self._navigating = False
         self._visited: list[tuple[float, float]] = []
+        self._goals_reached = 0   # goals genuinely reached this session (cold-start guard)
         self._fail_counts: list[list] = []  # [x, y, count]
         self._current_goal: tuple[float, float] | None = None
         self._current_frontier_meta: dict | None = None
@@ -344,6 +346,7 @@ class FrontierExplorer(Node):
         self._goal_sent_time: float = 0.0
         self._goal_start_pos = None
         self._iteration = 0
+        self._ever_accepted = False
         self._map_saved = False
         self._logged_init_wait = False
         self._empty_streak = 0
@@ -547,8 +550,9 @@ class FrontierExplorer(Node):
                 f'failed={pick.get("n_failed", 0)} '
                 f'suspicious={pick.get("n_suspicious", 0)} '
                 f'unreachable={pick.get("n_unreachable", 0)} scorer={self._scorer}')
-            if self._iteration == 0:
-                # Nothing sent yet: every candidate being filtered (suspicious,
+            if self._iteration == 0 or self._goals_reached == 0:
+                # Nothing sent yet (or every goal so far was cancelled, e.g. by a map->odom jump from a
+                # fresh SLAM map, ORB-SLAM3 cafe 2026-11-09 quit at 6% explored this way): every candidate being filtered (suspicious,
                 # cramped, cold-start bubble) is a startup artifact, not
                 # completion. Spin to grow the map and retry for a while.
                 now = time.monotonic()
@@ -1595,6 +1599,17 @@ class FrontierExplorer(Node):
         handle = future.result()
         if not handle.accepted:
             gx, gy = self._current_goal or (0.0, 0.0)
+            if not self._ever_accepted:
+                # Nav2 not active yet (action server is up before bt_navigator/planner activate):
+                # a startup rejection is not the frontier's fault. Do not blacklist it or count it,
+                # so the cold-start wait and relaxed filters still apply and the goal is retried.
+                self.get_logger().warn(
+                    f'Nav2 rejected first goal ({gx:.2f}, {gy:.2f}) — Nav2 probably still activating, '
+                    f'will retry (not counted).')
+                self._iteration = max(0, self._iteration - 1)
+                self._current_frontier_meta = None
+                self._navigating = False
+                return
             self.get_logger().warn(
                 f'Nav2 rejected goal ({gx:.2f}, {gy:.2f}) — trying next frontier.')
             if self._current_goal is not None:
@@ -1606,6 +1621,7 @@ class FrontierExplorer(Node):
         self.get_logger().info(
             f'Nav2 accepted goal ({gx:.2f}, {gy:.2f})'
             + (f' bt={os.path.basename(self._bt_xml)}' if self._bt_xml else ''))
+        self._ever_accepted = True
         self._current_goal_handle = handle
         handle.get_result_async().add_done_callback(self._result_cb)
 
@@ -1642,6 +1658,7 @@ class FrontierExplorer(Node):
                     f'(controller TF likely not ready).')
             else:
                 self._spurious_streak = 0
+                self._goals_reached += 1
                 self.get_logger().info(
                     f'Reached ({gx:.2f}, {gy:.2f}) in {elapsed:.1f}s '
                     f'(visited={len(self._visited) + 1}). Searching next...')

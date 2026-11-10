@@ -463,3 +463,49 @@ def test_cold_start_gives_up_after_wait_window():
     e._cold_wait_start -= 100.0
     e._explore()
     assert finished == [True]
+
+
+class _GoalHandle:
+    def __init__(self, accepted):
+        self.accepted = accepted
+
+    def get_result_async(self):
+        class _F:
+            def add_done_callback(self, cb):
+                pass
+        return _F()
+
+
+class _GoalFuture:
+    def __init__(self, handle):
+        self._h = handle
+
+    def result(self):
+        return self._h
+
+
+def test_startup_rejection_is_not_counted_or_blacklisted():
+    """Nav2's action server is up before bt_navigator activates: the first goal gets rejected.
+    That must not burn an iteration or blacklist the frontier (it ended the run as 'complete')."""
+    failures = []
+    obj = make_bare(_iteration=1, _ever_accepted=False, _current_goal=(0.2, 1.0),
+                    _current_frontier_meta={}, _navigating=True)
+    obj._register_failure = lambda *a: failures.append(a)
+    obj._goal_response_cb(_GoalFuture(_GoalHandle(False)))
+    assert obj._iteration == 0 and not obj._navigating and failures == []
+
+
+def test_rejection_after_first_accept_still_blacklists():
+    failures = []
+    obj = make_bare(_iteration=3, _ever_accepted=True, _current_goal=(0.2, 1.0),
+                    _current_frontier_meta={}, _navigating=True)
+    obj._register_failure = lambda *a: failures.append(a)
+    obj._goal_response_cb(_GoalFuture(_GoalHandle(False)))
+    assert obj._iteration == 3 and len(failures) == 1
+
+
+def test_first_accept_sets_flag():
+    obj = make_bare(_iteration=1, _ever_accepted=False, _current_goal=(0.2, 1.0), _navigating=True, _bt_xml='')
+    obj._result_cb = lambda f: None
+    obj._goal_response_cb(_GoalFuture(_GoalHandle(True)))
+    assert obj._ever_accepted
