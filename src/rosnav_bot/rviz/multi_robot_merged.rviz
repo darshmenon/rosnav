@@ -114,7 +114,7 @@ Visualization Manager:
     - Alpha: 0.8999999761581421
       Class: rviz_default_plugins/Map
       Color Scheme: map
-      Draw Behind: false
+      Draw Behind: true
       Enabled: true
       Name: Map Merged
       Topic:
@@ -135,7 +135,7 @@ Visualization Manager:
     - Alpha: 0.4000000059604645
       Class: rviz_default_plugins/Map
       Color Scheme: costmap
-      Draw Behind: false
+      Draw Behind: true
       Enabled: false
       Name: Map Robot1 (raw)
       Topic:
@@ -156,7 +156,7 @@ Visualization Manager:
     - Alpha: 0.4000000059604645
       Class: rviz_default_plugins/Map
       Color Scheme: costmap
-      Draw Behind: false
+      Draw Behind: true
       Enabled: false
       Name: Map Robot2 (raw)
       Topic:

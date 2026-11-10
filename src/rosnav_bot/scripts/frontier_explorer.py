@@ -117,6 +117,7 @@ def map_jump(prev, cur):
 
 class FrontierExplorer(Node):
     _goals_reached = 0   # goals genuinely reached this session (cold-start guard)
+    _min_turn_r = 0.0    # car-like base: skip goals inside the minimum turning circle (0 = off)
     def __init__(self):
         super().__init__('frontier_explorer')
 
@@ -185,6 +186,7 @@ class FrontierExplorer(Node):
         # A goal closer than this to the robot is already inside Nav2's goal tolerance, so Nav2
         # 'succeeds' without moving. Prefer goals at least this far away (cramped starts).
         self.declare_parameter('min_goal_dist', 0.35)
+        self.declare_parameter('min_turning_radius', 0.0)   # >0 for ackermann: goals inside the turning circle are treated as too near
         self.declare_parameter('goal_search_radius', 1.25)
         # Flat [x1, y1, x2, y2, ...] polygon (map frame); < 3 points (incl.
         # the [0.0, 0.0] default) = unbounded. Frontier goals outside it are
@@ -283,6 +285,7 @@ class FrontierExplorer(Node):
         self._allow_unknown_costmap = self.get_parameter('allow_unknown_costmap').value
         self._goal_pullback = float(self.get_parameter('goal_pullback').value)
         self._min_goal_dist = float(self.get_parameter('min_goal_dist').value)
+        self._min_turn_r = float(self.get_parameter('min_turning_radius').value)
         self._goal_search_radius = float(self.get_parameter('goal_search_radius').value)
         self._boundary = self._parse_boundary(
             list(self.get_parameter('exploration_boundary').value))
@@ -1168,7 +1171,7 @@ class FrontierExplorer(Node):
             if not self._costmap_allows(fx, fy):
                 n_costmap += 1
                 continue
-            if d < self._min_goal_dist:
+            if d < self._min_goal_dist or self._inside_turning_circle(pos, fx, fy):
                 n_near += 1
                 near_candidates.append((frontier, d))
                 continue
@@ -1423,6 +1426,30 @@ class FrontierExplorer(Node):
         return any(
             math.hypot(fx - vx, fy - vy) < self._revisit_r
             for vx, vy in self._visited)
+
+    def _robot_yaw(self):
+        """Yaw of base_link in the goal frame, or None if TF is not ready."""
+        try:
+            q = self._tf_buffer.lookup_transform(
+                self._goal_frame, self._base_frame, rclpy.time.Time()).transform.rotation
+            return math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        except Exception:
+            return None
+
+    def _inside_turning_circle(self, pos, fx, fy):
+        """True if (fx, fy) lies inside the minimum turning circle on its own side of the robot, i.e. a
+        car-like base cannot reach it driving forward (ackermann, cafe 2026-11-10: goal 1.4 m sideways,
+        0.66 m radius -> wobbled forever, 0 goals). Off unless min_turning_radius > 0."""
+        r = self._min_turn_r
+        if r <= 0.0 or pos is None:
+            return False
+        yaw = self._robot_yaw()
+        if yaw is None:
+            return False
+        dx, dy = fx - pos[0], fy - pos[1]
+        lx = math.cos(yaw) * dx + math.sin(yaw) * dy
+        ly = -math.sin(yaw) * dx + math.cos(yaw) * dy
+        return math.hypot(lx, ly - math.copysign(r, ly)) < r
 
     def _robot_position(self):
         """Return (x, y) of base_link in the map frame via TF lookup."""

@@ -1065,7 +1065,7 @@ def _build_runtime_actions(context, pkg_share: str):
                        if exploration_boundary else {}),
                     # A car-like base cannot spin in place: goals closer than its minimum turning
                     # radius (0.66 m) stall for 20 s each and get blacklisted.
-                    **({'min_goal_dist': 0.8} if drive_type == 'ackermann' else {}),
+                    **({'min_goal_dist': 0.8, 'min_turning_radius': 0.66} if drive_type == 'ackermann' else {}),
                     # Ablation hook: arbitrary frontier_explorer params as JSON,
                     # e.g. explorer_params:='{"hysteresis_gain": 0.0}'. Applied last.
                     **_common.parse_param_overrides(

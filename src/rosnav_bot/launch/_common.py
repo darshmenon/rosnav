@@ -765,9 +765,12 @@ def namespace_nav2_params(params: dict, ns: str) -> dict:
             section['robot_base_frame'] = f"{ns}/{section['robot_base_frame']}"
         if costmap == 'local_costmap' and section.get('global_frame') not in (None, 'map'):
             section['global_frame'] = f"{ns}/{section['global_frame']}"
-        scan = section.get('obstacle_layer', {}).get('scan', {})
-        if str(scan.get('topic', '')).startswith('/'):
-            scan['topic'] = f"/{ns}{scan['topic']}"
+        layer = section.get('obstacle_layer', {})
+        sources = str(layer.get('observation_sources', 'scan')).split()
+        for src in sources:   # scan AND points/depth: a global /points would feed every robot the same cloud
+            conf = layer.get(src, {})
+            if isinstance(conf, dict) and str(conf.get('topic', '')).startswith('/'):
+                conf['topic'] = f"/{ns}{conf['topic']}"
 
     amcl = params.get('amcl', {}).get('ros__parameters', {})
     for key in _STRIP_AMCL_KEYS:

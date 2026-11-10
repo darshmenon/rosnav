@@ -275,6 +275,16 @@ Per-robot slam_toolbox maps merged into `/map_merged` (10x speed).
 
 ![RTAB-Map 3D lidar exploring simple_rooms in RViz](images/rtabmap_3d_lidar_simple_rooms.gif)
 
+| hospital | maze | simple_rooms (sequence) |
+|:--:|:--:|:--:|
+| <img src="images/rtabmap_3d_lidar_hospital.gif" alt="RTAB-Map 3D lidar exploring the hospital" width="260"> | <img src="images/rtabmap_3d_lidar_maze.gif" alt="RTAB-Map 3D lidar exploring the maze" width="260"> | <img src="images/rtabmap_simple_rooms_sequence.gif" alt="RTAB-Map simple_rooms mapping sequence" width="260"> |
+
+#### slam_toolbox + MPC controller (maze)
+
+`controller:=mpc world_name:=maze explore:=true`
+
+![slam_toolbox with the MPC controller exploring the maze in RViz](images/slam_toolbox_mpc_maze.gif)
+
 #### RTAB-Map visual SLAM (RGB-D, cafe)
 
 `slam_algo:=vslam world_name:=cafe` (`vslam.rviz`)
@@ -365,6 +375,10 @@ Two independent launch args:
 | Ackermann (car-like) | `drive_type:=ackermann` | Front steer, min turning radius ~0.66 m | Always MPPI; keep `safety:=true` |
 | MiR100 look | `robot_model:=mir100` (+ diff) | Same as diff | Mesh skin only |
 | Husky look | `robot_model:=husky` (+ diff) | Same as diff | Mesh skin only |
+
+MiR100 skin, cafe, SLAM + frontier exploration (RViz; the Husky `.glb` skin shows only in Gazebo, RViz cannot load glTF):
+
+![MiR100 exploring the cafe in RViz](images/amr_mir100_cafe.gif)
 
 ### Switch (single robot — map + navigate)
 

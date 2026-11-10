@@ -509,3 +509,15 @@ def test_first_accept_sets_flag():
     obj._result_cb = lambda f: None
     obj._goal_response_cb(_GoalFuture(_GoalHandle(True)))
     assert obj._ever_accepted
+
+
+def test_inside_turning_circle_skips_sideways_goals_for_cars():
+    """Ackermann: a goal 1.4 m straight sideways of a car with 0.66 m turning radius is inside its circle."""
+    obj = make_bare(_min_turn_r=0.66)
+    obj._robot_yaw = lambda: 0.0                       # facing +x
+    assert obj._inside_turning_circle((0.0, 0.0), 0.2, 1.08)      # sideways, inside the left circle
+    assert not obj._inside_turning_circle((0.0, 0.0), 3.0, 0.0)   # straight ahead
+    assert not obj._inside_turning_circle((0.0, 0.0), 1.0, 2.5)   # far to the left, reachable by an arc
+    obj._robot_yaw = lambda: math.pi / 2               # facing +y: the same goal is now straight ahead
+    assert not obj._inside_turning_circle((0.0, 0.0), 0.2, 1.08)
+    assert not make_bare(_min_turn_r=0.0)._inside_turning_circle((0.0, 0.0), 0.2, 1.08)   # off by default
