@@ -376,7 +376,7 @@ Two independent launch args:
 | MiR100 look | `robot_model:=mir100` (+ diff) | Same as diff | Mesh skin only |
 | Husky look | `robot_model:=husky` (+ diff) | Same as diff | Mesh skin only |
 
-MiR100 skin, cafe, SLAM + frontier exploration (RViz; the Husky `.glb` skin shows only in Gazebo, RViz cannot load glTF):
+MiR100 skin, cafe, SLAM + frontier exploration in RViz:
 
 ![MiR100 exploring the cafe in RViz](images/amr_mir100_cafe.gif)
 

@@ -1332,6 +1332,9 @@ def _build_all(context, pkg_share: str):
                     executable='frontier_coordinator.py',
                     name='frontier_coordinator',
                     output='screen',
+                    # a crashed coordinator stalled the whole fleet at 3% coverage (fault bench 2026-11-11)
+                    respawn=True,
+                    respawn_delay=2.0,
                     parameters=[{
                         # Gazebo sim: goals must be stamped with sim time, otherwise Nav2's
                         # controller sees wall-clock stamps vs sim-time TF ("Transform data too old").

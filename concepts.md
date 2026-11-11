@@ -356,6 +356,8 @@ Ran `mode:=nav` on `cafe` (`slam:=false`, AMCL) and found two real gotchas:
 
 ---
 
+`scripts/benchmark_vslam_variants.sh` accepts `EXTRA_ARGS` (appended launch args, e.g. `EXTRA_ARGS="controller:=rpp"` to pair a SLAM variant with a controller) and retries the end-of-run `map_saver` up to 3 times. Score its saved maps with `nav_explore_eval score <map.yaml> <truth.yaml> --align --rotate` (truth from `nav_explore_eval truth-from-world <world>`). `nav_explore_eval` now also reports translational RPE over 1 m of path next to ATE.
+
 ### Statistical & stress benchmarks (scripts/)
 
 Single runs are noise; these add repeats, ablations and stress. All run headless in an
@@ -1451,6 +1453,10 @@ ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
 
 ---
 
+### Ackermann status (2026-11-10)
+
+A car cannot reach a goal inside its minimum turning circle (0.66 m): the first cafe goal was 1.4 m straight sideways, MPPI output jittered around zero and the car never left the start. `frontier_explorer.py` now takes `min_turning_radius` (set to 0.66 by `slam_nav.launch.py` for `drive_type:=ackermann`, 0 = off elsewhere) and treats goals inside that circle, on their own side of the robot, as "too near" (same cold-start relaxation as `min_goal_dist`). The progress checker is relaxed to 0.3 m / 20 s (a car arcs). **Result 2026-11-11 (cafe, 240 s, load max 14):** first ackermann goals ever, 2 reached / 4 failed, 78.7% explored, 2 missed control cycles (before the filter: 0 goals in every run). Still weak vs diff/mecanum; failures remain ('Failed to make progress'). See `todo.md` A.
+
 ## 19. MiR100 Chassis Skin (`robot_model:=mir100`)
 
 Swaps the chassis **visual only** — wheels, sensors (lidar/camera), physics,
@@ -1615,6 +1621,10 @@ Map selection behavior:
 - Legacy fallbacks still work (`~/rosnav/maps` and old root-level map files).
 
 ---
+
+**RViz map plane vs wheels:** the map is drawn at `base_link` height (`odom -> base_link` is z = 0), i.e. through the wheel centres, so a map drawn in front of the robot cuts the wheels in half. All shipped `.rviz` configs set `Draw Behind: true` on the map displays. The Husky skin (`.glb`) does load in RViz (verified 2026-11-11: with the URDF colour changed to yellow the hull still rendered in the mesh's own material), but it renders as a plain box-like hull at the 0.55x scale, so it looks much less distinct than in Gazebo; MiR100 (`.stl`) is clearer. A converted `meshes/husky/visual_dae/` copy was tried and gave no visible difference.
+
+**Explorer cold-start guard:** `frontier_explorer.py` keeps treating "no usable frontier" as a cold start until a goal has genuinely been reached (`_goals_reached`), not only until the first goal is sent. A fresh SLAM map (ORB-SLAM3 `map->odom` jump) used to cancel the first goal and end the run as "exploration complete" at 6%.
 
 ## RViz Checklist — What to Verify
 
@@ -2873,3 +2883,19 @@ After both: cafe, 3 robots, 300 s, exploration finished (0 frontiers left), 28 g
 ## Running the tests
 
 `src/rosnav_bot/scripts/run_tests.sh` runs every unit test with no simulator or GPU: the rosnav tests, then each vendored tool (`nav2_fault_inject`, `slam_doctor`, `nav_explore_eval`) as its own pytest session, and exits non-zero on any failure. Extra arguments go to pytest (`run_tests.sh -k frontier`). It sources `/opt/ros/humble` or `jazzy` if ROS is not already sourced. Tests needing an optional package (rclpy, OpenCV, matplotlib) skip with a reason. `--group exploration|navigation|tools|other|fault_inject|slam_doctor|explore_eval` runs one slice. CI runs 12 parallel checks (build + colcon tests, five static checks from `check_static.py`, four rosnav test slices, and the three tool suites) so a failure names the area. The slices together cover every test once (`other` is the catch-all). `check_static.py --only closure` flood-fills every box-built world from its spawn point and fails if it reaches the outside (mesh/include worlds and the open outdoor worlds skip); it found open corridor ends in `hospital` and `office`, now closed with a wall segment each. Checked in a clean `ros:humble` container on 2026-11-09: 324 tests pass (220 rosnav, 33 + 23 + 48 tools).
+
+## 46. Multi-robot SLAM landscape (2026-11-11, from papers, not our runs)
+
+SKiD-SLAM ([arXiv 2505.08230](https://arxiv.org/html/2505.08230v3), SPARO Lab, Inha; ICRA 2025 field-robotics workshop) is distributed multi-robot LiDAR SLAM: SOLiD descriptors find loop candidates, KISS-Matcher aligns scans globally (no initial guess), small_gicp refines, pairwise consistency maximization keeps mutually consistent loops, then one factor graph merges maps. Code release unconfirmed. Its paper compares only against DiSCo-SLAM and DCL-SLAM (not Swarm-SLAM / Kimera-Multi).
+
+ATE in metres, robot alpha / beta (paper Table II; column mapping inferred from a flattened table):
+
+| Method | Aerial (GRACO) | Underground (GEODE) | Off-road (GEODE) | Planetary |
+|---|---|---|---|---|
+| DiSCo-SLAM | 0.89 / 131 | 0.75 / 16.9 | 0.14 / 46.6 | 0.14 / 40.9 |
+| DCL-SLAM | 7.95 / 39.6 | 0.32 / 5.55 | 0.29 / 0.31 | 0.12 / 1.85 |
+| SKiD-SLAM | 1.19 / 1.06 | 0.34 / 0.40 | 0.30 / 0.93 | 0.20 / 1.05 |
+
+SKiD-SLAM is not best everywhere; its point is that *both* robots stay accurate. Planetary scan registration success 86.4% vs 76.8% (V-GICP); descriptor sharing ~5.5 MB vs 122 MB (Scan Context) vs ~6 GB (LiDAR Iris) over a ~30 min park run; descriptor latency <0.06 s at 30 m (Scan Context 1.5 s).
+
+Other systems: [Swarm-SLAM](https://arxiv.org/abs/2301.06230) (ROS 2; ours as `slam_algo:=cslam`), Kimera-Multi (distributed metric-semantic), maplab 2.0 (multi-modal, multi-robot), HERCULES (2 UAV + 2 UGV benchmark), DiTer++ (multi-session multi-modal dataset). Not comparable with our numbers: ours is Gazebo coverage % / map ATE (`nav_explore_eval`), theirs real-lidar trajectory ATE. A common benchmark needs a dataset replay through `cslam` (open item, `todo.md` D).

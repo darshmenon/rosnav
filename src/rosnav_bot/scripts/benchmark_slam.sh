@@ -22,7 +22,7 @@ set -u
 
 WORLD="${WORLD:-maze}"
 DURATION_S="${DURATION_S:-120}"
-BOOT_WAIT_S="${BOOT_WAIT_S:-50}"
+BOOT_WAIT_S="${BOOT_WAIT_S:-120}"
 LOG_DIR="${LOG_DIR:-/tmp/rosnav_slam_bench}"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 OUT_DIR="${OUT_DIR:-$LOG_DIR/$STAMP}"

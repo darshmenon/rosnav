@@ -50,7 +50,7 @@ for fault in none $FAULTS; do
       fi
     ) &
     timeout $((DURATION_S + 45)) ros2 run rosnav_bot benchmark.py --ros-args -p mode:=slam \
-        -p label:="$fault" -p map_topic:=/map_merged -p duration_sec:="$DURATION_S" \
+        -p label:="$fault" -p map_topic:="${MAP_TOPIC:-/map}" -p duration_sec:="$DURATION_S" \
         -p out_dir:="$dir" -p use_sim_time:=true >>"$dir/launch.log" 2>&1 || echo "  WARN bench rc!=0"
     rep="$(ls -1 "$dir"/*_slam.json 2>/dev/null | head -1 || true)"
     [[ -n "$rep" ]] && cp -f "$rep" "$dir/summary.json" || echo '{"failed":true}' >"$dir/summary.json"
