@@ -204,11 +204,14 @@ class CollisionMonitor(Node):
             safe = Twist()
             if self._relay_vel.linear.x < 0:
                 safe.linear.x = self._relay_vel.linear.x
+            # Mecanum: a sideways step can clear a blocked front cone, but stay cautious (slowdown speed).
+            safe.linear.y = self._relay_vel.linear.y * self._factor
             safe.angular.z = self._relay_vel.angular.z
             self._cmd_pub.publish(safe)
         elif self._state == SLOWDOWN:
             scaled = Twist()
             scaled.linear.x  = self._relay_vel.linear.x  * self._factor
+            scaled.linear.y  = self._relay_vel.linear.y  * self._factor   # mecanum strafe was dropped here
             scaled.angular.z = self._relay_vel.angular.z * self._factor
             self._cmd_pub.publish(scaled)
         else:

@@ -60,7 +60,7 @@ import numpy as np
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 import tf2_ros
 
 from action_msgs.msg import GoalStatus
@@ -99,6 +99,24 @@ def split_frontier(cluster, res, max_len_m=3.0):
         key = d @ vt[0]
     order = np.argsort(key)
     return [[cluster[i] for i in idx] for idx in np.array_split(order, n_parts) if len(idx)]
+
+NUDGE_MIN_FRONT_M = 0.8   # stop the nudge when the lidar sees anything this close dead ahead
+
+
+def front_clearance(scan, half_angle=0.5):
+    """Smallest valid range within +-half_angle rad of straight ahead (9.9 when nothing is seen)."""
+    best = 9.9
+    a = scan.angle_min
+    for r in scan.ranges:
+        if abs(math.atan2(math.sin(a), math.cos(a))) <= half_angle and math.isfinite(r) \
+                and max(scan.range_min, 0.05) <= r < best:
+            best = r
+        a += scan.angle_increment
+    return best
+
+
+NUDGE_DISTANCE_M = 1.5   # cold-start forward nudge: real travel needed to pass slam_toolbox's travel gate
+
 
 class _State(Enum):
     IDLE = auto()
@@ -258,6 +276,7 @@ class FrontierCoordinator(Node):
         self._succeeded_goals = 0
         self._cold_spin_at, self._cold_spin_proc, self._cold_spin_n = {}, {}, {}
         self._nudges, self._nudge_pubs, self._nudge_timer = {}, {}, None
+        self._nudge_front = {}
         self._nav_ready: dict[str, bool] = {r: False for r in self._robots}
         self._last_nav_wait_warn: dict[str, float] = {r: 0.0 for r in self._robots}
         self._tf_ready: dict[str, bool] = {r: False for r in self._robots}
@@ -441,7 +460,8 @@ class FrontierCoordinator(Node):
                 continue
 
             if self._tf_ready[robot]:
-                self.get_logger().warn(f'map -> {robot}/base_link TF disappeared')
+                self.get_logger().warn(
+                    f'map -> {robot}/base_link TF disappeared ({getattr(self, "_tf_fail", {}).get(robot, "?")})')
             self._tf_ready[robot] = False
             if elapsed - self._last_tf_wait_warn[robot] >= self._tf_wait_warn_sec:
                 self.get_logger().warn(
@@ -465,7 +485,7 @@ class FrontierCoordinator(Node):
             return False
         self._cold_spin_at[ns] = now
         self._cold_spin_n[ns] = self._cold_spin_n.get(ns, 0) + 1
-        self.get_logger().warn(f'[{ns}] no frontier yet and the map is still tiny - nudging 0.8 m forward so SLAM integrates new scans.')
+        self.get_logger().warn(f'[{ns}] no frontier yet and the map is still tiny - nudging ~1.5 m forward so SLAM integrates new scans.')
         try:
             self._start_nudge(ns)
         except Exception as e:  # noqa: BLE001
@@ -477,19 +497,37 @@ class FrontierCoordinator(Node):
         from geometry_msgs.msg import Twist
         if ns not in self._nudge_pubs:
             self._nudge_pubs[ns] = self.create_publisher(Twist, f'/{ns}/cmd_vel', 10)
+            from sensor_msgs.msg import LaserScan
+            self.create_subscription(
+                LaserScan, f'/{ns}/scan',
+                lambda m, ns=ns: self._nudge_front.__setitem__(ns, front_clearance(m)),
+                qos_profile_sensor_data)
         if self._nudge_timer is None:
             self._nudge_timer = self.create_timer(0.1, self._nudge_tick)
-        self._nudges[ns] = time.monotonic() + 3.2          # 0.25 m/s * 3.2 s = 0.8 m
+        # drive until ~1.5 m of real travel (measured on TF) or 10 s: a fixed 3.2 s command only moved the
+        # robot ~0.3 m (acceleration + collision monitor), which never reached slam_toolbox's travel gate
+        self._nudges[ns] = {'deadline': time.monotonic() + 10.0, 'start': None}
 
     def _nudge_tick(self):
         from geometry_msgs.msg import Twist
         now = time.monotonic()
-        for ns, end in list(self._nudges.items()):
+        for ns, st in list(self._nudges.items()):
             msg = Twist()
-            if now < end:
-                msg.linear.x = 0.25
-            else:
+            done = now >= st['deadline']
+            try:
+                p = self._tf.lookup_transform('map', f'{ns}/base_link', rclpy.time.Time()).transform.translation
+                if st['start'] is None:
+                    st['start'] = (p.x, p.y)
+                elif math.hypot(p.x - st['start'][0], p.y - st['start'][1]) >= NUDGE_DISTANCE_M:
+                    done = True
+            except Exception:  # noqa: BLE001 - TF hiccup: fall back to the deadline
+                pass
+            if self._nudge_front.get(ns, 9.9) < NUDGE_MIN_FRONT_M:
+                done = True                                 # something (often the next robot in the spawn row) is ahead
+            if done:
                 del self._nudges[ns]                        # one zero command to stop
+            else:
+                msg.linear.x = 0.25
             self._nudge_pubs[ns].publish(msg)
 
     def _elapsed_sec(self):
@@ -678,7 +716,9 @@ class FrontierCoordinator(Node):
         stamp = tf.header.stamp
         if stamp.sec == 0 and stamp.nanosec == 0:
             return False                      # static-only chain: no meaningful age
-        age = self.get_clock().now().nanoseconds / 1e9 - (stamp.sec + stamp.nanosec / 1e9)
+        now = self.get_clock().now().nanoseconds / 1e9
+        age = now - (stamp.sec + stamp.nanosec / 1e9)
+        self._last_tf_age = (age, now, stamp.sec + stamp.nanosec / 1e9)
         return age > max_age
 
     def _min_goal_for(self, ns):
@@ -772,9 +812,14 @@ class FrontierCoordinator(Node):
         try:
             tf = self._tf.lookup_transform('map', f'{ns}/base_link', rclpy.time.Time())
             if self._tf_is_stale(tf):
+                self._tf_fail = getattr(self, '_tf_fail', {})
+                self._tf_fail[ns] = (f'stale: age {self._last_tf_age[0]:.2f}s > {self._max_tf_age:.1f}s '
+                                        f'(clock now={self._last_tf_age[1]:.2f} stamp={self._last_tf_age[2]:.2f})')
                 return None
             return tf.transform.translation.x, tf.transform.translation.y
-        except Exception:
+        except Exception as e:  # noqa: BLE001
+            self._tf_fail = getattr(self, '_tf_fail', {})
+            self._tf_fail[ns] = f'{type(e).__name__}: {str(e)[:120]}'
             return None
 
     # ------------------------------------------------------------------
@@ -1487,6 +1532,9 @@ def _robot_color(robot):
 
 
 def main(args=None):
+    import faulthandler
+    import signal
+    faulthandler.register(signal.SIGUSR1, all_threads=True)   # `kill -USR1 <pid>` dumps every thread's stack (hang diagnosis)
     rclpy.init(args=args)
     node = FrontierCoordinator()
     try:

@@ -521,3 +521,28 @@ def test_inside_turning_circle_skips_sideways_goals_for_cars():
     obj._robot_yaw = lambda: math.pi / 2               # facing +y: the same goal is now straight ahead
     assert not obj._inside_turning_circle((0.0, 0.0), 0.2, 1.08)
     assert not make_bare(_min_turn_r=0.0)._inside_turning_circle((0.0, 0.0), 0.2, 1.08)   # off by default
+
+
+def _turn_node(yaw, r=0.66):
+    obj = make_bare(_min_turn_r=r)
+    obj._robot_yaw = lambda: yaw
+    return obj
+
+
+def test_turning_circle_sideways_goal_is_unreachable():
+    # goal 0.5 m to the left of a robot facing +x: inside the left turning circle
+    assert _turn_node(0.0)._inside_turning_circle((0.0, 0.0), 0.2, 0.5)
+
+
+def test_turning_circle_ahead_and_far_side_goals_are_reachable():
+    n = _turn_node(0.0)
+    assert not n._inside_turning_circle((0.0, 0.0), 2.0, 0.0)     # straight ahead
+    assert not n._inside_turning_circle((0.0, 0.0), 2.0, 1.0)     # ahead-left, outside the circle
+    assert not n._inside_turning_circle((0.0, 0.0), 0.0, 2.0)     # far to the left
+
+
+def test_turning_circle_follows_robot_yaw_and_is_off_by_default():
+    # robot faces +y: a goal 0.5 m to its left (-x) is inside; the same world offset is fine when facing +x
+    assert _turn_node(math.pi / 2)._inside_turning_circle((0.0, 0.0), -0.5, 0.2)
+    assert not _turn_node(0.0, r=0.0)._inside_turning_circle((0.0, 0.0), 0.2, 0.5)
+    assert not _turn_node(0.0)._inside_turning_circle(None, 0.2, 0.5)

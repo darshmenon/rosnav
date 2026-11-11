@@ -1141,6 +1141,7 @@ class FrontierExplorer(Node):
         near_candidates = []
         visited_candidates = []  # (frontier, fx, fy) — already-visited but otherwise untried
         path_distances = self._path_distance_map(pos)
+        turn_yaw = self._robot_yaw() if self._min_turn_r > 0.0 else None   # one TF lookup per pick, not per frontier
         for frontier in frontiers:
             fx, fy = frontier['point']
             if self._recently_failed(fx, fy):
@@ -1171,7 +1172,7 @@ class FrontierExplorer(Node):
             if not self._costmap_allows(fx, fy):
                 n_costmap += 1
                 continue
-            if d < self._min_goal_dist or self._inside_turning_circle(pos, fx, fy):
+            if d < self._min_goal_dist or self._inside_turning_circle(pos, fx, fy, turn_yaw):
                 n_near += 1
                 near_candidates.append((frontier, d))
                 continue
@@ -1436,14 +1437,15 @@ class FrontierExplorer(Node):
         except Exception:
             return None
 
-    def _inside_turning_circle(self, pos, fx, fy):
+    def _inside_turning_circle(self, pos, fx, fy, yaw=None):
         """True if (fx, fy) lies inside the minimum turning circle on its own side of the robot, i.e. a
         car-like base cannot reach it driving forward (ackermann, cafe 2026-11-10: goal 1.4 m sideways,
         0.66 m radius -> wobbled forever, 0 goals). Off unless min_turning_radius > 0."""
         r = self._min_turn_r
         if r <= 0.0 or pos is None:
             return False
-        yaw = self._robot_yaw()
+        if yaw is None:
+            yaw = self._robot_yaw()
         if yaw is None:
             return False
         dx, dy = fx - pos[0], fy - pos[1]
@@ -1767,7 +1769,8 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():   # SIGINT already shut the context down: a second shutdown raised and exited 1
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

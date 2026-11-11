@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests for FrontierCoordinator._hungarian_plan (no ROS graph needed)."""
 import importlib.util
+import math
 import os
 
 _SCRIPT = os.path.join(
@@ -112,7 +113,7 @@ def test_tiny_frontiers_used_when_nothing_else_left():
 
 
 def test_stale_tf_is_detected():
-    import types
+    import time, types
 
     class _Clock:
         def now(self): return fc.rclpy.time.Time(seconds=100)
@@ -131,7 +132,7 @@ def test_stale_tf_is_detected():
 
 def _grid_node(rows, reach):
     """Bare coordinator with a tiny OccupancyGrid (-1 unknown, 0 free, 100 occupied), 1 m cells."""
-    import types
+    import time, types
     import numpy as np
     h, w = len(rows), len(rows[0])
     info = types.SimpleNamespace(width=w, height=h, resolution=1.0,
@@ -188,7 +189,7 @@ def _goal_node(sent_ago, nav_ready=True, timeout=150.0):
 
 
 def types_ns(**kw):
-    import types
+    import time, types
     return types.SimpleNamespace(**kw)
 
 
@@ -314,3 +315,62 @@ def test_split_frontier_ring_gives_several_parts_covering_all_cells():
 def test_split_frontier_short_cluster_unchanged():
     cl = [(0, i) for i in range(20)]
     assert fc.split_frontier(cl, 0.05, 3.0) == [cl]
+
+
+def test_nudge_tick_drives_until_distance_then_stops():
+    import time, types
+    published = []
+    pub = types.SimpleNamespace(publish=lambda m: published.append(m.linear.x))
+    pos = {'x': 0.0}
+    tf = types.SimpleNamespace(lookup_transform=lambda *a: types.SimpleNamespace(
+        transform=types.SimpleNamespace(translation=types.SimpleNamespace(x=pos['x'], y=0.0))))
+    n = object.__new__(fc.FrontierCoordinator)
+    n._tf, n._nudge_pubs = tf, {'robot1': pub}
+    n._nudge_front = {}
+    n._nudges = {'robot1': {'deadline': time.monotonic() + 60, 'start': None}}
+    n._nudge_tick(); pos['x'] = 0.5; n._nudge_tick()
+    assert published == [0.25, 0.25] and 'robot1' in n._nudges
+    pos['x'] = fc.NUDGE_DISTANCE_M + 0.1; n._nudge_tick()
+    assert published[-1] == 0.0 and 'robot1' not in n._nudges
+
+
+def test_nudge_tick_stops_at_deadline_without_tf():
+    import time, types
+    published = []
+    pub = types.SimpleNamespace(publish=lambda m: published.append(m.linear.x))
+    def boom(*a): raise RuntimeError('no tf')
+    n = object.__new__(fc.FrontierCoordinator)
+    n._tf, n._nudge_pubs = types.SimpleNamespace(lookup_transform=boom), {'robot1': pub}
+    n._nudge_front = {}
+    n._nudges = {'robot1': {'deadline': time.monotonic() - 1, 'start': None}}
+    n._nudge_tick()
+    assert published == [0.0] and not n._nudges
+
+
+def _scan(ranges, angle_min=-math.pi, inc=None):
+    import types
+    inc = inc or (2 * math.pi / len(ranges))
+    return types.SimpleNamespace(ranges=ranges, angle_min=angle_min, angle_increment=inc, range_min=0.1)
+
+
+def test_front_clearance_only_looks_ahead():
+    n = 360
+    r = [5.0] * n
+    r[0] = 0.5                      # directly behind (angle -pi)
+    assert fc.front_clearance(_scan(r)) == 5.0
+    r[180] = 0.6                    # straight ahead (angle 0)
+    assert abs(fc.front_clearance(_scan(r)) - 0.6) < 1e-9
+    r[180] = float('inf')
+    assert fc.front_clearance(_scan(r)) == 5.0
+
+
+def test_nudge_stops_when_something_is_close_ahead():
+    import time, types
+    published = []
+    pub = types.SimpleNamespace(publish=lambda m: published.append(m.linear.x))
+    n = object.__new__(fc.FrontierCoordinator)
+    n._tf = types.SimpleNamespace(lookup_transform=lambda *a: (_ for _ in ()).throw(RuntimeError('x')))
+    n._nudge_pubs, n._nudge_front = {'robot1': pub}, {'robot1': 0.5}
+    n._nudges = {'robot1': {'deadline': time.monotonic() + 60, 'start': None}}
+    n._nudge_tick()
+    assert published == [0.0] and not n._nudges
