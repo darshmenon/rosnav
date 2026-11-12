@@ -5,10 +5,20 @@ import subprocess
 import sys
 import time
 
+import pytest
+
 _SCRIPT = os.path.join(os.path.dirname(__file__), '..', 'scripts', 'slam_stall_watchdog.py')
-_spec = importlib.util.spec_from_file_location('slam_stall_watchdog', _SCRIPT)
-sw = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(sw)
+# The script imports slam_toolbox.srv and CI's ros:humble image does not ship slam_toolbox. Do NOT use a
+# module-level pytest.skip/importorskip here: ROS's launch_testing pytest hook imports test files itself and a
+# module-level skip aborts collection of the whole session (every later test silently never runs).
+try:
+    _spec = importlib.util.spec_from_file_location('slam_stall_watchdog', _SCRIPT)
+    sw = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(sw)
+except ImportError:
+    sw = None
+
+pytestmark = pytest.mark.skipif(sw is None, reason='slam_toolbox not installed')
 
 
 class _Log:
