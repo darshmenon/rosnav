@@ -66,9 +66,9 @@ Deep dive → [`concepts.md`](concepts.md) · launch args → `ros2 launch rosna
 
 ## Standalone tools
 
-Spun out of this repo, each works on any Nav2 stack: [nav2_doctor](https://github.com/darshmenon/nav2_doctor) (why isn't my robot moving?) · [nav_explore_eval](https://github.com/darshmenon/nav_explore_eval) (score an exploration run) · [nav2_fault_inject](https://github.com/darshmenon/nav2_fault_inject) (freeze nodes to test recovery, `--check` asserts the doctor notices) · slam_doctor (is my SLAM healthy? loop closures, tracking loss, map stalls). Vendored copies + tests live in `src/rosnav_bot/tools/`.
+Each works on any Nav2 stack: [nav2_doctor](https://github.com/darshmenon/nav2_doctor) (why isn't my robot moving?) · [nav_explore_eval](https://github.com/darshmenon/nav_explore_eval) (score an exploration run) · [nav2_fault_inject](https://github.com/darshmenon/nav2_fault_inject) (test recovery) · slam_doctor (is my SLAM healthy?). Copies and tests: `src/rosnav_bot/tools/`.
 
-Run all unit tests (no simulator needed, about 1 minute, same as CI): `src/rosnav_bot/scripts/run_tests.sh`
+Unit tests (no simulator, ~1 min, same as CI): `src/rosnav_bot/scripts/run_tests.sh`
 
 ---
 
@@ -99,10 +99,6 @@ docker compose up --build rosnav
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true
 ```
 
-`docker-compose.yml` bind-mounts `src/` so host edits are picked up without a
-full image rebuild (just re-`colcon build` inside the container). See
-[`docker/orb_slam3/README.md`](docker/orb_slam3/README.md) for the separate
-ORB-SLAM3 visual-SLAM sidecar (§3 below has more on comparing SLAM backends).
 
 ---
 
@@ -375,10 +371,6 @@ Two independent launch args:
 | Ackermann (car-like) | `drive_type:=ackermann` | Front steer, min turning radius ~0.66 m | Always MPPI; keep `safety:=true` |
 | MiR100 look | `robot_model:=mir100` (+ diff) | Same as diff | Mesh skin only |
 | Husky look | `robot_model:=husky` (+ diff) | Same as diff | Mesh skin only |
-
-MiR100 skin, cafe, SLAM + frontier exploration in RViz:
-
-![MiR100 exploring the cafe in RViz](images/amr_mir100_cafe.gif)
 
 ### Switch (single robot — map + navigate)
 

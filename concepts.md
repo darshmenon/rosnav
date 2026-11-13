@@ -1453,6 +1453,12 @@ ros2 topic pub -r 20 /cmd_vel_safe geometry_msgs/msg/Twist \
 
 ---
 
+### Mecanum DWB needs `RotateToGoal` (2026-11-13)
+
+`nav2_params_mecanum.yaml` once had a velocity smoother that zeroed the sideways (`vy`) limit, so the base never moved (fixed in `67143d8`). With that fixed it still reached about one goal per run: its DWB critic list lacked `RotateToGoal`, so DWB reached each goal's xy and then oscillated on heading (167 `wz` sign flips in 150 s, endless "Failed to make progress"). Adding `RotateToGoal` (scale 32, slowing_factor 5, lookahead_time -1, same as the diff config) took mecanum from 0/3/2 to 7/4/1 goals per 200 s cafe run (diff reaches about 5). Slower speed caps did not help.
+
+**Docker dev loop:** `docker-compose.yml` bind-mounts `src/`, so host edits are picked up without an image rebuild (just re-`colcon build` inside the container). The ORB-SLAM3 sidecar is separate: see `docker/orb_slam3/README.md`.
+
 ### Ackermann status (2026-11-10)
 
 A car cannot reach a goal inside its minimum turning circle (0.66 m): the first cafe goal was 1.4 m straight sideways, MPPI output jittered around zero and the car never left the start. `frontier_explorer.py` now takes `min_turning_radius` (set to 0.66 by `slam_nav.launch.py` for `drive_type:=ackermann`, 0 = off elsewhere) and treats goals inside that circle, on their own side of the robot, as "too near" (same cold-start relaxation as `min_goal_dist`). The progress checker is relaxed to 0.3 m / 20 s (a car arcs). **Result 2026-11-11 (cafe, 240 s, load max 14):** first ackermann goals ever, 2 reached / 4 failed, 78.7% explored, 2 missed control cycles (before the filter: 0 goals in every run). Still weak vs diff/mecanum; failures remain ('Failed to make progress'). See `todo.md` A.
