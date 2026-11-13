@@ -2914,3 +2914,13 @@ mid-aisle), 8-neighbour lanes that keep that clearance, largest connected compon
 `route_cafe.geojson` (159 nodes / 476 lanes). Not yet wired into a launch file or driven by a goal in sim.
 Launch: `slam_nav.launch.py route_graph:=auto` (or a GeoJSON path) starts `route_server` + its lifecycle manager;
 `auto` = `maps/route_<world>.geojson`, skipped with a log line if the file is missing. Syntax/arg-checked only (no sim run).
+
+### Would C++ speed up the explorer? (measured 2026-11-14)
+The Python explorer's cost is two per-cell Python BFS loops (`_reachable_mask`, `_path_distance_map`), not the numpy parts.
+Times on the cafe map (198x447) / a 16x larger map (792x1788): Python BFS 111 ms / 1.9 s; C++ BFS 0.9 ms / 10 ms;
+scipy `ndimage.label` (reachability) 7 ms / 11 ms; scipy `csgraph` distance map 30 ms / 461 ms.
+Done: `_reachable_mask` now uses `ndimage.label` (identical result, unit-tested vs a BFS). Open: the distance map is where
+C++ would still win ~50x on big maps; a full 1800-line port is not justified.
+Done too: `src/pathdist.cpp` -> `librosnav_pathdist.so` (built by CMake, loaded via ctypes in `frontier_explorer.py`,
+falls back to the Python BFS if the library is missing). `_path_distance_map` end to end incl. list->numpy: cafe 218 -> 4.2 ms,
+16x map 3632 -> 67 ms (~52x), results identical (unit test compares both paths). Needs `colcon build` + sourced install.

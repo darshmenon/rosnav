@@ -10,6 +10,11 @@ find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
+# C++ helper for the Python frontier explorer (BFS path-distance map, loaded via ctypes;
+# the explorer falls back to pure Python if the library is missing).
+add_library(rosnav_pathdist SHARED src/pathdist.cpp)
+install(TARGETS rosnav_pathdist LIBRARY DESTINATION lib)
+
 rosidl_generate_interfaces(${PROJECT_NAME}
   "action/DockToStation.action"
   "action/UndockFromStation.action"

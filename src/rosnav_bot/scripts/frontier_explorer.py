@@ -43,6 +43,7 @@ import time
 from collections import deque
 
 import numpy as np
+from scipy import ndimage
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
@@ -62,6 +63,33 @@ _MAP_QOS = QoSProfile(
     reliability=ReliabilityPolicy.RELIABLE,
     durability=DurabilityPolicy.TRANSIENT_LOCAL,
 )
+
+
+def _load_pathdist():
+    """ctypes handle to the C++ BFS helper (librosnav_pathdist.so), or None -> pure-Python fallback."""
+    import ctypes
+    cands = []
+    try:
+        from ament_index_python.packages import get_package_prefix
+        cands.append(os.path.join(get_package_prefix('rosnav_bot'), 'lib', 'librosnav_pathdist.so'))
+    except Exception:
+        pass
+    cands.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'librosnav_pathdist.so'))
+    for path in cands:
+        if os.path.isfile(path):
+            try:
+                lib = ctypes.CDLL(path)
+                lib.rosnav_path_distance.argtypes = [
+                    ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                    ctypes.c_float, ctypes.c_void_p]
+                lib.rosnav_path_distance.restype = ctypes.c_int
+                return lib
+            except OSError:
+                continue
+    return None
+
+
+_PATHDIST = _load_pathdist()
 
 
 def _pkg_share() -> str:
@@ -802,23 +830,21 @@ class FrontierExplorer(Node):
         return free & adj
 
     def _reachable_mask(self, free, robot_positions, info):
+        """Free cells 4-connected to any robot seed (scipy label: ~15-150x faster than a Python BFS)."""
         h, w = free.shape
         seen = np.zeros_like(free, dtype=bool)
-        queue = deque()
+        seeds = []
         for wx, wy in robot_positions:
             y, x = _world_to_cell(wx, wy, info)
             seed = (y, x) if (0 <= y < h and 0 <= x < w and free[y, x]) else \
                 self._nearest_free_cell(y, x, free, info.resolution)
-            if seed is not None and not seen[seed]:
-                seen[seed] = True
-                queue.append(seed)
-
-        while queue:
-            y, x = queue.popleft()
-            for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
-                if 0 <= ny < h and 0 <= nx < w and free[ny, nx] and not seen[ny, nx]:
-                    seen[ny, nx] = True
-                    queue.append((ny, nx))
+            if seed is not None:
+                seeds.append(seed)
+        if not seeds:
+            return seen
+        labels, _ = ndimage.label(free)  # default structure = 4-connectivity, as before
+        for sy, sx in seeds:
+            seen |= labels == labels[sy, sx]
         return seen
 
     def _rrt_seed_cells(self, free, mask, info, robot_pos):
@@ -1375,6 +1401,12 @@ class FrontierExplorer(Node):
         if resolved is None:
             return dist
         sy, sx = resolved
+        if _PATHDIST is not None:
+            free_u8 = np.ascontiguousarray(free, dtype=np.uint8)
+            if _PATHDIST.rosnav_path_distance(
+                    free_u8.ctypes.data, h, w, int(sy), int(sx),
+                    float(msg.info.resolution), dist.ctypes.data) >= 0:
+                return dist
         queue = deque([(sy, sx)])
         dist[sy, sx] = 0.0
         while queue:

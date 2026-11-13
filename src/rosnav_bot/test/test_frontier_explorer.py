@@ -546,3 +546,47 @@ def test_turning_circle_follows_robot_yaw_and_is_off_by_default():
     assert _turn_node(math.pi / 2)._inside_turning_circle((0.0, 0.0), -0.5, 0.2)
     assert not _turn_node(0.0, r=0.0)._inside_turning_circle((0.0, 0.0), 0.2, 0.5)
     assert not _turn_node(0.0)._inside_turning_circle(None, 0.2, 0.5)
+
+
+def test_reachable_mask_matches_bfs_and_skips_islands():
+    from types import SimpleNamespace
+    from collections import deque
+    free = np.zeros((40, 40), bool)
+    free[2:20, 2:20] = True
+    free[25:35, 25:35] = True           # island, unreachable from the first room
+    free[10, 20:26] = True              # corridor joins them diagonally? no: ends at 25
+    info = SimpleNamespace(resolution=1.0, origin=SimpleNamespace(position=SimpleNamespace(x=0.0, y=0.0)))
+    obj = FrontierExplorer.__new__(FrontierExplorer)
+    got = obj._reachable_mask(free, [(5.5, 5.5)], info)
+
+    seen = np.zeros_like(free)
+    q = deque([(5, 5)])
+    seen[5, 5] = True
+    while q:
+        y, x = q.popleft()
+        for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+            if 0 <= ny < 40 and 0 <= nx < 40 and free[ny, nx] and not seen[ny, nx]:
+                seen[ny, nx] = True
+                q.append((ny, nx))
+    assert (got == seen).all()
+    assert not got[30, 30] and got[10, 22]
+
+
+@pytest.mark.skipif(frontier_explorer._PATHDIST is None, reason='librosnav_pathdist.so not built')
+def test_path_distance_cpp_matches_python_bfs(monkeypatch):
+    from types import SimpleNamespace
+    rng = np.random.default_rng(3)
+    grid = np.where(rng.random((60, 80)) < 0.25, 100, 0).astype(np.int8)
+    grid[:5, :] = -1
+    info = SimpleNamespace(width=80, height=60, resolution=0.05,
+                           origin=SimpleNamespace(position=SimpleNamespace(x=0.0, y=0.0)))
+    msg = SimpleNamespace(info=info, data=grid.flatten().tolist())
+    obj = make_bare(_map=msg)
+    pos = (40 * 0.05 + 0.025, 30 * 0.05 + 0.025)
+    grid[30, 40] = 0
+    msg.data = grid.flatten().tolist()
+    fast = obj._path_distance_map(pos)
+    monkeypatch.setattr(frontier_explorer, '_PATHDIST', None)
+    slow = obj._path_distance_map(pos)
+    assert np.allclose(fast, slow, equal_nan=False)
+    assert np.isfinite(fast).sum() > 100

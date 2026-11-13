@@ -94,6 +94,7 @@ sweep_logs/run_logs/
 
 # Personal working notes (todo / doing lists): never commit
 /todo.md
+/todo_archive_*.md
 /doing.md
 todo_for_blog.md
 
