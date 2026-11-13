@@ -2905,3 +2905,12 @@ ATE in metres, robot alpha / beta (paper Table II; column mapping inferred from 
 SKiD-SLAM is not best everywhere; its point is that *both* robots stay accurate. Planetary scan registration success 86.4% vs 76.8% (V-GICP); descriptor sharing ~5.5 MB vs 122 MB (Scan Context) vs ~6 GB (LiDAR Iris) over a ~30 min park run; descriptor latency <0.06 s at 30 m (Scan Context 1.5 s).
 
 Other systems: [Swarm-SLAM](https://arxiv.org/abs/2301.06230) (ROS 2; ours as `slam_algo:=cslam`), Kimera-Multi (distributed metric-semantic), maplab 2.0 (multi-modal, multi-robot), HERCULES (2 UAV + 2 UGV benchmark), DiTer++ (multi-session multi-modal dataset). Not comparable with our numbers: ours is Gazebo coverage % / map ATE (`nav_explore_eval`), theirs real-lidar trajectory ATE. A common benchmark needs a dataset replay through `cslam` (open item, `todo.md` D).
+
+### Nav2 Route Server graph (2026-11-13)
+`nav2_route` is installed on Humble. `scripts/map_to_route_graph.py maps/map_cafe.yaml -o maps/route_cafe.geojson`
+builds a lane graph from any saved map: nodes on a grid where free-space clearance >= 0.45 m (so lanes run
+mid-aisle), 8-neighbour lanes that keep that clearance, largest connected component only, bidirectional.
+`config/route_server.yaml` (DistanceScorer) loads it; verified: route_server configures/activates and loads
+`route_cafe.geojson` (159 nodes / 476 lanes). Not yet wired into a launch file or driven by a goal in sim.
+Launch: `slam_nav.launch.py route_graph:=auto` (or a GeoJSON path) starts `route_server` + its lifecycle manager;
+`auto` = `maps/route_<world>.geojson`, skipped with a log line if the file is missing. Syntax/arg-checked only (no sim run).

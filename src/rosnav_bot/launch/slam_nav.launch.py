@@ -1419,6 +1419,28 @@ def _build_runtime_actions(context, pkg_share: str):
             )
         )
 
+    # ── Nav2 Route Server (optional, route_graph:=<geojson|auto>) ───────────
+    route_actions = []
+    route_graph = LaunchConfiguration('route_graph').perform(context).strip()
+    if route_graph:
+        if route_graph == 'auto':
+            route_graph = os.path.join(pkg_share, 'maps', f'route_{world_name}.geojson')
+        if not os.path.isfile(route_graph):
+            route_actions.append(LogInfo(msg=f'[slam_nav] route_graph {route_graph} not found - '
+                                             'generate with scripts/map_to_route_graph.py; Route Server skipped'))
+        else:
+            route_actions += [
+                LogInfo(msg=f'[slam_nav] Route Server ENABLED, graph={route_graph}'),
+                Node(package='nav2_route', executable='route_server', name='route_server',
+                     output='screen',
+                     parameters=[os.path.join(pkg_share, 'config', 'route_server.yaml'),
+                                 {'graph_filepath': route_graph, 'use_sim_time': True}]),
+                Node(package='nav2_lifecycle_manager', executable='lifecycle_manager',
+                     name='lifecycle_manager_route', output='screen',
+                     parameters=[{'use_sim_time': True, 'autostart': True,
+                                  'node_names': ['route_server']}]),
+            ]
+
     # Nav2 lifecycle bringup can abort on a lost get_state reply (DDS service-discovery race) and Nav2 has
     # no retry, leaving every server inactive. Retry RESET + STARTUP; never kill the manager (no respawn here).
     nav2_bringup_watchdog = TimerAction(period=20.0, actions=[
@@ -1486,7 +1508,7 @@ def _build_runtime_actions(context, pkg_share: str):
         slam_watchdog,
         posegraph_autosave_group,
         visual_reloc_group,
-    ] + dynamic_obstacle_actions
+    ] + dynamic_obstacle_actions + route_actions
 
 
 def generate_launch_description():
@@ -1710,6 +1732,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             name='info_gain_max_depth', default_value='2.0',
             description='info_gain_mode:=fov sensor cone depth (m)'),
+        DeclareLaunchArgument(
+            name='route_graph', default_value='',
+            description="Nav2 Route Server graph: path to GeoJSON, or 'auto' for maps/route_<world>.geojson. "
+                        'Empty = off. Generate with scripts/map_to_route_graph.py'),
         DeclareLaunchArgument(
             name='safety', default_value='true',
             description='Launch collision monitor safety layer'),

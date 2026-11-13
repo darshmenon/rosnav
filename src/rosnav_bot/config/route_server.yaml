@@ -1,0 +1,14 @@
+route_server:
+  ros__parameters:
+    base_frame: base_link
+    route_frame: map
+    path_density: 0.05
+    graph_filepath: ""          # set by launch (route_graph:=...)
+    boundary_radius_to_achieve_node: 1.0
+    radius_to_achieve_node: 1.5
+    smooth_corners: true
+    smoothing_radius: 1.0
+    prune_route: true
+    edge_cost_functions: ["DistanceScorer"]
+    DistanceScorer:
+      plugin: "nav2_route::DistanceScorer"
