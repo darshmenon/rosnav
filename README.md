@@ -249,6 +249,8 @@ slam_toolbox's nodes + loop-closure constraints live; "Fused Odom (EKF/UKF)" vs
 "Wheel Odom (raw)" (off by default) lets you watch the localization filter correct
 drift, with its position-covariance ellipse on.
 
+Route Server lanes (cafe): `route_graph:=auto`; make a graph for any map with `scripts/map_to_route_graph.py` (see concepts.md).
+
 ### SLAM in RViz (live recordings)
 
 Each GIF is the full RViz window: display groups on the left, map, plan, costmap and pose graph in the 3D view.

@@ -11,6 +11,7 @@
 # Output: $OUT (default /tmp/vslam_bench_<world>/) per-variant log + map, then
 #         docs/benchmarks/BENCHMARK_VSLAM_VARIANTS.md.
 set -u
+source "$(dirname "${BASH_SOURCE[0]}")/bench_load_guard.sh"; bench_load_guard
 WORLD=${1:-cafe}; SECS=${2:-420}; shift 2 2>/dev/null || shift $# ; VARIANTS=${*:-A B C D}
 export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-201}
 export GZ_PARTITION=${GZ_PARTITION:-bench$ROS_DOMAIN_ID}   # isolate gz-transport too (parallel runs)

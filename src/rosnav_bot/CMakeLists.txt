@@ -47,6 +47,7 @@ install(
     scripts/path_planning.py
     scripts/waypoint_nav.py
     scripts/frontier_explorer.py
+    scripts/route_goal.py
     scripts/check_odometry.py
     scripts/nav2_doctor.py
     scripts/map_timelapse.py
@@ -106,6 +107,7 @@ install(
     scripts/slam_debug_monitor.py
     scripts/tf_freeze_watchdog.py
     scripts/mpc_core.py
+    scripts/lqr_core.py
     scripts/pulse_rates.py
     scripts/nav2_bringup_watchdog.py
     scripts/rosnav_doctor.py
@@ -150,6 +152,7 @@ if(BUILD_TESTING)
   ament_add_pytest_test(test_frontier_explorer test/test_frontier_explorer.py)
   ament_add_pytest_test(test_frontier_env test/test_frontier_env.py)
   ament_add_pytest_test(test_mpc_core test/test_mpc_core.py)
+  ament_add_pytest_test(test_lqr_core test/test_lqr_core.py)
   ament_add_pytest_test(test_pulse_rates test/test_pulse_rates.py)
   ament_add_pytest_test(test_rosnav_doctor test/test_rosnav_doctor.py)
   ament_add_pytest_test(test_supervisor_core test/test_supervisor_core.py)

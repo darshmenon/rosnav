@@ -6,8 +6,9 @@
 # Env: ROS_DOMAIN_ID (default 204, isolated), OUT (default /tmp/nav_matrix_<world>)
 #      EXTRA_LAUNCH  extra launch args, e.g. EXTRA_LAUNCH='dynamic_obstacles:=2' (moving obstacles)
 set -u
+source "$(dirname "${BASH_SOURCE[0]}")/bench_load_guard.sh"; bench_load_guard
 WORLD=${1:-cafe}; shift 1 2>/dev/null || true
-COMBOS=${*:-navfn:dwb navfn_dijkstra:dwb smac2d:dwb thetastar:dwb navfn:mppi navfn:rpp}
+COMBOS=${*:-navfn:dwb navfn_dijkstra:dwb smac2d:dwb thetastar:dwb navfn:mppi navfn:rpp navfn:rotation_shim navfn:graceful}
 export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-204}; export GZ_PARTITION=${GZ_PARTITION:-nav$ROS_DOMAIN_ID}
 REPO=$(cd "$(dirname "$0")/../../.." && pwd); OUT=${OUT:-/tmp/nav_matrix_$WORLD}; mkdir -p "$OUT"
 set +u; source /opt/ros/humble/setup.bash; source "$REPO/install/setup.bash"; set -u

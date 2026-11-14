@@ -2911,9 +2911,9 @@ Other systems: [Swarm-SLAM](https://arxiv.org/abs/2301.06230) (ROS 2; ours as `s
 builds a lane graph from any saved map: nodes on a grid where free-space clearance >= 0.45 m (so lanes run
 mid-aisle), 8-neighbour lanes that keep that clearance, largest connected component only, bidirectional.
 `config/route_server.yaml` (DistanceScorer) loads it; verified: route_server configures/activates and loads
-`route_cafe.geojson` (159 nodes / 476 lanes). Not yet wired into a launch file or driven by a goal in sim.
+`route_cafe.geojson` (159 nodes / 476 lanes). Wired via `route_graph:=` (below) and driven by a goal in sim.
 Launch: `slam_nav.launch.py route_graph:=auto` (or a GeoJSON path) starts `route_server` + its lifecycle manager;
-`auto` = `maps/route_<world>.geojson`, skipped with a log line if the file is missing. Syntax/arg-checked only (no sim run).
+`auto` = `maps/route_<world>.geojson`, skipped with a log line if the file is missing. Route Server starts under `slam_nav.launch.py` and answers `compute_route` (sim-verified 2026-11-14).
 
 ### Would C++ speed up the explorer? (measured 2026-11-14)
 The Python explorer's cost is two per-cell Python BFS loops (`_reachable_mask`, `_path_distance_map`), not the numpy parts.
@@ -2930,3 +2930,18 @@ Cafe, `navfn`, 3 fixed goals, one run each, load ~10 (not a quiet machine, so re
 dwb 3/3 (0.107 m/s, 0.33 m err), graceful 3/3 (0.081, 0.30), rotation_shim 3/3 after the fix below (0.054, 0.27; goal 3 took 73 s).
 Bug found: `nav2_params_rotation_shim.yaml` had RPP `use_rotate_to_heading: true` under the shim; with it, goal 1 aborted
 ('Failed to make progress', 8 recoveries, 0.004 m/s). Set to false: the shim owns the in-place turn.
+
+Route Server follow-up (2026-11-14): `scripts/route_goal.py` (`ros2 run rosnav_bot route_goal.py --ros-args -p goal_x:=.. -p goal_y:=.. [-p follow:=false]`)
+calls `compute_route` (goal pose snapped to nearest node, start from TF), publishes `/route_path`, then sends it to `follow_path`.
+Verified in sim 2026-11-14 (cafe, `route_graph:=auto`, load 7.5): goal (2.0,-1.0) -> route 2 nodes / 21 poses in 8 ms, `follow_path` SUCCEEDED in ~8 s. Humble's ComputeRoute result has no `error_code` (failure = aborted status). 
+Long goal (2026-11-14, cafe, (0,0) -> (-11,-4), 11 nodes / 229 poses, load 15-22): with `safety:=true` `follow_path` ABORTED ('Failed to make progress') after our `collision_monitor.py` latched STOP at min_range 0.42 m; with `safety:=false` it SUCCEEDED in ~140 s. Cause: graph lanes keep >= 0.45 m clearance but the launch's monitor stop distance is 0.42 m (laser-to-obstacle, front 120 deg), so lanes through tight spots trip it. Note the launch uses stop 0.42 / slow 0.6 / 120 deg, not the 0.30 / 0.70 in `nav2_collision_monitor.yaml`. Tried a 0.60 m-clearance graph (149 nodes, `map_to_route_graph.py --clearance 0.60`): still ABORTED with one STOP latch, so lane clearance is not the whole story (hypotheses: STOP latch not releasing while the controller keeps commanding, or load 20+ starving the loop). Not resolved.
+
+### Nav2 collision monitor comparison setup (2026-11-14)
+`config/nav2_collision_monitor.yaml` mirrors our `collision_monitor.py` (stop ~0.30 m, slowdown ~0.70 m x0.40, /scan,
+cmd_vel_nav -> cmd_vel_safe). Verified only that `nav2_collision_monitor` configures with it and creates both polygons;
+not wired into a launch or compared in sim.
+
+### Benchmark load guard (2026-11-14)
+All `benchmark_*.sh` source `scripts/bench_load_guard.sh` and refuse to start when the 1-min load average exceeds
+`BENCH_MAX_LOAD` (default 8); `BENCH_LOAD_FORCE=1` overrides with a warning. `benchmark_nav_matrix.sh` default combos now also
+include `navfn:rotation_shim` and `navfn:graceful`.

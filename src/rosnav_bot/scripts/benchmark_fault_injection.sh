@@ -11,6 +11,7 @@
 #
 # Usage: FAULTS="nav_crash slam_crash" WORLD=cafe FAULT_AT=90 DURATION_S=240 ./scripts/benchmark_fault_injection.sh
 set -eo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/bench_load_guard.sh"; bench_load_guard
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$HERE/common_bench.sh"

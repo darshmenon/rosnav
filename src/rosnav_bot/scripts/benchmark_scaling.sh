@@ -7,6 +7,7 @@
 # MAP_TOPIC defaults to /map (slam_mode:=single); use /map_merged only with slam_mode:=multi.
 # Output: $OUT_DIR/scaling.md (+ per-run JSON). Loadavg is sampled to show CPU saturation.
 set -eo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/bench_load_guard.sh"; bench_load_guard
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$HERE/common_bench.sh"

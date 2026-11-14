@@ -1,0 +1,33 @@
+# Nav2's own collision monitor, set up to mirror our scripts/collision_monitor.py
+# (stop 0.30 m, slowdown 0.70 m at x0.40) for a side-by-side comparison. NOT wired into a launch yet.
+#   cmd_vel_nav -> [collision_monitor] -> cmd_vel_safe     (our script: cmd_vel_nav -> cmd_vel)
+collision_monitor:
+  ros__parameters:
+    base_frame_id: "base_link"
+    odom_frame_id: "odom"
+    cmd_vel_in_topic: "cmd_vel_nav"
+    cmd_vel_out_topic: "cmd_vel_safe"
+    transform_tolerance: 0.5
+    source_timeout: 5.0
+    base_shift_correction: true
+    stop_pub_timeout: 2.0
+    polygons: ["StopZone", "SlowZone"]
+    StopZone:
+      type: "polygon"
+      points: [0.45, 0.30, 0.45, -0.30, -0.15, -0.30, -0.15, 0.30]   # ~0.30 m beyond a 0.30 m-radius base, front-biased
+      action_type: "stop"
+      min_points: 4
+      visualize: true
+      polygon_pub_topic: "stop_zone"
+    SlowZone:
+      type: "polygon"
+      points: [0.85, 0.50, 0.85, -0.50, -0.15, -0.50, -0.15, 0.50]
+      action_type: "slowdown"
+      slowdown_ratio: 0.40
+      min_points: 4
+      visualize: true
+      polygon_pub_topic: "slow_zone"
+    observation_sources: ["scan"]
+    scan:
+      type: "scan"
+      topic: "scan"
