@@ -2924,3 +2924,9 @@ C++ would still win ~50x on big maps; a full 1800-line port is not justified.
 Done too: `src/pathdist.cpp` -> `librosnav_pathdist.so` (built by CMake, loaded via ctypes in `frontier_explorer.py`,
 falls back to the Python BFS if the library is missing). `_path_distance_map` end to end incl. list->numpy: cafe 218 -> 4.2 ms,
 16x map 3632 -> 67 ms (~52x), results identical (unit test compares both paths). Needs `colcon build` + sourced install.
+
+### rotation_shim and graceful controllers, first sim run (2026-11-14)
+Cafe, `navfn`, 3 fixed goals, one run each, load ~10 (not a quiet machine, so read speeds as relative only):
+dwb 3/3 (0.107 m/s, 0.33 m err), graceful 3/3 (0.081, 0.30), rotation_shim 3/3 after the fix below (0.054, 0.27; goal 3 took 73 s).
+Bug found: `nav2_params_rotation_shim.yaml` had RPP `use_rotate_to_heading: true` under the shim; with it, goal 1 aborted
+('Failed to make progress', 8 recoveries, 0.004 m/s). Set to false: the shim owns the in-place turn.

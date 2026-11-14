@@ -134,7 +134,7 @@ controller_server:
       regulated_linear_scaling_min_speed: 0.05
       use_fixed_curvature_lookahead: false
       curvature_lookahead_dist: 0.25
-      use_rotate_to_heading: true
+      use_rotate_to_heading: false   # the RotationShim does the in-place turn; both together deadlock
       rotate_to_heading_min_angle: 0.785
       max_angular_accel: 0.6
       max_robot_pose_search_dist: 10.0
