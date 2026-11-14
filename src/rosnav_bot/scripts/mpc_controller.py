@@ -65,12 +65,20 @@ class MPCController(Node):
         self.declare_parameter('track_timeout', 1.0)
         self.declare_parameter('yaw_tol', 0.12)       # rad, final heading alignment
         self.declare_parameter('align_w_max', 0.8)
+        self.declare_parameter('solver', 'mpc')         # 'mpc' (NLP, obstacle-aware) | 'lqr' (fast tracker, no obstacles)
         cfg = MPCConfig()
         for f in dataclasses.fields(cfg):
             self.declare_parameter(f.name, getattr(cfg, f.name))
         cfg = MPCConfig(**{f.name: type(getattr(cfg, f.name))(self.get_parameter(f.name).value)
                            for f in dataclasses.fields(cfg)})
-        self._mpc = UnicycleMPC(cfg)
+        self._solver_name = str(self.get_parameter('solver').value).strip().lower()
+        if self._solver_name == 'lqr':
+            from lqr_core import LQRConfig, UnicycleLQR
+            self._mpc = UnicycleLQR(LQRConfig(
+                dt=1.0 / float(self.get_parameter('rate_hz').value), v_max=cfg.v_max, v_min=cfg.v_min,
+                w_max=cfg.w_max, a_max=cfg.a_max, alpha_max=cfg.alpha_max, v_ref=cfg.v_ref))
+        else:
+            self._mpc = UnicycleMPC(cfg)
 
         self._ctl = self.get_parameter('control_frame').value
         self._base = self.get_parameter('base_frame').value
@@ -103,7 +111,7 @@ class MPCController(Node):
         self.create_timer(1.0 / float(self.get_parameter('rate_hz').value), self._tick)
         self.create_timer(1.0, self._report)
         self.get_logger().info(
-            f'mpc_controller: plan {self.get_parameter("plan_topic").value} + scan + tracks -> '
+            f'mpc_controller[{self._solver_name}]: plan {self.get_parameter("plan_topic").value} + scan + tracks -> '
             f'{self.get_parameter("cmd_vel_topic").value} in {self._ctl} '
             f'(horizon={cfg.horizon}x{cfg.dt}s, v_ref={cfg.v_ref}, r_hard={cfg.r_hard} m)')
 

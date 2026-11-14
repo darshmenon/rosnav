@@ -9,6 +9,7 @@
 # Usage: scripts/benchmark_localization.sh [world] [arms...]     e.g. cafe L R O B
 # Env: ROS_DOMAIN_ID (default 205, isolated), OUT, RTAB_DB (default ~/.ros/rtabmap_<world>.db), GS
 set -u
+source "$(dirname "${BASH_SOURCE[0]}")/bench_load_guard.sh"; bench_load_guard
 WORLD=${1:-cafe}; shift 1 2>/dev/null || true; ARMS=${*:-L R O B}
 export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-205}; export GZ_PARTITION=${GZ_PARTITION:-loc$ROS_DOMAIN_ID}
 REPO=$(cd "$(dirname "$0")/../../.." && pwd); OUT=${OUT:-/tmp/loc_bench_$WORLD}; mkdir -p "$OUT"

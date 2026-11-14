@@ -5,6 +5,7 @@
 # the first sample and reports RMSE / final drift (% of path) per estimator, incl. kiss_icp.
 # Usage: scripts/benchmark_kiss_icp.sh [world]      Env: ROS_DOMAIN_ID (default 206), OUT, DUR
 set -u
+source "$(dirname "${BASH_SOURCE[0]}")/bench_load_guard.sh"; bench_load_guard
 WORLD=${1:-cafe}
 export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-206}; export GZ_PARTITION=${GZ_PARTITION:-kiss$ROS_DOMAIN_ID}
 REPO=$(cd "$(dirname "$0")/../../.." && pwd); OUT=${OUT:-/tmp/kiss_bench_$WORLD}; DUR=${DUR:-120}; mkdir -p "$OUT"

@@ -10,6 +10,7 @@
 # Optional: sudo apt install ros-$ROS_DISTRO-cartographer-ros
 # Does not commit or push.
 set -eo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/bench_load_guard.sh"; bench_load_guard
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$ROOT"

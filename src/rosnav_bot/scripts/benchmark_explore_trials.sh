@@ -10,6 +10,7 @@
 # Does not commit or push. Uses a random isolated ROS_DOMAIN_ID per trial and
 # kills only its own process group (shared machine — no pkill by name).
 set -eo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/bench_load_guard.sh"; bench_load_guard
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$ROOT"

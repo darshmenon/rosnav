@@ -55,6 +55,7 @@ class MPCConfig:
     max_obstacles: int = 6
     obstacle_range: float = 3.0
     max_iter: int = 25
+    analytic_grad: bool = True    # False = SciPy finite differences (slower; kept for cross-checking)
 
 
 def wrap(a):
@@ -141,6 +142,51 @@ class UnicycleMPC:
                 j += c.q_obs * np.sum(np.maximum(c.r_soft - d, 0.0) ** 2)
             return j
 
+        tri = np.tril(np.ones((n, n)))                         # tri[k-1, j] = 1 for j <= k-1
+
+        def dp_du(v, th):
+            """Jacobians of p_k (k=1..n) wrt v and w: four (n, n) matrices Jxv, Jyv, Jxw, Jyw."""
+            thj = th[:-1]
+            Jxv, Jyv = dt * np.cos(thj)[None, :] * tri, dt * np.sin(thj)[None, :] * tri
+            ax, ay = -dt * dt * v * np.sin(thj), dt * dt * v * np.cos(thj)
+            Cx, Cy = np.cumsum(ax), np.cumsum(ay)
+            mask = np.tril(np.ones((n, n)), k=-1)              # j < k-1
+            Jxw = (Cx[:, None] - Cx[None, :]) * mask
+            Jyw = (Cy[:, None] - Cy[None, :]) * mask
+            return Jxv, Jyv, Jxw, Jyw
+
+        def grad(u):
+            """Analytic dJ/du (matches finite differences; SLSQP otherwise spends most time on those)."""
+            v, w = split(u)
+            st = rollout(x0, v, w, dt)
+            th = st[:, 2]
+            e = st[1:, :2] - pts[1:]
+            ca, sa = np.cos(hd[1:]), np.sin(hd[1:])
+            e_al = ca * e[:, 0] + sa * e[:, 1]
+            e_cr = -sa * e[:, 0] + ca * e[:, 1]
+            gp = np.stack([2 * c.q_pos * e_al * ca - 2 * c.q_cross * e_cr * sa,
+                           2 * c.q_pos * e_al * sa + 2 * c.q_cross * e_cr * ca], axis=1)   # (n, 2)
+            gp[-1] += 2 * c.q_term * (st[-1, :2] - pts[-1])
+            if len(obs):
+                diff = st[1:, None, :2] - o_pred[1:]
+                d = np.linalg.norm(diff, axis=2)
+                act = d < c.r_soft
+                coef = np.where(act, -2 * c.q_obs * (c.r_soft - d) / np.maximum(d, 1e-9), 0.0)
+                gp += np.sum(coef[:, :, None] * diff, axis=1)
+            gth = 2 * c.q_yaw * wrap(th[1:] - hd[1:])                                      # (n,) for th_1..th_n
+            Jxv, Jyv, Jxw, Jyw = dp_du(v, th)
+            gv = Jxv.T @ gp[:, 0] + Jyv.T @ gp[:, 1]
+            gw = Jxw.T @ gp[:, 0] + Jyw.T @ gp[:, 1]
+            # heading enters via th_k = th0 + dt * sum_{j<k} w_j
+            gw += dt * np.cumsum(gth[::-1])[::-1]
+            gv += 2 * c.r_v * (v - c.v_ref)
+            gw += 2 * c.r_w * w
+            dv = np.diff(np.concatenate(([v_now], v)))
+            dw = np.diff(np.concatenate(([w_now], w)))
+            gv += 2 * c.r_dv * (dv - np.append(dv[1:], 0.0))
+            gw += 2 * c.r_dw * (dw - np.append(dw[1:], 0.0))
+            return np.concatenate([gv, gw])
+
         cons = []
         if len(obs):
             def clearance(u):
@@ -148,7 +194,18 @@ class UnicycleMPC:
                 st = rollout(x0, v, w, dt)
                 d = np.linalg.norm(st[1:, None, :2] - o_pred[1:], axis=2)   # (n, M)
                 return (d - r_hard[None, :]).ravel()
-            cons.append({'type': 'ineq', 'fun': clearance})
+
+            def clearance_jac(u):
+                v, w = split(u)
+                st = rollout(x0, v, w, dt)
+                diff = st[1:, None, :2] - o_pred[1:]                      # (n, M, 2)
+                d = np.maximum(np.linalg.norm(diff, axis=2), 1e-9)
+                unit = diff / d[:, :, None]
+                Jxv, Jyv, Jxw, Jyw = dp_du(v, st[:, 2])
+                Jv = unit[:, :, 0:1] * Jxv[:, None, :] + unit[:, :, 1:2] * Jyv[:, None, :]   # (n, M, n)
+                Jw = unit[:, :, 0:1] * Jxw[:, None, :] + unit[:, :, 1:2] * Jyw[:, None, :]
+                return np.concatenate([Jv, Jw], axis=2).reshape(n * len(obs), 2 * n)
+            cons.append({'type': 'ineq', 'fun': clearance, 'jac': clearance_jac})
 
         # |dv|, |dw| limits are linear in u: build the constraint matrix once (exact Jacobian)
         D = np.eye(n) - np.eye(n, k=-1)                       # dv_k = v_k - v_{k-1}
@@ -182,7 +239,8 @@ class UnicycleMPC:
         def run(us):
             with warnings.catch_warnings():
                 warnings.simplefilter('ignore', RuntimeWarning)   # SLSQP clipping to bounds
-                r = minimize(cost, us, method='SLSQP', bounds=bounds, constraints=cons,
+                r = minimize(cost, us, jac=grad if c.analytic_grad else None, method='SLSQP', bounds=bounds,
+                             constraints=cons,
                              options={'maxiter': c.max_iter, 'ftol': 1e-4})
             good = np.all(np.isfinite(r.x)) and (bool(r.success) or r.status == 9)
             if good and len(obs) and np.min(clearance(r.x)) < -1e-3:

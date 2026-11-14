@@ -6,6 +6,7 @@
 # Usage: WORLD=maze TRIALS=4 ./scripts/benchmark_ablation.sh
 # Extra arms: ABLATIONS_EXTRA='builtin,explorer_params:={"revisit_radius":0.0}'
 set -eo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/bench_load_guard.sh"; bench_load_guard
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARMS=(
   'builtin'

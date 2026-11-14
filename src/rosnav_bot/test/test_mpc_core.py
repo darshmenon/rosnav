@@ -108,3 +108,38 @@ def test_sidesteps_an_obstacle_seen_only_by_its_surface_points():
     traj, clr, _, _ = _run(path, lambda t: obs, steps=300)
     assert clr >= 0.28
     assert np.hypot(*(path[-1] - traj[-1, :2])) < 0.3
+
+
+def test_analytic_gradients_match_finite_differences(monkeypatch):
+    """The cost gradient and the clearance Jacobian handed to SLSQP equal finite differences."""
+    cap = {}
+    real = mpc_core.minimize
+
+    def spy(fun, x0, **kw):
+        cap.setdefault('calls', []).append((fun, x0, kw))
+        return real(fun, x0, **kw)
+    monkeypatch.setattr(mpc_core, 'minimize', spy)
+    mpc = mpc_core.UnicycleMPC(mpc_core.MPCConfig())
+    path = _line(0, 0, 4, 0.5)
+    obs = np.array([[1.2, 0.1, 0.0, 0.0], [1.6, -0.3, -0.1, 0.05]])
+    mpc.solve((0.0, 0.05, 0.1), 0.2, 0.1, path, obs)
+    fun, x0, kw = cap['calls'][0]
+    rng = np.random.default_rng(0)
+    u = x0 + 0.05 * rng.standard_normal(x0.shape)
+    g = kw['jac'](u)
+    h = 1e-6
+    fd = np.array([(fun(u + h * e) - fun(u - h * e)) / (2 * h) for e in np.eye(len(u))])
+    assert np.allclose(g, fd, rtol=1e-4, atol=1e-5)
+    clr = [c for c in kw['constraints'] if 'jac' in c and c['fun'].__name__ == 'clearance'][0]
+    J = clr['jac'](u)
+    Jfd = np.array([(clr['fun'](u + h * e) - clr['fun'](u - h * e)) / (2 * h) for e in np.eye(len(u))]).T
+    assert np.allclose(J, Jfd, rtol=1e-4, atol=1e-5)
+
+
+def test_analytic_grad_faster_and_same_quality():
+    path = _line(0, 0, 4, 0, 60)
+    obs = lambda t: np.array([[1.5, 0.05, 0.0, 0.0]])          # noqa: E731
+    r_fast = _run(path, obs, steps=60, cfg=mpc_core.MPCConfig(analytic_grad=True))
+    r_slow = _run(path, obs, steps=60, cfg=mpc_core.MPCConfig(analytic_grad=False))
+    assert r_fast[3] and r_fast[1] > 0.25                       # all solves ok, keeps clearance
+    assert r_fast[2] < r_slow[2]                                # median solve time is lower

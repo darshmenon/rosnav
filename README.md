@@ -17,10 +17,6 @@
 ros2 launch rosnav_bot slam_nav.launch.py world_name:=cafe explore:=true
 ```
 
-![Camera, costmap and Gaussian Splat overlay in RViz (cafe)](images/gs_overview_3d_lidar.png)
-
-<p><sub>Camera · costmap · Gaussian Splat points · robot model — one RViz config (<code>rviz/gs_overview.rviz</code>; the 3D lidar layer is off in this shot)</sub></p>
-
 </div>
 
 One launch → Gazebo + SLAM/Nav2 + RViz. Scale to a fleet with one arg. Humble/Jazzy params auto-selected from `$ROS_DISTRO`.
@@ -249,9 +245,9 @@ slam_toolbox's nodes + loop-closure constraints live; "Fused Odom (EKF/UKF)" vs
 "Wheel Odom (raw)" (off by default) lets you watch the localization filter correct
 drift, with its position-covariance ellipse on.
 
-### SLAM in RViz (live recordings)
+Route Server lanes (cafe): `route_graph:=auto`; make a graph for any map with `scripts/map_to_route_graph.py` (see concepts.md).
 
-Each GIF is the full RViz window: display groups on the left, map, plan, costmap and pose graph in the 3D view.
+### SLAM in RViz
 
 #### Collaborative SLAM (2 robots, map merging, cafe)
 
@@ -270,10 +266,6 @@ Per-robot slam_toolbox maps merged into `/map_merged` (10x speed).
 `ros2 launch rosnav_bot slam_nav.launch.py world_name:=simple_rooms lidar_type:=3d slam_algo:=3d explore:=true`
 
 ![RTAB-Map 3D lidar exploring simple_rooms in RViz](images/rtabmap_3d_lidar_simple_rooms.gif)
-
-| hospital | maze | simple_rooms (sequence) |
-|:--:|:--:|:--:|
-| <img src="images/rtabmap_3d_lidar_hospital.gif" alt="RTAB-Map 3D lidar exploring the hospital" width="260"> | <img src="images/rtabmap_3d_lidar_maze.gif" alt="RTAB-Map 3D lidar exploring the maze" width="260"> | <img src="images/rtabmap_simple_rooms_sequence.gif" alt="RTAB-Map simple_rooms mapping sequence" width="260"> |
 
 #### slam_toolbox + MPC controller (maze)
 
@@ -769,10 +761,12 @@ rviz2 -d src/rosnav_bot/rviz/gs_overview.rviz
   <tr>
     <td align="center"><b>GS splat point cloud (gs_overview.rviz)</b></td>
     <td align="center"><b>World-scaled, alongside robot + 3D lidar (§29b fix)</b></td>
+    <td align="center"><b>Camera + costmap + splat + robot (gs_overview.rviz)</b></td>
   </tr>
   <tr>
-    <td><img src="images/gs_splat_rviz_overview.png" alt="GS splat point cloud in RViz (gs_overview.rviz)" width="420"/></td>
-    <td><img src="images/gs_overview_3d_lidar_wide.png" alt="GS splat, correctly world-scaled, alongside the robot and 3D lidar (see §29b fix)" width="420"/></td>
+    <td><img src="images/gs_splat_rviz_overview.png" alt="GS splat point cloud in RViz (gs_overview.rviz)" width="280"/></td>
+    <td><img src="images/gs_overview_3d_lidar_wide.png" alt="GS splat, correctly world-scaled, alongside the robot and 3D lidar (see §29b fix)" width="280"/></td>
+    <td><img src="images/gs_overview_3d_lidar.png" alt="Camera, costmap and Gaussian Splat overlay in RViz (cafe)" width="280"/></td>
   </tr>
 </table>
 
