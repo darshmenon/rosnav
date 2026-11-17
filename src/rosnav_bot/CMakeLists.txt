@@ -97,6 +97,12 @@ install(
     scripts/rmf_submit_task.py
     scripts/dynamic_obstacle_driver.py
     scripts/dynamic_obstacle_predictor.py
+    scripts/social_nav_node.py
+    scripts/social_force_peds.py
+    scripts/social_force_core.py
+    scripts/social_metrics.py
+    scripts/social_nav_core.py
+    scripts/train_ped_predictor.py
     scripts/pointcloud_to_scan.py
     scripts/scan_quality_gate.py
     scripts/terrain_traversability.py

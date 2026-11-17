@@ -2958,3 +2958,64 @@ only (no Gazebo, no dynamics, static stamped obstacles) - not evidence it works 
 (`MPCConfig.analytic_grad`, default True; False = old finite differences). Same trajectories, ~4x faster per solve (median ms,
 fd -> analytic): straight 10.9 -> 2.8, sine 16.8 -> 3.8, static obstacle 29.0 -> 6.5 (p95 163 -> 39), moving obstacle 21.2 -> 5.2.
 Unit tests compare both Jacobians to finite differences. A C++ port is not needed at these times (10 Hz budget = 100 ms).
+
+## 47. Social navigation among pedestrians (2026-11-17)
+
+Goal: Nav2 that predicts where people will be instead of only reacting to them. Everything below is offline (numpy / PyTorch) unless it says otherwise; the Gazebo/Nav2 side-by-side is built but **not yet run** (see Open).
+
+**Pieces** (all in `src/rosnav_bot/scripts/`, none committed yet):
+- `social_nav_core.py`: constant-velocity prediction, reactive / predictive / `RiskPlanner` (Monte Carlo joint collision probability + progress + commitment, no hard reject), a speed/brake safety filter, and the metrics (collision rate, clearance, personal-space intrusion seconds, smoothness, time).
+- `train_ped_predictor.py`: social-attention transformer (agents attend to each other, residual over constant velocity), 8 observed steps -> 12 predicted at 0.4 s, up to 24 agents. Trains on synthetic social-force crowds or real ETH/UCY (`--real_root ... --heldout <scene>`, `--init` to fine-tune). `loo_real.sh` runs all five leave-one-scene-out splits.
+- `conformal_calibrate.py`: split-conformal radii per horizon step (idea from GenSafeNav, CoRL'25): the 90% error quantile on held-out windows replaces a hand-set "uncertainty grows with time" guess. Synthetic: 0.12 m at 0.4 s -> 4.56 m at 4.8 s.
+- `social_force_core.py` + `social_force_peds.py`: human-looking Gazebo pedestrians (A* routes on the map, wall/person/robot forces, pauses, pairs, hesitation, distracted walkers), lidar-visible collision cylinder, ground truth on `/social_peds/gt`, RViz markers on `/social_peds/markers`.
+- `social_nav_node.py`: tracker JSON -> predictor -> `/social_nav/predicted_paths` + a keepout mask whose discs widen with lookahead; optional CBF safety layer (`use_cbf:=true`, reuses `cbf_safety_filter.cbf_filter`). The learned output never drives the motors: it only shapes the costmap, and the CBF clamps `cmd_vel`.
+- `ped_tracker_core.py`: Kalman multi-person tracker with Hungarian assignment (survives short occlusions). Unit-tested; **not** tried with YOLO on simulated people.
+- `social_metrics.py`, `benchmark_social_nav.sh` (`plain | cv | learned`, load-guarded, exact-PID cleanup, `RVIZ=1` to watch), new launch arg `dynobs_pipeline:=none|cv|external`.
+- `render_social_demo.py`: matplotlib video of the offline model (`images/social_nav_demo.gif`): hospital map, 12 social-force people, learned + constant-velocity predictions, and a **differential-drive** robot (unicycle: turns toward the planner's direction before driving, body + two wheels + heading arrow, simulated 2D lidar fan, live v / w / wheel speeds). It is a rendering of the model, not Gazebo. **Controller in the demo:** `social_nav_core.RiskPlanner` (25 headings x 4 speeds = 100 candidate velocities, cost = goal distance + progress + commitment + wall clearance + Monte Carlo collision risk + personal-space intrusion, uncertainty from conformal radii), then `safety_filter` (speed cap, linear brake near people); the planner picks a holonomic velocity and a proportional heading controller (`w = clip(3 * heading error, +-1.8 rad/s)`, turn in place when more than 1.1 rad off) makes the diff-drive follow it. This is NOT a Nav2 controller. In the Nav2 integration, Nav2's own controller (dwb / mppi / rpp, chosen by `controller:=`) keeps driving; `social_nav_node.py` only adds predicted-path cost to the costmap and, with `use_cbf:=true`, clamps `cmd_vel` through the CBF filter.
+
+**Predictor, real data** (ETH/UCY from `StanfordASL/Trajectron-plus-plus`, MIT; leave-one-scene-out, ADE in m, synthetic-pretrained then fine-tuned 12 epochs):
+
+| Held-out | Constant velocity | Learned |
+|---|---|---|
+| eth | 1.044 | 1.027 |
+| hotel | 0.249 | 0.347 |
+| univ | 0.593 | 0.529 |
+| zara1 | 0.477 | 0.418 |
+| zara2 | 0.363 | 0.321 |
+
+Better on univ/zara1/zara2 (about 10-12%), worse on hotel and no real gain on eth. Only ~4k training windows per split, so it overfits fast; synthetic-only weights do not work zero-shot on real data (ADE 1.0-2.0 m). Synthetic social-force test: ADE/FDE 0.95 / 2.06 m vs constant velocity 1.50 / 3.32 m.
+
+**Planner, social-force crowds** (`eval_learned_planner.py`, 8 pedestrians, 20 seeds; robot also repels pedestrians):
+
+| Planner | Collisions | Success | Intrusion s |
+|---|---|---|---|
+| reactive | 55% | 100% | 10.5 |
+| constant-velocity predictive | 20% | 100% | 5.5 |
+| learned predictive | 20% | 100% | 4.0 |
+| risk planner + CV prediction | 10% | 100% | 4.3 |
+| risk planner + learned prediction | 10% | 95% | 3.3 |
+
+Findings: a hard-reject risk planner with hand-set uncertainty avoided collisions only by stalling (12-25% success); progress + commitment terms (idea from QFN-Go1) and conformal sigma (scaled 0.5) fixed that. Results move a lot with seed count (the same planner showed 25% and 38% collisions at 12 vs 8 seeds), so treat single digits as noise. 16/24-pedestrian rows are incomplete (stopped for machine load): at 16, reactive was 95% collisions / 80% success; nothing else finished.
+
+**Open:** (1) Gazebo/Nav2 comparison (`benchmark_social_nav.sh hospital plain cv learned`) never ran: the shared machine stayed above the load-8 guard. (2) Inference latency (`bench_ped_predictor.py`) not measured cleanly. (3) Crowds larger than 12 and real-data training on all scenes together. (4) YOLO + depth detections feeding the tracker.
+
+Sources: [DRA-MPPI](https://arxiv.org/html/2506.21205v2), [C2U-MPPI](https://arxiv.org/pdf/2501.08520v2), [GenSafeNav](https://arxiv.org/abs/2508.05634v1), [OpenTraj](https://arxiv.org/pdf/2010.00890), [HuNavSim](https://github.com/robotics-upo/hunav_sim).
+
+### 47.1 Everything found along the way (web search, repos, datasets, people)
+
+**What the web searches turned up** (2026-11-17; snippets read, full papers mostly not):
+- Predictive MPPI for crowds: [DRA-MPPI](https://arxiv.org/html/2506.21205v2) (Monte Carlo joint collision probability inside the MPPI cost, mitigates the freezing-robot problem; no ROS 2 / Nav2 implementation found), [C2U-MPPI](https://arxiv.org/pdf/2501.08520v2) (chance constraints + layered obstacle representation), [learned barrier functions from motion prediction](https://arxiv.org/pdf/2601.10233), CBF-guided flow-matching + MPPI (UW SHARC 2025 poster). Nav2's own MPPI obstacle critic is meant for near-collision only, there is no built-in pedestrian-prediction costmap layer.
+- Nav2 social costmap layers: [robotics-upo/nav2_social_costmap_plugin](https://relatedrepos.com/gh/robotics-upo/nav2_social_costmap_plugin) (no trajectory prediction), Nav2CAN (2023), vefak/CustomCostmapPlugin-SocialNavigation (Unity-fed, simulation tool), a Politecnico di Torino thesis putting the Social Force Model into MPPI as a critic.
+- 2025-26 prediction research without a confirmed Nav2 plugin: SocialNav-Map (arXiv 2511.12232), FALCON (2409.13244), NavThinker (2603.15359).
+- Pedestrian simulators: HuNavSim (ROS 2, Gazebo Classic wrapper only), pedsim_ros2 (Humble, social force), TempleRAIL pedsim_ros_with_gazebo (Noetic), Arena 3.0 / Arena 4 (ROS 2, Nav2, social navigation benchmark). No ready crowded hospital/cafe/mall Gazebo world found.
+- Gazebo actors: native `<actor>` skeleton animation (.dae/.bvh) exists, but **no source confirmed an actor is detected by a lidar in gz-sim**; the known fix (actor_collisions) is Gazebo Classic only. That is why `social_force_peds.py` uses kinematic models with a collision cylinder instead.
+- Datasets/loaders: ETH/UCY raw files ship in `StanfordASL/Trajectron-plus-plus` (MIT, `experiments/pedestrians/raw`, columns frame/id/x/y, 0.4 s step, leave-one-scene-out folders); trajdata (NVlabs) loader; OpenTraj benchmark; SCAND (robot teleop demonstrations, CC BY 4.0 listed, not verified) and JRDB (robot-perspective) not downloaded. Standard window: 8 observed + 12 predicted steps at 2.5 FPS.
+- Transformer predictors with public code (no checkpoints confirmed): Trajectory-Transformer (Giuliari), MTN, TUTR, PPT (ECCV'24), LMTraj (CVPR'24).
+
+**Repos inspected** (cloned to `~/inspiration/`, outside this repo):
+- `Arthur1117/QFN-Go1-Dynamic-Navigation` (Nav2 MPPI, 7 dynamic obstacles, CV/CA/STOP/REV multi-model prediction, time-indexed risk, **monotonic crossing commitment**): the commitment idea fixed the risk planner's stalling here. Not yet used: multi-model (CA/STOP/REV) prediction.
+- `pavansai018/crowd_aware_safe_navigation` (GenSafeNav, CoRL'25): DR-SPAAM lidar person detection -> SORT -> predictor with **conformal calibration (DtACI)** -> RL decider. Source of the conformal-radii idea (we use a one-shot split-conformal quantile, not the online adaptive version).
+
+**People search** (`~/people_search/`, standalone, OpenAlex + `gh`, 5 offline tests): 6 queries, up to 300 works each, ~6100 people ranked by relevant works / recency / citations. Top of the list: Haifeng Sang, Wangxing Chen, Zishan Zhao (Shenyang Univ. of Technology, pedestrian trajectory GCN papers, tied because they co-author the same works), Xuesu Xiao (George Mason, SCAND), Joydeep Biswas (UT Austin), Rohan Chandra (UVA), Amirreza Payandeh and Daeun Song (GMU), Cesar Cadena (ETH Zurich). Limits: publication activity only, GitHub matched by exact name, the "ViNT NoMaD general navigation model" query returned 0 works (replaced by looser queries), only the top 10 of the "visual navigation foundation model" query were checked for relevance.
+
+**Process findings:** (1) three heavy numpy/torch jobs at once pushed load to 47 and made timing meaningless: run one at a time with `OMP_NUM_THREADS` set. (2) New scripts need `chmod +x` or `ros2 run` says "No executable found". (3) The Gazebo Python transport bindings clash with the protobuf version, so pedestrians are driven over `ros_gz_bridge` + `VelocityControl` and read back from `/world/<w>/pose/info`. (4) Another ROS session shares this machine and often keeps load above 8, which blocked the live Nav2 benchmark.

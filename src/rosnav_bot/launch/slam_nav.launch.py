@@ -157,6 +157,10 @@ _WORLD_SPAWN_DEFAULTS = {
     # (1.5, 1.0) sits ~0.46m from cb_box_3, inside the collision monitor's
     # 0.55m stop radius, latching STOP before the robot ever moves.
     'bench_room_cluttered': {'x': '-0.6', 'y': '-1.6', 'z': '0.3', 'yaw': '0.0'},
+    # Open floor between the south aisle (y=-5.2) and the center aisle (y=0),
+    # clear of the bench and the west tables. People are driven separately
+    # by moving_obstacles_gz.py --world crowd.
+    'crowd': {'x': '-5.5', 'y': '-2.0', 'z': '0.3', 'yaw': '0.0'},
 }
 _GENERIC_SPAWN_DEFAULT = {'x': '1.5', 'y': '1.0', 'z': '0.3', 'yaw': '0.0'}
 
@@ -444,7 +448,8 @@ def _build_runtime_actions(context, pkg_share: str):
         _enabled_filters.add('binary_filter')
     if LaunchConfiguration('gs_speed_mask').perform(context).strip() or terrain_live_camera:
         _enabled_filters.add('speed_filter')
-    if int(LaunchConfiguration('dynamic_obstacles').perform(context).strip() or 0) > 0:
+    if (int(LaunchConfiguration('dynamic_obstacles').perform(context).strip() or 0) > 0
+            or LaunchConfiguration('dynobs_pipeline').perform(context).strip().lower() in ('cv', 'external')):
         _enabled_filters.add('dynobs_keepout_filter')
     _params_file = _common.strip_inert_filters(_params_file, _enabled_filters)
     lite = LaunchConfiguration('profile').perform(context).strip().lower() == 'lite'
@@ -1369,16 +1374,20 @@ def _build_runtime_actions(context, pkg_share: str):
                     period=5.0,
                     actions=[_common.dynamic_obstacle_driver_node(do_name, do_axis, do_amplitude, do_speed)]),
             ]
-        # Close the loop into Nav2: obstacle_tracker.py Kalman-tracks the
-        # patrolling obstacle(s) from LaserScan, dynamic_obstacle_predictor.py
-        # projects each track forward along its velocity and republishes a
-        # KeepoutFilter mask (config/dynamic_obstacle_filter.yaml) so the
-        # costmap already carries cost where the obstacle is about to be,
-        # instead of only reacting once it's actually in the beam. See
-        # concepts.md §26. Started after the obstacle(s) above (period=9.0
-        # vs 5.0) so there's something to track from the first mask publish.
-        dynamic_obstacle_filter_params = os.path.join(
-            pkg_share, 'config', 'dynamic_obstacle_filter.yaml')
+    # Close the loop into Nav2: obstacle_tracker.py Kalman-tracks the
+    # patrolling obstacle(s) from LaserScan, dynamic_obstacle_predictor.py
+    # projects each track forward along its velocity and republishes a
+    # KeepoutFilter mask (config/dynamic_obstacle_filter.yaml) so the
+    # costmap already carries cost where the obstacle is about to be,
+    # instead of only reacting once it's actually in the beam. See
+    # concepts.md §26. Started after the obstacle(s) above (period=9.0
+    # vs 5.0) so there's something to track from the first mask publish.
+    dynobs_mode = LaunchConfiguration('dynobs_pipeline').perform(context).strip().lower()
+    if dynamic_obstacles > 0 and dynobs_mode == 'none':
+        dynobs_mode = 'cv'
+    dynamic_obstacle_filter_params = os.path.join(
+        pkg_share, 'config', 'dynamic_obstacle_filter.yaml')
+    if dynobs_mode in ('cv', 'external'):
         dynamic_obstacle_actions.append(
             TimerAction(
                 period=9.0,
@@ -1390,13 +1399,14 @@ def _build_runtime_actions(context, pkg_share: str):
                         output='screen',
                         parameters=[{'use_sim_time': True}],
                     ),
-                    Node(
+                    # 'external': an outside node (social_nav_node.py) publishes /dynobs/keepout_mask
+                    *([] if dynobs_mode == 'external' else [Node(
                         package='rosnav_bot',
                         executable='dynamic_obstacle_predictor.py',
                         name='dynamic_obstacle_predictor',
                         output='screen',
                         parameters=[{'use_sim_time': True}],
-                    ),
+                    )]),
                     Node(
                         package='nav2_map_server',
                         executable='costmap_filter_info_server',
@@ -1858,6 +1868,12 @@ def generate_launch_description():
             description='Number of patrolling dynamic_obstacle models to spawn '
                         '(see models/dynamic_obstacle) for testing Nav2 dynamic-obstacle '
                         'avoidance and obstacle_tracker.py'),
+        DeclareLaunchArgument(
+            'dynobs_pipeline', default_value='none',
+            description='none | cv | external. Run obstacle_tracker + the dynobs KeepoutFilter without '
+                        'spawning patrol obstacles (e.g. with social_force_peds.py pedestrians). '
+                        'cv = built-in constant-velocity mask predictor; external = you publish '
+                        '/dynobs/keepout_mask (social_nav_node.py -p mask_topic:=/dynobs/keepout_mask).'),
         DeclareLaunchArgument(
             'dynamic_obstacle_x', default_value='2.0',
             description='Base x position for spawned dynamic obstacles (spaced 2m apart along x)'),
