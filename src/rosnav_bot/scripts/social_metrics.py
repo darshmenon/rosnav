@@ -16,18 +16,21 @@ import time
 
 import rclpy
 from rclpy.node import Node
+from rcl_interfaces.msg import ParameterDescriptor
 from std_msgs.msg import String
 
 
 class Metrics(Node):
     def __init__(self):
         super().__init__('social_metrics')
+        dyn = ParameterDescriptor(dynamic_typing=True)     # accept 30 or 30.0 from the command line
         for k, v in dict(duration=120.0, label='run', out='social_metrics.json', robot_r=0.30,
                          ped_r=0.22, personal_space=1.2, map_frame='map',
                          base_frame='base_link', warmup=5.0).items():
-            self.declare_parameter(k, v)
+            self.declare_parameter(k, v, dyn if isinstance(v, float) else ParameterDescriptor())
         g = lambda k: self.get_parameter(k).value
-        self.p = {k: g(k) for k in ('duration', 'label', 'out', 'robot_r', 'ped_r', 'personal_space', 'warmup')}
+        self.p = {k: (float(g(k)) if k in ('duration', 'robot_r', 'ped_r', 'personal_space', 'warmup') else g(k))
+                  for k in ('duration', 'label', 'out', 'robot_r', 'ped_r', 'personal_space', 'warmup')}
         import tf2_ros
         self.buf = tf2_ros.Buffer()
         self.tl = tf2_ros.TransformListener(self.buf, self)
@@ -36,7 +39,7 @@ class Metrics(Node):
         self.create_subscription(String, '/social_peds/gt', self._on_gt, 10)
         self.t0 = time.monotonic()
         self.last_t, self.last_xy, self.last_speed = None, None, 0.0
-        self.m = dict(collisions=0, min_clearance=1e9, intrusion_s=0.0, path_m=0.0, jerk_sum=0.0,
+        self.m = dict(collisions=0, moving_collisions=0, min_clearance=1e9, intrusion_s=0.0, path_m=0.0, jerk_sum=0.0,
                       samples=0, in_contact=False)
         self.create_timer(0.1, self._tick)
         self.get_logger().info(f'recording "{self.p["label"]}" for {self.p["duration"]} s -> {self.p["out"]}')
@@ -76,6 +79,8 @@ class Metrics(Node):
         hit = clear < 0.0
         if hit and not m['in_contact']:
             m['collisions'] += 1                               # one per contact episode
+            if self.last_speed > 0.1:
+                m['moving_collisions'] += 1                    # robot was driving into them (vs. being bumped while still)
         m['in_contact'] = hit
         m['samples'] += 1
 
@@ -86,7 +91,7 @@ class Metrics(Node):
         m = self.m
         n = max(1, m['samples'])
         dur = self.p['duration']
-        res = dict(label=self.p['label'], duration_s=dur, collisions=m['collisions'],
+        res = dict(label=self.p['label'], duration_s=dur, collisions=m['collisions'], moving_collisions=m['moving_collisions'],
                    min_clearance_m=round(m['min_clearance'], 3) if m['min_clearance'] < 1e8 else None,
                    intrusion_s=round(m['intrusion_s'], 1), path_m=round(m['path_m'], 2),
                    mean_speed=round(m['path_m'] / dur, 3), smoothness=round(m['jerk_sum'] / n, 3),

@@ -352,6 +352,47 @@ def use_odom_scan_cloud(params_path: str, cloud_topic: str = '/scan_odom_cloud')
     return out_path
 
 
+SPEED_KEYS = ('max_vel_x', 'max_speed_xy', 'vx_max', 'desired_linear_vel')
+
+
+def max_speed_patch(data: dict, speed: float) -> list:
+    """In-place: set the forward speed caps of the local controller (DWB / MPPI / RPP) to `speed` m/s.
+    Defaults cap at 0.15 m/s (outdoor-heightmap safe), which is too slow to cross a room in a benchmark."""
+    changed = []
+
+    def walk(node, path):
+        if not isinstance(node, dict):
+            return
+        for k, v in node.items():
+            if k in SPEED_KEYS and isinstance(v, (int, float)) and not isinstance(v, bool) and v != speed:
+                changed.append(f"{'.'.join(path)}.{k} {v}->{speed}")
+                node[k] = float(speed)
+            elif k == 'max_velocity' and isinstance(v, list) and v and v[0] != speed:
+                changed.append(f"{'.'.join(path)}.{k}[0] {v[0]}->{speed}")
+                v[0] = float(speed)
+            else:
+                walk(v, path + [str(k)])
+    walk(data, [])
+    return changed
+
+
+def apply_max_speed(params_path: str, speed: float) -> str:
+    """File version of max_speed_patch. Returns the (possibly new) params path."""
+    import yaml
+    with open(params_path) as f:
+        data = yaml.safe_load(f)
+    changed = max_speed_patch(data, speed)
+    if not changed:
+        return params_path
+    out_path = params_path.replace('.yaml', f'_v{speed:g}.yaml')
+    with open(out_path, 'w') as f:
+        yaml.safe_dump(data, f)
+    print(f'[nav2_params] max_speed:={speed:g} m/s changed {len(changed)} caps ({out_path}):')
+    for c in changed:
+        print(f'[nav2_params]   {c}')
+    return out_path
+
+
 def gazebo_server_action(world_path: str, pkg_share: str = None):
     ros_gz_share = get_package_share_directory('ros_gz_sim')
     gz = IncludeLaunchDescription(

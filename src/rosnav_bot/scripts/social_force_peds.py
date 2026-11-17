@@ -3,8 +3,9 @@
 social_force_peds.py — spawn human-looking pedestrians in a running Gazebo world
 and drive them with the social-force crowd from social_force_core.py.
 
-  * each person = kinematic model (legs, torso, arms, head, random clothing) with a
-    1.7 m cylinder collision, so the 2D lidar sees them (gz <actor>s are invisible to it);
+  * each person = kinematic model. The visual is the standing MakeHuman mesh
+    (models/person_standing) so gpu_lidar hits a person, not a box. A cylinder
+    collision stays for contact. gz <actor>s are invisible to this lidar;
   * driven through the model's VelocityControl plugin over a ros_gz_bridge Twist topic
     (one bridge process for the whole crowd), world poses read back from
     /world/<world>/pose/info (truth), so the social forces use real positions;
@@ -35,38 +36,39 @@ from visualization_msgs.msg import Marker, MarkerArray
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import social_force_core as sf  # noqa: E402
 
-SKIN = [(0.96, 0.80, 0.69), (0.85, 0.65, 0.5), (0.65, 0.45, 0.32), (0.45, 0.3, 0.2)]
-CLOTHES = [(0.15, 0.3, 0.7), (0.7, 0.15, 0.15), (0.15, 0.55, 0.3), (0.85, 0.7, 0.15),
-           (0.4, 0.4, 0.45), (0.6, 0.25, 0.6), (0.9, 0.9, 0.9), (0.1, 0.1, 0.12)]
+def _person_mesh_uri():
+    """Standing MakeHuman mesh. gpu_lidar hits visuals, so this is what the scan sees."""
+    here = os.path.dirname(os.path.realpath(__file__))
+    dae = os.path.normpath(os.path.join(
+        here, '..', 'models', 'person_standing', 'meshes', 'standing.dae'))
+    if not os.path.isfile(dae):
+        dae = os.path.normpath(os.path.join(
+            here, '..', '..', 'share', 'rosnav_bot', 'models',
+            'person_standing', 'meshes', 'standing.dae'))
+    return 'file://' + dae if os.path.isfile(dae) else ''
 
 
 def human_sdf(name, rng):
-    sk, sh, tr = rng.choice(SKIN), rng.choice(CLOTHES), rng.choice(CLOTHES)
     h = rng.uniform(1.55, 1.85)
     s = h / 1.7
-
-    def mat(c):
-        return f'<material><ambient>{c[0]} {c[1]} {c[2]} 1</ambient><diffuse>{c[0]} {c[1]} {c[2]} 1</diffuse></material>'
-
-    def vis(n, geom, pose, c):
-        return f'<visual name="{n}"><pose>{pose}</pose><geometry>{geom}</geometry>{mat(c)}</visual>'
-    cyl = lambda r, l: f'<cylinder><radius>{r * s:.3f}</radius><length>{l * s:.3f}</length></cylinder>'
-    parts = [
-        vis('legL', cyl(0.07, 0.8), f'0 {0.09 * s:.3f} {0.4 * s:.3f} 0 0 0', tr),
-        vis('legR', cyl(0.07, 0.8), f'0 {-0.09 * s:.3f} {0.4 * s:.3f} 0 0 0', tr),
-        vis('torso', f'<box><size>{0.22 * s:.3f} {0.38 * s:.3f} {0.6 * s:.3f}</size></box>',
-            f'0 0 {1.1 * s:.3f} 0 0 0', sh),
-        vis('armL', cyl(0.05, 0.6), f'0 {0.24 * s:.3f} {1.1 * s:.3f} 0 0 0', sh),
-        vis('armR', cyl(0.05, 0.6), f'0 {-0.24 * s:.3f} {1.1 * s:.3f} 0 0 0', sh),
-        vis('head', f'<sphere><radius>{0.11 * s:.3f}</radius></sphere>', f'0 0 {1.57 * s:.3f} 0 0 0', sk),
-    ]
+    mesh = _person_mesh_uri()
+    if mesh:
+        visual = (
+            f'<visual name="body"><pose>0 0 0.02 0.04 0 0</pose>'
+            f'<geometry><mesh><uri>{mesh}</uri><scale>{s:.3f} {s:.3f} {s:.3f}</scale></mesh></geometry></visual>'
+        )
+    else:
+        visual = (
+            f'<visual name="body"><pose>0 0 {0.9 * s:.3f} 0 0 0</pose><geometry>'
+            f'<cylinder><radius>0.22</radius><length>{1.7 * s:.3f}</length></cylinder></geometry></visual>'
+        )
     return f'''<?xml version="1.0"?>
 <sdf version="1.8"><model name="{name}">
  <link name="link"><gravity>false</gravity>
   <inertial><mass>60</mass><inertia><ixx>10</ixx><iyy>10</iyy><izz>2</izz></inertia></inertial>
   <collision name="col"><pose>0 0 {0.9 * s:.3f} 0 0 0</pose><geometry>
     <cylinder><radius>0.22</radius><length>{1.7 * s:.3f}</length></cylinder></geometry></collision>
-  {''.join(parts)}
+  {visual}
  </link>
  <plugin filename="libignition-gazebo-velocity-control-system" name="ignition::gazebo::systems::VelocityControl">
   <link_name>link</link_name></plugin>
@@ -78,11 +80,14 @@ class Peds(Node):
         super().__init__('social_force_peds')
         for k, v in dict(world='hospital', map='', n=8, seed=0, hz=10.0, robot_weight=0.6,
                          spawn_avoid_x=0.0, spawn_avoid_y=0.0, robot_frame='base_link',
-                         map_frame='map', spawn=True).items():
+                         map_frame='map', spawn=True, offset_x=0.0, offset_y=0.0).items():
             self.declare_parameter(k, v)
         g = lambda k: self.get_parameter(k).value
         self.world_name, self.n = g('world'), int(g('n'))
         self.hz = float(g('hz'))
+        # Map frame is spawn-relative; Gazebo poses are world-frame. offset is
+        # gazebo = map + offset (the robot's spawn in the world).
+        self.off = (float(g('offset_x')), float(g('offset_y')))
         if not g('map'):
             raise SystemExit('pass -p map:=<map yaml> (use the same map as Nav2)')
         self.w = sf.MapWorld(g('map'))
@@ -123,8 +128,9 @@ class Peds(Node):
         for nm, (x, y) in zip(self.names, self.crowd.pos):
             f = os.path.join(d, nm + '.sdf')
             open(f, 'w').write(human_sdf(nm, rng))
+            gx, gy = x + self.off[0], y + self.off[1]
             r = subprocess.run(['ros2', 'run', 'ros_gz_sim', 'create', '-world', self.world_name, '-file', f,
-                                '-name', nm, '-x', f'{x:.2f}', '-y', f'{y:.2f}', '-z', '0.02'],
+                                '-name', nm, '-x', f'{gx:.2f}', '-y', f'{gy:.2f}', '-z', '0.02'],
                                capture_output=True, text=True, timeout=30)
             self.get_logger().info(f'spawned {nm} at ({x:.1f},{y:.1f}) rc={r.returncode}')
 
@@ -135,7 +141,8 @@ class Peds(Node):
             if nm in self.names:
                 q = t.transform.rotation
                 yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
-                self.truth[nm] = (t.transform.translation.x, t.transform.translation.y, yaw)
+                self.truth[nm] = (t.transform.translation.x - self.off[0],
+                                  t.transform.translation.y - self.off[1], yaw)
 
     def _robot_xy(self):
         try:

@@ -45,10 +45,11 @@ for C in $CONFIGS; do
     sleep 15                                  # RViz first, let it load, then the sim
   fi
   setsid ros2 launch rosnav_bot slam_nav.launch.py world_name:=$WORLD slam:=false headless:=$HL rviz:=False \
-      dynobs_pipeline:=$PIPE > "$OUT/$C.launch.log" 2>&1 < /dev/null &
+      dynobs_pipeline:=$PIPE max_speed:=${SPEED:-0.5} > "$OUT/$C.launch.log" 2>&1 < /dev/null &
   sleep 80
   setsid ros2 run rosnav_bot social_force_peds.py --ros-args -p use_sim_time:=false -p world:=$WORLD \
-      -p map:=$SHARE/maps/map_$WORLD.yaml -p n:=$PEDS -p seed:=$SEED > "$OUT/$C.peds.log" 2>&1 < /dev/null &
+      -p map:=$SHARE/maps/map_$WORLD.yaml -p n:=$PEDS -p seed:=$SEED \
+      -p offset_x:=${SPAWN_X:-1.5} -p offset_y:=${SPAWN_Y:-1.0} > "$OUT/$C.peds.log" 2>&1 < /dev/null &
   if [ "$C" = learned ]; then
     setsid /usr/bin/python3 "$REPO/src/rosnav_bot/scripts/social_nav_node.py" --ros-args -p use_sim_time:=true \
         -p weights:=$WEIGHTS -p mask_topic:=/dynobs/keepout_mask > "$OUT/$C.social.log" 2>&1 < /dev/null &
@@ -56,7 +57,7 @@ for C in $CONFIGS; do
   sleep $((PEDS * 3 + 15))
   setsid ros2 run rosnav_bot waypoint_nav.py --ros-args -p use_sim_time:=true -p waypoints_file:=$GOALS \
       -p loop:=true -p loop_count:=-1 > "$OUT/$C.wp.log" 2>&1 < /dev/null &
-  ros2 run rosnav_bot social_metrics.py --ros-args -p duration:=$DURATION -p label:=$C -p out:=$OUT/$C.json \
+  ros2 run rosnav_bot social_metrics.py --ros-args -p duration:=$(printf "%.1f" "$DURATION") -p label:=$C -p out:=$OUT/$C.json \
       > "$OUT/$C.metrics.log" 2>&1
   log "  $(grep RESULT "$OUT/$C.metrics.log" | sed 's/.*RESULT //')"
   kill_domain
@@ -67,6 +68,6 @@ out=sys.argv[1]; rows=[]
 for c in sys.argv[2:]:
     try: d=json.load(open(f'{out}/{c}.json'))
     except Exception: rows.append(f'| {c} | n/a | n/a | n/a | n/a | n/a | n/a |'); continue
-    rows.append(f"| {c} | {d['collisions']} | {d['min_clearance_m']} | {d['intrusion_s']} | {d['path_m']} | {d['mean_speed']} | {d['smoothness']} |")
+    rows.append(f"| {c} | {d['collisions']} ({d.get('moving_collisions','-')} moving) | {d['min_clearance_m']} | {d['intrusion_s']} | {d['path_m']} | {d['mean_speed']} | {d['smoothness']} |")
 print('| Config | Collisions | Min clearance m | Intrusion s | Path m | Mean speed | Smoothness |\n|---|---|---|---|---|---|---|\n'+'\n'.join(rows))
 PY

@@ -455,6 +455,9 @@ def _build_runtime_actions(context, pkg_share: str):
     lite = LaunchConfiguration('profile').perform(context).strip().lower() == 'lite'
     if lite:
         _params_file = _common.apply_lite_profile(_params_file)
+    _max_speed = float(LaunchConfiguration('max_speed').perform(context).strip() or 0)
+    if _max_speed > 0:
+        _params_file = _common.apply_max_speed(_params_file, _max_speed)
     local_scan_cloud = _common.truthy(LaunchConfiguration('local_scan_cloud').perform(context))
     if local_scan_cloud:
         _params_file = _common.use_odom_scan_cloud(_params_file)
@@ -1626,6 +1629,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             name='tf_relay_drop', default_value='',
             description='tf_relay:=true only: regex of child frames NOT forwarded to Nav2 (e.g. wheel|caster).'),
+        DeclareLaunchArgument(
+            name='max_speed', default_value='0',
+            description='>0 overrides the local controller forward speed caps (m/s). Default configs cap at '
+                        '0.15 m/s; the social-nav benchmark uses 0.5 so the robot can cross the room.'),
         DeclareLaunchArgument(
             name='profile', default_value='full', choices=['full', 'lite'],
             description='lite = Raspberry-Pi-class Nav2: caps controller/costmap/planner rates and turns on '
