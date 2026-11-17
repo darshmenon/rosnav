@@ -33,6 +33,7 @@ ap.add_argument('--out', default='social_demo.mp4')
 ap.add_argument('--seconds', type=float, default=60)
 ap.add_argument('--peds', type=int, default=10)
 ap.add_argument('--seed', type=int, default=3)
+ap.add_argument('--clean', action='store_true', help='minimal look: no lidar rays / CV lines, one-line title, smaller GIF')
 ap.add_argument('--keep-small-obstacles', action='store_true', help='keep lidar speckle / tiny boxes in the map')
 ap.add_argument('--start', type=float, nargs=2, default=[-9.0, 0.0])
 ap.add_argument('--goals', type=float, nargs='+', default=[8.0, 0.4, -8.0, -0.4])
@@ -59,7 +60,7 @@ route = world.route(tuple(robot), tuple(goals[0]))
 hist = [crowd.pos.copy() for _ in range(32)]
 trail, collisions, intrusion, in_contact, min_clear = [], 0, 0.0, False, 1e9
 
-fig, ax = plt.subplots(figsize=(11, 6.2), dpi=90)
+fig, ax = plt.subplots(figsize=(9, 5.0) if a.clean else (11, 6.2), dpi=80 if a.clean else 90)
 img = np.where(world.blocked, 0.25, 0.97)
 ext = [world.ox, world.ox + world.w * world.res, world.oy, world.oy + world.h * world.res]
 cols = plt.cm.tab10(np.arange(a.peds) % 10)
@@ -87,7 +88,7 @@ def body_polys(robot, theta):
 
 steps = int(a.seconds / DT)
 writer = (FFMpegWriter(fps=10, bitrate=2500) if a.out.endswith('.mp4') else PillowWriter(fps=10))
-with writer.saving(fig, a.out, dpi=90):
+with writer.saving(fig, a.out, dpi=80 if a.clean else 90):
     for k in range(steps):
         crowd.step(DT, robot)
         hist.append(crowd.pos.copy()); hist.pop(0)
@@ -121,7 +122,7 @@ with writer.saving(fig, a.out, dpi=90):
         hit = clear < 0
         collisions += int(hit and not in_contact); in_contact = hit
 
-        if k % 2:                                                          # render every 2nd step (5 fps sim-time x2)
+        if k % (3 if a.clean else 2):                                      # render every 2nd step (5 fps sim-time x2)
             continue
         ax.clear()
         ax.imshow(img, cmap='gray', vmin=0, vmax=1, origin='lower', extent=ext, interpolation='nearest')
@@ -129,7 +130,8 @@ with writer.saving(fig, a.out, dpi=90):
             ax.add_patch(Circle(p, 0.22, color=cols[i], zorder=5))
             if d[i] < 7:
                 cv = s.predict_cv(p, crowd.vel[i], 3.0)
-                ax.plot(*cv.T, ':', color='tab:blue', lw=1.2, zorder=3)
+                if not a.clean:
+                    ax.plot(*cv.T, ':', color='tab:blue', lw=1.2, zorder=3)
                 path = lp[i]
                 ax.plot(*path.T, '-', color='tab:orange', lw=2, zorder=4)
                 for step_s in (1.2, 2.4):
@@ -138,7 +140,7 @@ with writer.saving(fig, a.out, dpi=90):
                     ax.add_patch(Circle(path[j], conf_r[kk] * 0.5, fill=False, ec='tab:orange', lw=0.8, alpha=0.6, zorder=3))
         ax.add_patch(Circle(robot, 1.2, fill=False, ls='--', ec='tab:green', lw=1, alpha=0.7, zorder=4))
         pts, hit_any = lidar(robot, theta, crowd.pos)
-        for q, hh in zip(pts, hit_any):
+        for q, hh in (zip([], []) if a.clean else zip(pts, hit_any)):
             ax.plot([robot[0], q[0]], [robot[1], q[1]], '-', color='tab:cyan', lw=0.4, alpha=0.35, zorder=2)
             if hh:
                 ax.plot(*q, '.', color='tab:red', ms=2, zorder=3)
@@ -153,6 +155,11 @@ with writer.saving(fig, a.out, dpi=90):
         ax.set_xlim(robot[0] - 8, robot[0] + 8); ax.set_ylim(robot[1] - 4.6, robot[1] + 4.6)
         ax.set_aspect('equal'); ax.set_xticks([]); ax.set_yticks([])
         vl, vr = lin - ang * TRACK / 2, lin + ang * TRACK / 2
+        if a.clean:
+            ax.set_title(f'robot (green) navigates a crowd   t={k*DT:4.0f}s   collisions {collisions}   '
+                         f'closest {min_clear:+.2f} m', fontsize=10)
+            writer.grab_frame()
+            continue
         ax.set_title(f't={k*DT:5.1f}s   collisions {collisions}   min clearance {min_clear:+.2f} m   '
                      f'intrusion {intrusion:.1f} s\n'
                      f'diff-drive: v={lin:+.2f} m/s  w={ang:+.2f} rad/s   wheels L {vl:+.2f}  R {vr:+.2f} m/s',

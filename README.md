@@ -249,9 +249,9 @@ Route Server lanes (cafe): `route_graph:=auto`; make a graph for any map with `s
 
 ### Social navigation among pedestrians
 
-![social navigation demo](images/social_nav_demo.gif)
+![social navigation demo](assets/social_nav/nav_showcase.gif)
 
-Differential-drive robot with 2D lidar among social-force pedestrians: learned prediction (orange, conformal uncertainty) + risk-aware planning; matplotlib render of the offline model, not Gazebo. **Controller in this demo:** our own `RiskPlanner` (not Nav2's DWB/MPPI): it scores 100 candidate velocities (25 headings x 4 speeds) by goal progress, wall clearance and Monte Carlo collision risk over the predicted paths, a proportional heading controller turns the diff-drive toward the chosen direction, and a speed/brake safety filter has the last word. In Nav2 the same predictions only shape the costmap (`dynobs_pipeline:=external`, `social_nav_node.py`) and optionally a CBF filter, so Nav2's own controller (`controller:=dwb|mppi|...`) still drives. Details: `concepts.md` §47.
+Differential-drive robot with 2D lidar among social-force pedestrians: learned prediction (orange, conformal uncertainty) + risk-aware planning. Offline, 10 seeds: at 16 pedestrians learned-risk collides in 10% of runs against 100% for a reactive planner; at 24 it collides in 20% and also reaches the goal in only 20% (it slows down). **Controller in this demo:** our own `RiskPlanner` (not Nav2's DWB/MPPI): it scores 100 candidate velocities (25 headings x 4 speeds) by goal progress, wall clearance and Monte Carlo collision risk over the predicted paths, a proportional heading controller turns the diff-drive toward the chosen direction, and a speed/brake safety filter has the last word. In Nav2 the same predictions only shape the costmap (`dynobs_pipeline:=external`, `social_nav_node.py`) and optionally a CBF filter, so Nav2's own controller (`controller:=dwb|mppi|...`) still drives. Details: `concepts.md` §47.
 
 ### SLAM in RViz
 

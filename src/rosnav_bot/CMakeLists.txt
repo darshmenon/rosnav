@@ -98,6 +98,16 @@ install(
     scripts/dynamic_obstacle_driver.py
     scripts/dynamic_obstacle_predictor.py
     scripts/social_nav_node.py
+    scripts/prediction_watchdog.py
+    scripts/online_conformal.py
+    scripts/demo_social_nav.sh
+    scripts/render_social_compare.py
+    scripts/render_nav_showcase.py
+    scripts/render_predictor_real.py
+    scripts/ped_detector.py
+    scripts/ped_detector_core.py
+    scripts/ped_tracker_core.py
+    scripts/replay_ab.py
     scripts/social_force_peds.py
     scripts/social_force_core.py
     scripts/social_metrics.py

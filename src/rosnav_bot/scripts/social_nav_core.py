@@ -128,7 +128,10 @@ class RiskPlanner:
         sp = np.array([0.0, 0.3, 0.55, V_MAX])
         self.cands = (d[None] * sp[:, None, None]).reshape(-1, 2)      # (C,2)
 
-    def plan(self, pos, goal, ped_pos, ped_vel, preds=None):
+    def plan(self, pos, goal, ped_pos, ped_vel, preds=None, futures=None):
+        # futures: optional (K,N,T,2) array of SAMPLED pedestrian futures at DT spacing (e.g. from a
+        # multimodal predictor, predictor_multimodal.py); when given they replace the Gaussian-around-prediction
+        # Monte Carlo samples, so several plausible paths per person enter the collision risk.
         T = int(self.h / DT)
         t = np.arange(1, T + 1)[:, None] * DT
         traj = pos[None, None, :] + t[None] * self.cands[:, None, :]    # (C,T,2)
@@ -141,15 +144,18 @@ class RiskPlanner:
             gd = np.linalg.norm(goal - traj[:, -1], axis=1)
             self.prev_v = self.cands[int(np.argmin(gd + wall))]
             return self.prev_v
-        if preds is None:
-            preds = [predict_cv(p, v, self.h) for p, v in zip(ped_pos, ped_vel)]
-        P = np.stack([q[:T] for q in preds])                            # (N,T,2)
-        if self.conf is not None:       # interpolate conformal sigma_k (0.4 s grid) to DT
-            sig = np.interp(t[:, 0], (np.arange(len(self.conf)) + 1) * 0.4, self.conf)
-            sigma = (self.sscale * sig)[None, None, :, None]
+        if futures is not None:
+            S = np.asarray(futures, float)[:, :, :T]                    # (K,N,T,2) sampled futures
         else:
-            sigma = (0.10 + 0.22 * t)[None, None]                       # (1,1,T,1)
-        S = P[None] + self.rng.normal(size=(self.K,) + P.shape) * sigma  # (K,N,T,2)
+            if preds is None:
+                preds = [predict_cv(p, v, self.h) for p, v in zip(ped_pos, ped_vel)]
+            P = np.stack([q[:T] for q in preds])                        # (N,T,2)
+            if self.conf is not None:   # interpolate conformal sigma_k (0.4 s grid) to DT
+                sig = np.interp(t[:, 0], (np.arange(len(self.conf)) + 1) * 0.4, self.conf)
+                sigma = (self.sscale * sig)[None, None, :, None]
+            else:
+                sigma = (0.10 + 0.22 * t)[None, None]                   # (1,1,T,1)
+            S = P[None] + self.rng.normal(size=(self.K,) + P.shape) * sigma  # (K,N,T,2)
         dist = np.linalg.norm(traj[:, None, None] - S[None], axis=-1)   # (C,K,N,T)
         hit = (dist < ROBOT_R + PED_R + 0.15).any(axis=(2, 3))          # (C,K) joint
         risk = hit.mean(axis=1)                                         # P(collision)
@@ -159,6 +165,7 @@ class RiskPlanner:
                 + self.wr * risk + self.ws * 3.0 * intr + wall
                 - self.wp * (self.cands @ gdir)                          # progress
                 + self.wc * np.linalg.norm(self.cands - self.prev_v, axis=1))  # commitment
+        self.last = dict(cost=cost, risk=risk)       # exposed for visualisation (render_social_compare.py)
         self.prev_v = self.cands[int(np.argmin(cost))]
         return self.prev_v
 

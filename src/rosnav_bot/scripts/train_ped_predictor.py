@@ -157,10 +157,26 @@ def main():
     ap.add_argument('--heldout', default='eth', help='eth|hotel|univ|zara1|zara2')
     ap.add_argument('--init', default='', help='weights to fine-tune from')
     ap.add_argument('--lr', type=float, default=1e-3)
+    ap.add_argument('--wd', type=float, default=1e-4, help='AdamW weight decay (more = more regularisation)')
+    ap.add_argument('--dropout', type=float, default=0.1)
+    ap.add_argument('--select_on_val', action='store_true',
+                    help='real data: train on train only, keep the epoch with the best VAL ADE, report test')
+    ap.add_argument('--all_scenes', action='store_true',
+                    help='real data: train on all five scenes (no held-out scene) for a deployable model')
     a = ap.parse_args()
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
     t0 = time.time()
-    if a.real_root:
+    Xva = None
+    if a.real_root and a.all_scenes:
+        Xtr, Ytr, Mtr = load_real(a.real_root, 'eth', ['train', 'val', 'test'])   # eth folder = 4 scenes + eth test
+        Xte, Yte, Mte = load_real(a.real_root, 'eth', ['test'])
+        print('REAL ETH/UCY, ALL five scenes in training: the printed test numbers are IN-SAMPLE (no held-out scene)')
+    elif a.real_root and a.select_on_val:
+        Xtr, Ytr, Mtr = load_real(a.real_root, a.heldout, ['train'])
+        Xva = load_real(a.real_root, a.heldout, ['val'])
+        Xte, Yte, Mte = load_real(a.real_root, a.heldout, ['test'])
+        print(f'REAL ETH/UCY, held-out scene: {a.heldout}; epoch chosen on val ({len(Xva[0])} windows)')
+    elif a.real_root:
         Xtr, Ytr, Mtr = load_real(a.real_root, a.heldout, ['train', 'val'])
         Xte, Yte, Mte = load_real(a.real_root, a.heldout, ['test'])
         print(f'REAL ETH/UCY, held-out scene: {a.heldout}')
@@ -171,13 +187,16 @@ def main():
     Xte, Yte, Mte = Xte.to(dev), Yte.to(dev), Mte.to(dev)
     print('CV baseline  ADE/FDE = %.3f / %.3f m' %
           ade_fde(cv_pred(Xte), Yte, Mte))
-    net = SocialTransformer().to(dev)
+    net = SocialTransformer(dropout=a.dropout).to(dev)
     if a.init:
         net.load_state_dict(torch.load(a.init, map_location=dev))
         net.eval()
         with torch.no_grad():
             print('init weights, zero-shot ADE/FDE = %.3f / %.3f m' % ade_fde(net(Xte, Mte), Yte, Mte))
-    opt = torch.optim.AdamW(net.parameters(), a.lr, weight_decay=1e-4)
+    opt = torch.optim.AdamW(net.parameters(), a.lr, weight_decay=a.wd)
+    best_val, best_state = 1e9, None
+    if Xva is not None:
+        Xva = tuple(v.to(dev) for v in Xva)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, a.epochs)
     bs = 128
     for ep in range(a.epochs):
@@ -197,11 +216,23 @@ def main():
             nn.utils.clip_grad_norm_(net.parameters(), 1.0)
             opt.step()
         sched.step()
+        if Xva is not None:
+            net.eval()
+            with torch.no_grad():
+                v_ade = ade_fde(net(Xva[0], Xva[2]), Xva[1], Xva[2])[0]
+            if v_ade < best_val:
+                best_val, best_ep = v_ade, ep + 1
+                best_state = {k: v.detach().clone() for k, v in net.state_dict().items()}
         if ep % 5 == 4 or ep == a.epochs - 1:
             net.eval()
             with torch.no_grad():
                 print('epoch %2d  loss %.3f  test ADE/FDE = %.3f / %.3f m' %
                       ((ep + 1, loss.item()) + ade_fde(net(Xte, Mte), Yte, Mte)))
+    if best_state is not None:
+        net.load_state_dict(best_state); net.eval()
+        with torch.no_grad():
+            print('best val epoch %d (val ADE %.3f): test ADE/FDE = %.3f / %.3f m' %
+                  ((best_ep, best_val) + ade_fde(net(Xte, Mte), Yte, Mte)))
     torch.save(net.state_dict(), a.out)
     print('saved', a.out, f'({time.time()-t0:.0f}s total)')
 
