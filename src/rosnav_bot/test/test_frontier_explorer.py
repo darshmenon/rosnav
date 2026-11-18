@@ -441,7 +441,8 @@ def _cold_explorer():
     e = make_bare(
         _save_proc=None, _navigating=False, _hold_goals_until=0.0, _map=object(),
         _iteration=0, _cold_wait_start=None, _last_status_log=0.0, _scorer='utility',
-        _empty_streak=0, _max_empty_wait=3, _last_map_update=1.0, _last_goal_done=0.0)
+        _empty_streak=0, _max_empty_wait=3, _last_map_update=1.0, _last_goal_done=0.0,
+        _suspect_hard_ratio=6.0, _suspect_relax_rounds=3)   # relax rounds exhausted: this fixture tests the give-up path
     e._map_frame_jumped = lambda: False
     e._robot_position = lambda: (0.0, 0.0)
     e._find_frontiers = lambda pos: [{'point': (1.0, 1.0)}]
@@ -590,3 +591,36 @@ def test_path_distance_cpp_matches_python_bfs(monkeypatch):
     slow = obj._path_distance_map(pos)
     assert np.allclose(fast, slow, equal_nan=False)
     assert np.isfinite(fast).sum() > 100
+
+
+# ----------------------------------------------------------------------
+# Failure forgiveness (benchmark 2026-11-18: builtin quit at 8% after a sim stall)
+def test_forgive_failures_clears_blacklist_but_keeps_real_visits():
+    obj = make_bare(
+        _visited=[(1.0, 1.0), (2.0, 2.0)],
+        _blacklisted_visited=[(2.0, 2.0)],
+        _failed_frontiers=[{'point': (2.0, 2.0), 'time': 0.0, 'radius': 0.5}],
+        _fail_counts=[[2.0, 2.0, 2]],
+        _forgive_rounds=0,
+    )
+    obj._forgive_failures()
+    assert obj._visited == [(1.0, 1.0)]
+    assert obj._blacklisted_visited == []
+    assert obj._failed_frontiers == [] and obj._fail_counts == []
+    assert obj._forgive_rounds == 1
+
+
+def test_rotation_counts_as_progress_not_stuck():
+    obj = make_bare(_nav_progress_pose=(0.0, 0.0), _nav_progress_free_cells=100,
+                    _nav_progress_yaw=0.0, _local_min_rotation=0.35,
+                    _local_min_translation=0.2, _local_min_free_growth=20)
+    assert obj._navigation_made_progress((0.0, 0.0), 100, 0.5) is True      # turned ~29 deg
+    assert obj._navigation_made_progress((0.0, 0.0), 100, 0.1) is False     # barely moved
+    assert obj._navigation_made_progress((0.0, 0.0), 100, -3.0) is True     # large turn, wrap-safe
+    assert obj._navigation_made_progress((0.0, 0.0), 100) is False          # no yaw -> old behaviour
+
+
+def test_relax_suspicious_doubles_ratio_three_times_then_stops():
+    obj = make_bare(_suspect_hard_ratio=6.0, _suspect_relax_rounds=0)
+    assert [obj._relax_suspicious() for _ in range(4)] == [True, True, True, False]
+    assert obj._suspect_hard_ratio == 48.0

@@ -370,6 +370,9 @@ class FrontierExplorer(Node):
         self._visited: list[tuple[float, float]] = []
         self._goals_reached = 0   # goals genuinely reached this session (cold-start guard)
         self._fail_counts: list[list] = []  # [x, y, count]
+        self._blacklisted_visited: list[tuple[float, float]] = []  # visited entries added by blacklisting
+        self._forgive_rounds = 0  # times we cleared the failure blacklist instead of finishing
+        self._suspect_relax_rounds = 0  # times we loosened the hard 'suspicious' reject instead of finishing
         self._current_goal: tuple[float, float] | None = None
         self._current_frontier_meta: dict | None = None
         self._current_goal_handle = None
@@ -397,6 +400,8 @@ class FrontierExplorer(Node):
         self._nav_progress_time: float = 0.0
         self._nav_progress_pose: tuple[float, float] | None = None
         self._nav_progress_free_cells: int | None = None
+        self._nav_progress_yaw: float | None = None
+        self._local_min_rotation = 0.35  # rad (~20 deg) of turning counts as progress (rotate-in-place is not stuck)
         self._last_growth_log = 0.0
         self._logged_costmap = False
         self._last_status_log = 0.0
@@ -598,6 +603,21 @@ class FrontierExplorer(Node):
                             f'({now - self._cold_wait_start:.0f}/90s).')
                         self._last_status_log = now
                     return
+            if pick.get('n_failed', 0) > 0 and self._forgive_rounds < 3:
+                # Failures may have been transient (sim/CPU stall, benchmark 2026-11-18: builtin
+                # maze seed 1 blacklisted every frontier near spawn during a scan outage and
+                # quit at 8%). Forgive them and retry before declaring completion.
+                self._forgive_failures()
+                self.get_logger().warn(
+                    f'No usable frontier but {pick.get("n_failed", 0)} are only failure-blacklisted ({reason}) — '
+                    f'forgiving them and retrying (round {self._forgive_rounds}/3).')
+                return
+            if pick.get('n_suspicious', 0) > 0 and self._relax_suspicious():
+                self.get_logger().warn(
+                    f'No usable frontier but {pick.get("n_suspicious", 0)} were hard-rejected as suspicious '
+                    f'({reason}) — loosening suspicious_frontier_hard_ratio to {self._suspect_hard_ratio:.0f} '
+                    f'(round {self._suspect_relax_rounds}/3) before declaring completion.')
+                return
             if not self._confirm_empty(reason):
                 return
             self.get_logger().info(f'No usable frontier ({reason}) — exploration complete.')
@@ -1499,6 +1519,15 @@ class FrontierExplorer(Node):
                 f'Waiting for TF {self._goal_frame} -> {self._base_frame}')
             return None
 
+    def _robot_yaw(self):
+        """Yaw of base_link in the goal frame, or None if TF is unavailable."""
+        try:
+            q = self._tf_buffer.lookup_transform(
+                self._goal_frame, self._base_frame, rclpy.time.Time()).transform.rotation
+            return math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        except Exception:
+            return None
+
     def _map_odom_pose(self):
         try:
             tf = self._tf_buffer.lookup_transform(self._goal_frame, 'odom', rclpy.time.Time())
@@ -1601,6 +1630,7 @@ class FrontierExplorer(Node):
         self._nav_progress_time = now
         self._nav_progress_pose = self._robot_position()
         self._nav_progress_free_cells = self._map_free_cells
+        self._nav_progress_yaw = self._robot_yaw()
 
     def _navigation_in_local_minimum(self, elapsed: float) -> bool:
         if self._local_min_timeout <= 0.0 or elapsed < self._local_min_min_time:
@@ -1609,16 +1639,23 @@ class FrontierExplorer(Node):
         now = time.monotonic()
         pos = self._robot_position()
         free_cells = self._map_free_cells
-        progressed = self._navigation_made_progress(pos, free_cells)
+        yaw = self._robot_yaw()
+        progressed = self._navigation_made_progress(pos, free_cells, yaw)
         if progressed:
             self._nav_progress_time = now
             self._nav_progress_pose = pos
             self._nav_progress_free_cells = free_cells
+            self._nav_progress_yaw = yaw
             return False
 
         return now - self._nav_progress_time >= self._local_min_timeout
 
-    def _navigation_made_progress(self, pos, free_cells) -> bool:
+    def _navigation_made_progress(self, pos, free_cells, yaw=None) -> bool:
+        last_yaw = getattr(self, '_nav_progress_yaw', None)
+        if yaw is not None and last_yaw is not None:
+            dyaw = abs(math.atan2(math.sin(yaw - last_yaw), math.cos(yaw - last_yaw)))
+            if dyaw >= self._local_min_rotation:
+                return True
         if pos is not None and self._nav_progress_pose is not None:
             px, py = self._nav_progress_pose
             if math.hypot(pos[0] - px, pos[1] - py) >= self._local_min_translation:
@@ -1735,6 +1772,27 @@ class FrontierExplorer(Node):
         self._last_goal_done = time.monotonic()
         self._navigating = False
 
+    def _relax_suspicious(self) -> bool:
+        """Double the hard 'suspicious frontier' reject ratio (max 3 times). Wide but genuine
+        openings (corridor ends, room edges) have a large size/clearance ratio; builtin quit
+        at 47% on maze 2026-11-18 with only such frontiers left. False once exhausted."""
+        if getattr(self, "_suspect_relax_rounds", 0) >= 3:
+            return False
+        self._suspect_relax_rounds = getattr(self, "_suspect_relax_rounds", 0) + 1
+        self._suspect_hard_ratio *= 2.0
+        return True
+
+    def _forgive_failures(self):
+        """Drop every failure-based suppression (fail counts, cooldown list, and the
+        visited entries that blacklisting added) so those frontiers can be retried."""
+        self._forgive_rounds += 1
+        for pt in self._blacklisted_visited:
+            if pt in self._visited:
+                self._visited.remove(pt)
+        self._blacklisted_visited.clear()
+        self._failed_frontiers.clear()
+        self._fail_counts.clear()
+
     def _register_failure(self, fx, fy, frontier_meta=None):
         """Track repeated failures at (roughly) the same frontier and
         blacklist it once it exceeds max_frontier_retries, so exploration
@@ -1748,6 +1806,7 @@ class FrontierExplorer(Node):
                         f'Blacklist ({fx:.2f}, {fy:.2f}) after {entry[2]} fails '
                         f'(max_retries={self._max_retries}).')
                     self._visited.append((fx, fy))
+                    self._blacklisted_visited.append((fx, fy))
                 else:
                     self.get_logger().warn(
                         f'Fail count ({fx:.2f}, {fy:.2f}) = {entry[2]}/'

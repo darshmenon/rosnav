@@ -147,12 +147,17 @@ class SlamBenchmark(Node):
         self.declare_parameter('out_dir', '~/rosnav_benchmarks')
         _declare_numeric(self, 'converge_threshold', 0.98)
         self.declare_parameter('map_topic', '/map')  # /map_merged for multi-robot runs
+        # Area (m^2) the robot can actually explore (nav_explore_eval truth-from-world prints it). >0 gives
+        # coverage_true_pct = free area / this, which unlike the map-box % does not change as the map grows.
+        _declare_numeric(self, 'explorable_area_m2', 0.0)
 
         self._label = self.get_parameter('label').value
         self._map_topic = self.get_parameter('map_topic').value
         self._duration = float(self.get_parameter('duration_sec').value)
         self._out_dir = _out_dir(self.get_parameter('out_dir').value)
         self._converge_threshold = float(self.get_parameter('converge_threshold').value)
+        self._explorable_m2 = float(self.get_parameter('explorable_area_m2').value)
+        self._res = 0.05
 
         self._start = time.time()
         self._samples = []  # (t, free, occupied, unknown, total)
@@ -178,6 +183,7 @@ class SlamBenchmark(Node):
         occupied = sum(1 for c in data if c >= 65)
         free = total - unknown - occupied
         t = time.time() - self._start
+        self._res = float(msg.info.resolution) or self._res
         self._samples.append((t, free, occupied, unknown, total))
 
         if self._converged_at is None and self._samples:
@@ -203,6 +209,12 @@ class SlamBenchmark(Node):
         if elapsed >= self._duration:
             self._finish()
 
+    def _true_pct(self, free):
+        """Free area over the world's explorable area (None if that area was not given)."""
+        if self._explorable_m2 <= 0.0:
+            return None
+        return round(min(100.0, free * self._res ** 2 / self._explorable_m2 * 100.0), 2)
+
     def _finish(self):
         if not self._samples:
             self.get_logger().error('[slam] No /map messages received — is SLAM running?')
@@ -217,10 +229,13 @@ class SlamBenchmark(Node):
             'final_occupied_cells': occ,
             'final_unknown_cells': unk,
             'total_cells': total,
+            'explorable_area_m2': self._explorable_m2 or None,
+            'coverage_true_pct': self._true_pct(free),
             'time_to_converge_sec': round(self._converged_at, 1) if self._converged_at else None,
             'converge_threshold': self._converge_threshold,
             'coverage_timeline': [
-                {'t': round(s[0], 1), 'coverage_pct': round((s[1] + s[2]) / s[4] * 100.0, 2)}
+                {'t': round(s[0], 1), 'coverage_pct': round((s[1] + s[2]) / s[4] * 100.0, 2),
+                 'coverage_true_pct': self._true_pct(s[1])}
                 for s in self._samples
             ],
         }
