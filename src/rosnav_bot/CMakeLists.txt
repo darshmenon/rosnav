@@ -48,6 +48,8 @@ install(
     scripts/waypoint_nav.py
     scripts/frontier_explorer.py
     scripts/route_goal.py
+    scripts/decentral_gz_run.py
+    scripts/decentral_gz_scenarios.py
     scripts/check_odometry.py
     scripts/nav2_doctor.py
     scripts/map_timelapse.py
@@ -131,6 +133,8 @@ install(
     scripts/supervisor_core.py
     scripts/rosnav_top.py
     scripts/mpc_controller.py
+    scripts/decentral_nav_node.py
+    scripts/decentral_nav_sim.py
     scripts/tf_relay.py
     scripts/scan_to_odom_cloud.py
     scripts/slam_stall_watchdog.py

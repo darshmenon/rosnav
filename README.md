@@ -62,7 +62,7 @@ Deep dive → [`concepts.md`](concepts.md) · launch args → `ros2 launch rosna
 
 ## Standalone tools
 
-Each works on any Nav2 stack: [nav2_doctor](https://github.com/darshmenon/nav2_doctor) (why isn't my robot moving?) · [nav_explore_eval](https://github.com/darshmenon/nav_explore_eval) (score an exploration run) · [nav2_fault_inject](https://github.com/darshmenon/nav2_fault_inject) (test recovery) · slam_doctor (is my SLAM healthy?). Copies and tests: `src/rosnav_bot/tools/`.
+Each works on any Nav2 stack: [nav2_doctor](https://github.com/darshmenon/nav2_doctor) (why isn't my robot moving?) · [nav_explore_eval](https://github.com/darshmenon/nav_explore_eval) (score an exploration run) · [nav2_fault_inject](https://github.com/darshmenon/nav2_fault_inject) (test recovery) · slam_doctor (is my SLAM healthy?) · nav_bench_kit (compare benchmark trials, guard shared-machine runs; local, not published yet). Copies and tests: `src/rosnav_bot/tools/`.
 
 Unit tests (no simulator, ~1 min, same as CI): `src/rosnav_bot/scripts/run_tests.sh`
 
@@ -251,7 +251,34 @@ Route Server lanes (cafe): `route_graph:=auto`; make a graph for any map with `s
 
 ![social navigation demo](assets/social_nav/nav_showcase.gif)
 
-Differential-drive robot with 2D lidar among social-force pedestrians: learned prediction (orange, conformal uncertainty) + risk-aware planning. Offline, 10 seeds: at 16 pedestrians learned-risk collides in 10% of runs against 100% for a reactive planner; at 24 it collides in 20% and also reaches the goal in only 20% (it slows down). **Controller in this demo:** our own `RiskPlanner` (not Nav2's DWB/MPPI): it scores 100 candidate velocities (25 headings x 4 speeds) by goal progress, wall clearance and Monte Carlo collision risk over the predicted paths, a proportional heading controller turns the diff-drive toward the chosen direction, and a speed/brake safety filter has the last word. In Nav2 the same predictions only shape the costmap (`dynobs_pipeline:=external`, `social_nav_node.py`) and optionally a CBF filter, so Nav2's own controller (`controller:=dwb|mppi|...`) still drives. Details: `concepts.md` §47.
+Own `RiskPlanner` (not Nav2's controller) with learned, conformal-uncertain pedestrian prediction. Offline, 10 seeds, 16 pedestrians: 10% collisions vs 100% for a reactive planner. In Nav2 the same predictions only shape the costmap (`dynobs_pipeline:=external`); `controller:=` still drives. Details: `concepts.md` §47.
+
+#### Benchmark and adversarial crowds
+
+Reactive vs predictive vs risk planners, 15 seeds, 4–24 pedestrians: the risk planner is safest. Run `python3 src/rosnav_bot/scripts/social_nav_adversary.py --bench` (tables in `images/social_nav_adversary/`, details in [concepts.md](concepts.md)).
+
+### Decentralized: every robot, its own goal
+
+| Swap (8 robots) | Corridor (1.5 m wide) | Crowd (pedestrians) |
+|:---:|:---:|:---:|
+| <img src="images/decentral_nav/swap_mppi_prior.gif" width="250"> | <img src="images/decentral_nav/corridor_mppi_prior.gif" width="250"> | <img src="images/decentral_nav/crowd_vo.gif" width="250"> |
+| `mppi_prior` · 15.7 s · 0 collisions | `mppi_prior` · 38.9 s · 0 collisions | `vo` · 24.0 s · 0 collisions |
+
+*8 robots swapping places (`mppi_prior`), passing through a 1.5 m corridor (`mppi_prior`), and crossing a pedestrian hall (`vo`); trails = recent path, stars = goals, orange rings = pedestrian personal space. No central planner: sampled velocity obstacle (`vo`) and MPPI with a velocity-obstacle prior + yield rule (`mppi_prior`) beat plain goal-seeking, which collides 19 times per run in the swap. Centralized PP/ECBS stays more reliable on random grids. Run: `python3 src/rosnav_bot/scripts/decentral_nav_sim.py bench` — tables and details in [concepts.md](concepts.md).*
+
+---
+
+Each robot keeps its Nav2 planner and goal (`navigate_to_pose`); `decentral_nav_node.py` replaces only the local controller: it follows the robot's `/plan`, reads the neighbours' `/odom`, and publishes `cmd_vel_nav` (diff-drive, same slot the MPC controller uses).
+
+```bash
+ros2 launch rosnav_bot multi_robot.launch.py world_name:=cafe robot_count:=4 explore:=false rviz:=true \
+    controller:=decentral decentral_ctrl:=vo          # or decentral_ctrl:=mppi_prior
+# give each robot its own goal:
+ros2 action send_goal /robot1/navigate_to_pose nav2_msgs/action/NavigateToPose "{pose: {header: {frame_id: map}, pose: {position: {x: 3.0, y: 1.0}}}}"
+ros2 action send_goal /robot2/navigate_to_pose nav2_msgs/action/NavigateToPose "{pose: {header: {frame_id: map}, pose: {position: {x: -3.0, y: -1.0}}}}"
+```
+
+*Status: experimental. Unit-tested; in one live 2-robot cafe run the robot followed its plan to ~0.8 m of the goal but dithered short of it, and no head-on swap has been run live yet — see `todo.md`.*
 
 ### SLAM in RViz
 
@@ -542,8 +569,6 @@ ros2 run rosnav_bot cbf_safety_filter.py --ros-args -p self_ns:=robot1 -p neighb
 ```
 
 <p><sub>MAPF = offline conflict-free plan for all robots (CBS optimal, ECBS bounded, PP fast); CBF = runtime filter that keeps robots ≥ safe_dist apart — details in concepts.md</sub></p>
-
----
 
 ## 8. Fleet & explore
 
