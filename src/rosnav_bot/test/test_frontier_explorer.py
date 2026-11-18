@@ -624,3 +624,63 @@ def test_relax_suspicious_doubles_ratio_three_times_then_stops():
     obj = make_bare(_suspect_hard_ratio=6.0, _suspect_relax_rounds=0)
     assert [obj._relax_suspicious() for _ in range(4)] == [True, True, True, False]
     assert obj._suspect_hard_ratio == 48.0
+
+
+def test_true_coverage_note_only_when_area_given():
+    assert make_bare(_explorable_m2=0.0)._true_coverage_note(40000, 0.05) == ''
+    assert make_bare(_explorable_m2=100.0)._true_coverage_note(20000, 0.05) == ' true=50.0%'
+    assert make_bare(_explorable_m2=10.0)._true_coverage_note(20000, 0.05) == ' true=100.0%'   # capped
+
+
+def _late_explorer(n_suspicious=0, n_failed=0, **attrs):
+    """Explorer past the cold start (a goal was reached) whose picker finds nothing usable."""
+    pick = {'n_total': 3, 'n_visited': 0, 'n_costmap': 0, 'n_near': 0, 'n_failed': n_failed,
+            'n_suspicious': n_suspicious, 'n_unreachable': 0}
+    finished = []
+    base = dict(_save_proc=None, _navigating=False, _hold_goals_until=0.0, _map=object(),
+                _iteration=5, _goals_reached=3, _cold_wait_start=None, _last_status_log=0.0, _scorer='utility',
+                _empty_streak=0, _max_empty_wait=1, _last_map_update=1.0, _last_goal_done=0.0,
+                _suspect_hard_ratio=6.0, _suspect_relax_rounds=0, _forgive_rounds=0,
+                _visited=[], _blacklisted_visited=[], _failed_frontiers=[], _fail_counts=[])
+    base.update(attrs)
+    e = make_bare(**base)
+    e._map_frame_jumped = lambda: False
+    e._robot_position = lambda: (0.0, 0.0)
+    e._find_frontiers = lambda pos: [{'point': (1.0, 1.0)}]
+    e._best_frontier = lambda fr, pos: (None, pick)
+    e._confirm_empty = lambda reason: True
+    e._finish_exploration = lambda: finished.append(True)
+    return e, finished
+
+
+def test_explore_relaxes_suspicious_instead_of_finishing():
+    e, finished = _late_explorer(n_suspicious=2)
+    e._explore()
+    assert finished == [] and e._suspect_hard_ratio == 12.0 and e._suspect_relax_rounds == 1
+
+
+def test_explore_finishes_once_relax_rounds_are_spent():
+    e, finished = _late_explorer(n_suspicious=2, _suspect_relax_rounds=3)
+    e._explore()
+    assert finished == [True]
+
+
+def test_explore_forgives_failures_then_finishes_after_three_rounds():
+    e, finished = _late_explorer(n_failed=2)
+    for _ in range(3):
+        e._explore()
+    assert finished == [] and e._forgive_rounds == 3
+    e._explore()
+    assert finished == [True]
+
+
+def test_explore_finishes_when_nothing_was_filtered():
+    e, finished = _late_explorer()
+    e._explore()
+    assert finished == [True]
+
+
+def test_rotation_progress_ignored_when_last_yaw_unknown():
+    obj = make_bare(_nav_progress_pose=(0.0, 0.0), _nav_progress_free_cells=100, _nav_progress_yaw=None,
+                    _local_min_rotation=0.35, _local_min_translation=0.2, _local_min_free_growth=20)
+    assert obj._navigation_made_progress((0.0, 0.0), 100, 1.0) is False

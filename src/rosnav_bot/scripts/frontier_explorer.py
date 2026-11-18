@@ -168,6 +168,9 @@ class FrontierExplorer(Node):
         # a 'succeeded' goal must also have moved the robot >= min(this, half the start->goal distance);
         # 0 disables. Catches success reported while the robot never left (frozen controller TF).
         self.declare_parameter('min_progress_for_success', 0.3)
+        # Area (m^2) the robot can actually explore. >0 adds true=<free area / this>% to the /map log line; the
+        # explored= figure divides by the map's bounding box, which grows with the map (not comparable across runs).
+        self.declare_parameter('explorable_area_m2', 0.0)
         self.declare_parameter('empty_frontier_max_wait', 15)
         self.declare_parameter('max_visited_relax_streak', 8)
         self.declare_parameter('goal_timeout', 60.0)
@@ -262,6 +265,7 @@ class FrontierExplorer(Node):
         self._max_retries = self.get_parameter('max_frontier_retries').value
         self._success_max_dist = float(self.get_parameter('success_max_dist').value)
         self._min_progress = float(self.get_parameter('min_progress_for_success').value)
+        self._explorable_m2 = float(self.get_parameter('explorable_area_m2').value)
         self._max_empty_wait = int(self.get_parameter('empty_frontier_max_wait').value)
         self._max_visited_relax_streak = int(
             self.get_parameter('max_visited_relax_streak').value)
@@ -731,6 +735,7 @@ class FrontierExplorer(Node):
         total_cells = max(1, width * height)
         known_count = free_count + occupied_count
         explored_pct = 100.0 * known_count / total_cells
+        true_note = self._true_coverage_note(free_count, res)
         now = time.monotonic()
         if now - self._last_growth_log >= 2.0:
             delta = '' if self._last_free_cells is None else f' (Δ{free_count - self._last_free_cells:+d})'
@@ -741,7 +746,7 @@ class FrontierExplorer(Node):
             self.get_logger().info(
                 f'/map free cells: {free_count}{delta} '
                 f'occupied={occupied_count} unknown={unknown_count} '
-                f'explored={explored_pct:.1f}% '
+                f'explored={explored_pct:.1f}%{true_note} '
                 f'({width}x{height} @ {res:.3f}m '
                 f'origin=({ox:.2f},{oy:.2f}))'
                 f'{robot_note}{tf_note}')
@@ -1771,6 +1776,13 @@ class FrontierExplorer(Node):
         self._current_frontier_meta = None
         self._last_goal_done = time.monotonic()
         self._navigating = False
+
+    def _true_coverage_note(self, free_cells, res) -> str:
+        """' true=NN.N%' when explorable_area_m2 is set (free area over explorable area), else ''."""
+        area = getattr(self, '_explorable_m2', 0.0)
+        if area <= 0.0:
+            return ''
+        return f' true={min(100.0, free_cells * res * res / area * 100.0):.1f}%'
 
     def _relax_suspicious(self) -> bool:
         """Double the hard 'suspicious frontier' reject ratio (max 3 times). Wide but genuine
