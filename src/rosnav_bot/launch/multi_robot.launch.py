@@ -1543,10 +1543,11 @@ def generate_launch_description():
             description='explore:=false: amcl (default) or static (fixed map->odom at the spawn pose, '
                         'sim only; sidesteps a stale map->odom in the controller)'),
         DeclareLaunchArgument(
-            'local_scan_cloud', default_value='false',
-            description='true = feed each robot\'s local costmap an odom-frame cloud from '
+            'local_scan_cloud', default_value='true',
+            description='true (default) = feed each robot\'s local costmap an odom-frame cloud from '
                         'scripts/scan_to_odom_cloud.py (avoids the controller_server map->odom '
-                        'freeze, same as slam_nav.launch.py local_scan_cloud:=true)'),
+                        'freeze, same as slam_nav.launch.py local_scan_cloud:=true). '
+                        'false = costmap reads /scan directly. NOT yet verified on a live fleet since the default flip.'),
         DeclareLaunchArgument(
             'pulse', default_value='false',
             description='true = attach the optional ros2_pulse probe (LD_PRELOAD, apt '
