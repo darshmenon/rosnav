@@ -65,6 +65,7 @@ def resample(path_xy: np.ndarray, step: float = 0.25) -> np.ndarray:
 
 
 class PlanWorld(sim.World):
+    hit_margin = 0.03        # m: lidar returns sit on the wall surface, not inside it
     """decentral_nav_sim.World built from a Nav2 plan + scan points (1 m cells, as in the sim).
 
     Coordinates are shifted by `origin` (integer metres) so the sim's index-by-rint code works on a small
@@ -97,7 +98,25 @@ class PlanWorld(sim.World):
                 free[iy[m], ix[m]] = False
                 n_blocked = int((~free).sum())
         self.n_blocked = n_blocked
+        # exact scan points for collision checks: the 1 m blocked squares above are fine for the cost fields, but
+        # as a collision test they turn a 1.5 m corridor into ~1 m (no room for two robots to pass).
+        self.pts = None
+        self.pts_tree = None
+        if scan_xy is not None and len(scan_xy):
+            s2 = np.asarray(scan_xy, float) - self.origin
+            if len(s2):
+                d2, _ = self.tree.query(s2)
+                s2 = s2[d2 > plan_clear]
+                if len(s2):
+                    self.pts = s2
+                    self.pts_tree = cKDTree(s2)
         super().__init__(free)
+
+    def ok(self, p, r=sim.R):
+        """Disc of radius r at p clear of every (exact) scan point; falls back to the grid test without a scan."""
+        if self.pts_tree is None:
+            return super().ok(p, r)
+        return not self.pts_tree.query_ball_point(np.asarray(p, float), r + self.hit_margin)
 
     def dist_field(self, goal):
         if 'df' not in self._cache:
@@ -215,6 +234,8 @@ def main():
             self.odom_twist = {}                  # name -> (vx_body, wz)
             self.v = self.w = 0.0
             self.n_ticks = self.n_zero = 0
+            self.goal_yaw = 0.0
+            self.goal_xy_tol, self.goal_yaw_tol = 0.15, 0.12
             self.last_reason = 'startup'
             self.create_subscription(Path, g('plan_topic'), self.on_plan, 1)
             self.create_subscription(Odometry, g('odom_topic'), lambda m: self.on_odom(self.ns, m), 10)
@@ -239,6 +260,8 @@ def main():
                 self.get_logger().warn('[decentral_nav] ignoring plan with <2 poses')
                 return
             self.plan = np.array([[p.pose.position.x, p.pose.position.y] for p in msg.poses])
+            q = msg.poses[-1].pose.orientation
+            self.goal_yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
             self.plan_frame = msg.header.frame_id or 'map'
             first = self.plan_t is None
             self.plan_t = self.now()
@@ -316,6 +339,18 @@ def main():
             vx, vy, info = compute_velocity(self.ctrl, 0, np.array(pos), np.array(vel), self.plan,
                                             self.scan_points(), self.rng, self.vmax, self.lookahead)
             self.last_info = dict(info, n_neigh=len(names) - 1)
+            gd = float(np.linalg.norm(self.plan[-1] - np.array(pos[0])))
+            if gd < self.goal_xy_tol and abs(wrap(self.goal_yaw - me[2])) > self.goal_yaw_tol:
+                # Nav2's goal checker also wants the goal heading (yaw_goal_tolerance): rotate in place there,
+                # otherwise the goal is never "reached" and the controller aborts on progress.
+                err = wrap(self.goal_yaw - me[2])
+                self.v = 0.0
+                self.w = max(-0.6, min(0.6, 1.5 * err))
+                self.last_vd, self.last_goal_d, self.last_reason = (0.0, 0.0), gd, 'rotate to goal yaw'
+                msg = self.Twist()
+                msg.angular.z = float(self.w)
+                self.pub.publish(msg)
+                return
             self.v, self.w = track_unicycle((vx, vy), me[2], self.v, self.w, self.vmax, self.wmax,
                                             dt=1.0 / float(self.get_parameter('rate_hz').value))
             self.last_reason = info['reason']

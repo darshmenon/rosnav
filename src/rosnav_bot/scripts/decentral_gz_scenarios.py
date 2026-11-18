@@ -180,7 +180,7 @@ def gen():
 def cmd(kind, n, ctrl='vo'):
     sc = build(kind, n)
     rj = json.dumps(sc['robots'], separators=(',', ':'))
-    print(f"ros2 launch rosnav_bot multi_robot.launch.py world:={sc['world']} explore:=false controller:=decentral "
+    print(f"ros2 launch rosnav_bot multi_robot.launch.py world:={sc['world']} explore:=false prebuilt_localization:=static controller:=decentral "
           f"decentral_ctrl:={ctrl} headless:=true rviz:=false robots_json:='{rj}'")
     if kind == 'crowd':
         print('python3 src/rosnav_bot/scripts/moving_obstacles_gz.py --world crowd --speed 0.7   # same GZ_PARTITION')

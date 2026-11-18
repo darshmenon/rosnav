@@ -57,3 +57,32 @@ def test_unicycle_tracker():
     v, _ = n.track_unicycle((0.5, 0.0), 0.0, v_prev=0.0, a_max=1.0, dt=0.1)
     assert v <= 0.1 + 1e-9                       # slew limited
     assert n.track_unicycle((0.0, 0.0), 1.0) == (0.0, 0.0)
+
+
+def _wall_points(x0, x1, half, step=0.05):
+    xs = np.arange(x0, x1 + step, step)
+    return np.vstack([np.stack([xs, np.full_like(xs, half)], 1), np.stack([xs, np.full_like(xs, -half)], 1)])
+
+
+def test_two_robots_pass_each_other_in_a_1p5m_corridor():
+    """Head-on swap in a 1.5 m corridor (walls at +-0.75 m, robot radius 0.3 m): exact-point collision checks leave
+    room to pass; the old 1 m wall squares did not."""
+    scan = _wall_points(-6.0, 6.0, 0.75)
+    pos = np.array([[-5.0, 0.0], [5.0, 0.0]])
+    goals = [np.array([5.0, 0.0]), np.array([-5.0, 0.0])]
+    vel = np.zeros((2, 2))
+    min_d = 9.0
+    for _ in range(900):
+        new = []
+        for i in range(2):
+            plan = np.stack([np.linspace(pos[i, 0], goals[i][0], 40), np.linspace(pos[i, 1], goals[i][1], 40)], 1)
+            vx, vy, _ = n.compute_velocity('vo', i, pos, vel, plan, scan, vmax=0.5)
+            new.append(np.array([vx, vy]))
+        vel = np.array(new)
+        pos = pos + vel * 0.1
+        min_d = min(min_d, float(np.linalg.norm(pos[0] - pos[1])))
+        assert (np.abs(pos[:, 1]) < 0.75 - 0.25).all(), 'a robot hit the wall'
+        if all(np.linalg.norm(pos[i] - goals[i]) < 0.4 for i in range(2)):
+            break
+    assert all(np.linalg.norm(pos[i] - goals[i]) < 0.4 for i in range(2))
+    assert min_d > 0.55
