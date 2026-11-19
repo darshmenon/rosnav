@@ -458,6 +458,8 @@ def _build_runtime_actions(context, pkg_share: str):
     _max_speed = float(LaunchConfiguration('max_speed').perform(context).strip() or 0)
     if _max_speed > 0:
         _params_file = _common.apply_max_speed(_params_file, _max_speed)
+    if not _common.truthy(LaunchConfiguration('global_scan').perform(context)):
+        _params_file = _common.drop_global_scan(_params_file)
     local_scan_cloud = _common.truthy(LaunchConfiguration('local_scan_cloud').perform(context))
     if local_scan_cloud:
         _params_file = _common.use_odom_scan_cloud(_params_file)
@@ -1613,6 +1615,11 @@ def generate_launch_description():
             name='slam_watchdog', default_value='true',
             description='slam_algo:=2d (online_async/sync): restart slam_toolbox when map->odom goes '
                         'stale (it hangs ~30 s in on some runs). See scripts/slam_stall_watchdog.py.'),
+        DeclareLaunchArgument(
+            name='global_scan', default_value='false',
+            description='true = keep the LaserScan source in the GLOBAL costmap obstacle layer. Default false drops it: '
+                        'planner_server\'s robot pose froze with it (plans started at a stale pose, DWB pruned them to '
+                        '0 poses; concepts.md 9.10). Verified live 2026-11-18 maze: 0/472 bad plans vs 168/316.'),
         DeclareLaunchArgument(
             name='local_scan_cloud', default_value='true',
             description='Feed the local costmap an odom-frame cloud from scripts/scan_to_odom_cloud.py '

@@ -352,6 +352,41 @@ def use_odom_scan_cloud(params_path: str, cloud_topic: str = '/scan_odom_cloud')
     return out_path
 
 
+def global_drop_scan_patch(data: dict) -> bool:
+    """In-place: remove the LaserScan `scan` source from the GLOBAL costmap's obstacle layer.
+
+    Found 2026-11-18 (plan_probe, concepts.md 9.10): after a few minutes planner_server's view of the robot pose
+    froze, so every /plan started at the same stale pose (plan[0] constant while the robot drove 1 m+), DWB pruned
+    them to '0 poses' and exploration stalled at about 30%. Same family as the controller_server freeze whose
+    cause was a LaserScan tf2 MessageFilter; this is the one place that still has one (map frame, planner_server).
+    Obstacles still reach the planner through the local costmap and the static map. Returns True if changed.
+    """
+    try:
+        layer = data['global_costmap']['global_costmap']['ros__parameters']['obstacle_layer']
+    except (KeyError, TypeError):
+        return False
+    src = layer.get('observation_sources', '')
+    names = src.split() if isinstance(src, str) else list(src)
+    if 'scan' not in names:
+        return False
+    layer['observation_sources'] = ' '.join(n for n in names if n != 'scan')
+    return True
+
+
+def drop_global_scan(params_path: str) -> str:
+    """File version of global_drop_scan_patch. Returns the (possibly new) params path."""
+    import yaml
+    with open(params_path) as f:
+        data = yaml.safe_load(f)
+    if not global_drop_scan_patch(data):
+        return params_path
+    out_path = params_path.replace('.yaml', '_noglobalscan.yaml')
+    with open(out_path, 'w') as f:
+        yaml.safe_dump(data, f)
+    print(f'[nav2_params] global costmap obstacle_layer: LaserScan source dropped ({out_path})')
+    return out_path
+
+
 SPEED_KEYS = ('max_vel_x', 'max_speed_xy', 'vx_max', 'desired_linear_vel')
 
 

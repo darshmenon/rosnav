@@ -153,8 +153,15 @@ def compute_velocity(ctrl, i, pos, vel, plan_xy, scan_xy=None, rng=None, vmax=0.
     sim.VMAX = float(vmax)
     plan_xy = np.asarray(plan_xy, float)
     goal = plan_xy[-1]
-    if np.linalg.norm(goal - pos[i]) < 0.25:
+    gd = float(np.linalg.norm(goal - pos[i]))
+    if gd < 0.1:
         return 0.0, 0.0, {'reason': 'at_goal', 'blocked_cells': 0}
+    if gd < 0.25:
+        # the sim stops at 0.25 m, which is exactly Nav2's xy_goal_tolerance: creep the last stretch so the goal
+        # checker is satisfied with margin (neighbours are ignored for these final 25 cm)
+        d = (goal - pos[i]) / gd
+        sp = min(0.2, 2.0 * gd, float(vmax))
+        return float(d[0] * sp), float(d[1] * sp), {'reason': 'creep', 'blocked_cells': 0}
     world = PlanWorld(plan_xy, scan_xy, pos, lookahead=lookahead)
     o = world.origin
     lp, lg = pos - o, goal - o
@@ -177,6 +184,17 @@ def track_unicycle(vd, yaw, v_prev=0.0, w_prev=0.0, v_max=0.5, w_max=1.0, k_w=2.
     v = v_prev + max(-a_max * dt, min(a_max * dt, v_t - v_prev))
     w = w_prev + max(-alpha_max * dt, min(alpha_max * dt, w_t - w_prev))
     return v, w
+
+
+def goal_rotation(dist, yaw, goal_yaw, xy_tol=0.15, yaw_tol=0.12, w_max=0.6, k_w=1.5):
+    """Angular speed to rotate in place at the goal, or None when not applicable.
+
+    Nav2's goal checker also wants the goal heading (yaw_goal_tolerance): inside xy_tol of the goal with the heading
+    off by more than yaw_tol, turn on the spot, otherwise the goal is never "reached" and the controller aborts."""
+    err = wrap(goal_yaw - yaw)
+    if dist < xy_tol and abs(err) > yaw_tol:
+        return max(-w_max, min(w_max, k_w * err))
+    return None
 
 
 # ── ROS node ─────────────────────────────────────────────────────────────────
@@ -235,7 +253,7 @@ def main():
             self.v = self.w = 0.0
             self.n_ticks = self.n_zero = 0
             self.goal_yaw = 0.0
-            self.goal_xy_tol, self.goal_yaw_tol = 0.15, 0.12
+            self.goal_xy_tol, self.goal_yaw_tol = 0.12, 0.12
             self.last_reason = 'startup'
             self.create_subscription(Path, g('plan_topic'), self.on_plan, 1)
             self.create_subscription(Odometry, g('odom_topic'), lambda m: self.on_odom(self.ns, m), 10)
@@ -340,12 +358,9 @@ def main():
                                             self.scan_points(), self.rng, self.vmax, self.lookahead)
             self.last_info = dict(info, n_neigh=len(names) - 1)
             gd = float(np.linalg.norm(self.plan[-1] - np.array(pos[0])))
-            if gd < self.goal_xy_tol and abs(wrap(self.goal_yaw - me[2])) > self.goal_yaw_tol:
-                # Nav2's goal checker also wants the goal heading (yaw_goal_tolerance): rotate in place there,
-                # otherwise the goal is never "reached" and the controller aborts on progress.
-                err = wrap(self.goal_yaw - me[2])
-                self.v = 0.0
-                self.w = max(-0.6, min(0.6, 1.5 * err))
+            w_rot = goal_rotation(gd, me[2], self.goal_yaw, self.goal_xy_tol, self.goal_yaw_tol)
+            if w_rot is not None:
+                self.v, self.w = 0.0, w_rot
                 self.last_vd, self.last_goal_d, self.last_reason = (0.0, 0.0), gd, 'rotate to goal yaw'
                 msg = self.Twist()
                 msg.angular.z = float(self.w)

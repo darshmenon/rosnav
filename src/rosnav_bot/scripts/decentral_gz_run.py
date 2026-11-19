@@ -43,6 +43,7 @@ class Runner(Node):
         self.res = {nm: dict(done=False, ok=False, t=None, retries=0) for nm in self.names}
         self.goals = {r['name']: g for r, g in zip(self.s['robots'], self.s['goals'])}
         self.retry_at = {}
+        self.sent_at = {}                       # goals sent but not yet accepted/rejected (response can be lost)
         self.declare_parameter('retry_s', 3.0)
         self.min_pair = float('inf')
         self.coll_pairs = set()
@@ -89,6 +90,11 @@ class Runner(Node):
                     del self.retry_at[nm]
                     self.res[nm]['retries'] += 1
                     self._send(nm)
+            for nm, at in list(self.sent_at.items()):
+                if now - at > 10.0:                 # no accept/reject response (dropped under load): send again
+                    self.get_logger().warn(f'{nm}: no goal response after 10 s, resending')
+                    self.res[nm]['retries'] += 1
+                    self._send(nm)
         return self._report()
 
     def _send(self, nm):
@@ -99,9 +105,11 @@ class Runner(Node):
         goal.pose.pose.position.x, goal.pose.pose.position.y = float(g[0]), float(g[1])
         goal.pose.pose.orientation.w = 1.0
         self.res[nm]['done'] = False
+        self.sent_at[nm] = time.monotonic()
         self.ac[nm].send_goal_async(goal).add_done_callback(lambda f, nm=nm: self._accepted(nm, f))
 
     def _accepted(self, nm, fut):
+        self.sent_at.pop(nm, None)
         h = fut.result()
         if h is None or not h.accepted:
             self.retry_at[nm] = time.monotonic() + float(self.get_parameter('retry_s').value)

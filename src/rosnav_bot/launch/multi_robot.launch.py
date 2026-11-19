@@ -430,6 +430,8 @@ def _make_robot_params(
     initial_pose: dict | None = None,
     nav_map_topic: str = '/map',
     local_scan_cloud: bool = False,
+    global_scan: bool = False,
+    static_global: bool = False,
 ) -> str:
     """Return a namespaced-for-this-robot copy of a nav2 params file as a temp-file path.
 
@@ -473,6 +475,20 @@ def _make_robot_params(
     if local_scan_cloud:
         # relative topic: resolves to /<ns>/scan_odom_cloud (this robot's scan_to_odom_cloud node)
         _common.odom_scan_cloud_patch(params, 'scan_odom_cloud', f'{robot_ns}/base_link')
+    if not global_scan:
+        # after namespacing: the source key stays 'scan' (only its topic/frames are prefixed)
+        dropped = _common.global_drop_scan_patch(params)
+        print(f'[nav2_params] {robot_ns}: global costmap LaserScan source '
+              f'{"dropped" if dropped else "absent (nothing to drop)"}')
+    if static_global:
+        # controller:=decentral: other robots are handled by decentral_nav_node, so the GLOBAL costmap stays
+        # static-map-only. Otherwise a neighbour seen at <1 m is inflated to lethal over the robot's own cell,
+        # NavFn fails ("failed to generate a valid path") and the node has no /plan to follow.
+        try:
+            params['global_costmap']['global_costmap']['ros__parameters']['obstacle_layer']['observation_sources'] = ''
+            print(f'[nav2_params] {robot_ns}: decentral -> global costmap obstacle sources cleared')
+        except (KeyError, TypeError):
+            pass
     _inject_sim_time(params)
     content = yaml.safe_dump(params, sort_keys=False)
     tmp = tempfile.NamedTemporaryFile(
@@ -685,6 +701,7 @@ def _build_all(context, pkg_share: str):
     explore      = _truthy(LaunchConfiguration('explore').perform(context))
     headless     = _truthy(LaunchConfiguration('headless').perform(context))
     local_scan_cloud = _truthy(LaunchConfiguration('local_scan_cloud').perform(context))
+    global_scan = _truthy(LaunchConfiguration('global_scan').perform(context))
     prebuilt_loc = LaunchConfiguration('prebuilt_localization').perform(context).strip().lower()
     if prebuilt_loc not in ('static', 'amcl'):
         raise ValueError('prebuilt_localization must be one of: static, amcl')
@@ -738,6 +755,7 @@ def _build_all(context, pkg_share: str):
     drive_type = LaunchConfiguration('drive_type').perform(context).strip().lower()
     robot_model = LaunchConfiguration('robot_model').perform(context).strip().lower()
     controller = LaunchConfiguration('controller').perform(context).strip().lower()
+    decentral_ctrl = LaunchConfiguration('decentral_ctrl').perform(context).strip().lower()
     lidar_type = LaunchConfiguration('lidar_type').perform(context).strip().lower()
     if lidar_type == '3d' and drive_type != 'diff':
         print(f'[multi_robot] lidar_type=3d only supported for drive_type:=diff '
@@ -1008,8 +1026,9 @@ def _build_all(context, pkg_share: str):
             }
         nav_map_topic = '/map_merged' if explore and slam_mode == 'multi' else '/map'
         robot_params = _make_robot_params(r_template, ns, pkg_share, initial_pose, nav_map_topic,
-                                          local_scan_cloud=local_scan_cloud)
-        actions.append(LogInfo(msg=f'[multi_robot] {ns}: nav2 params -> {robot_params} (map_topic={nav_map_topic})'))
+                                          local_scan_cloud=local_scan_cloud, global_scan=global_scan,
+                                          static_global=(profile['controller'] == 'decentral'))
+        actions.append(LogInfo(msg=f'[multi_robot] {ns}: global_scan={global_scan}; nav2 params -> {robot_params} (map_topic={nav_map_topic})'))
 
         # Robot State Publisher — frame_prefix + namespace arg makes TF frames unique per robot
         rsp = _common.rsp_include(
@@ -1121,14 +1140,28 @@ def _build_all(context, pkg_share: str):
         # Nav2 navigation stack (planner, controller, bt_navigator, …)
         # Pass namespace so RewrittenYaml wraps params under the robot key, making
         # /robot1/controller_server find its parameters. MPPI critics survive yaml.dump.
+        nav2_args = {
+            'use_sim_time': 'true',
+            'params_file': robot_params,
+            'namespace': ns,
+        }
+        if profile['controller'] == 'decentral':
+            # controller:=decentral — scripts/decentral_nav_node.py publishes /<ns>/cmd_vel_nav from
+            # this robot's Nav2 /plan + the other robots' poses; controller_server stays up only for
+            # FollowPath goal/progress handling and its velocity goes to an unused topic.
+            nav2_args['controller_cmd_vel'] = 'cmd_vel_nav_dwb_unused'
+            others = [r['name'] for r in robots if r['name'] != ns]
+            docking_actions = list(docking_actions) + [
+                LogInfo(msg=f'[multi_robot] {ns}: controller:=decentral -> decentral_nav_node '
+                            f'(ctrl={decentral_ctrl}, neighbors={others})'),
+                Node(package='rosnav_bot', executable='decentral_nav_node.py', name='decentral_nav',
+                     namespace=ns, output='screen',
+                     parameters=[{'use_sim_time': True, 'ctrl': decentral_ctrl, 'neighbors': others}],
+                     remappings=[('tf', '/tf'), ('tf_static', '/tf_static')])]
         nav2 = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(pkg_share, 'launch', 'nav2_navigation_global_tf.launch.py')),
-            launch_arguments={
-                'use_sim_time': 'true',
-                'params_file': robot_params,
-                'namespace': ns,
-            }.items())
+            launch_arguments=nav2_args.items())
 
         if slam_algo == 'vslam':
             if rtabmap_db.endswith('.db'):
@@ -1543,6 +1576,10 @@ def generate_launch_description():
             description='explore:=false: amcl (default) or static (fixed map->odom at the spawn pose, '
                         'sim only; sidesteps a stale map->odom in the controller)'),
         DeclareLaunchArgument(
+            'global_scan', default_value='false',
+            description='true = keep the LaserScan source in each robot\'s GLOBAL costmap obstacle layer. '
+                        'Default false drops it (planner_server robot-pose freeze; same as slam_nav.launch.py).'),
+        DeclareLaunchArgument(
             'local_scan_cloud', default_value='true',
             description='true (default) = feed each robot\'s local costmap an odom-frame cloud from '
                         'scripts/scan_to_odom_cloud.py (avoids the controller_server map->odom '
@@ -1585,9 +1622,14 @@ def generate_launch_description():
             description='3D lidar vertical half-angle in degrees (+/-), lidar_type:=3d only.'),
         DeclareLaunchArgument(
             'controller', default_value='dwb',
-            description='Local controller for drive_type:=mecanum: "dwb" (default) or "mppi". '
+            description='Local controller for drive_type:=mecanum: "dwb" (default) or "mppi"; '
+                        '"decentral" = per-robot decentral_nav_node.py (any drive type, see decentral_ctrl). '
                         'Humble only — ignored on Jazzy. Ignored for drive_type:=diff (fleet always '
                         'uses its hand-tuned MPPI template) and drive_type:=ackermann (always MPPI).'),
+        DeclareLaunchArgument(
+            'decentral_ctrl', default_value='vo',
+            description='controller:=decentral only: "vo" (sampled velocity obstacle) or "mppi_prior" '
+                        '(scripts/decentral_nav_node.py). Experimental, unverified live.'),
         DeclareLaunchArgument(
             'robot_count', default_value='2',
             description='Number of generated robots when robots_json is empty'),

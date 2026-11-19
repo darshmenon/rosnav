@@ -86,3 +86,20 @@ def test_two_robots_pass_each_other_in_a_1p5m_corridor():
             break
     assert all(np.linalg.norm(pos[i] - goals[i]) < 0.4 for i in range(2))
     assert min_d > 0.55
+
+
+def test_goal_rotation_only_near_goal_and_off_heading():
+    assert n.goal_rotation(1.0, 0.0, 1.5) is None             # far from the goal: keep driving
+    assert n.goal_rotation(0.05, 1.5, 1.5) is None            # at the goal, heading already right
+    w = n.goal_rotation(0.05, 0.0, 1.5)
+    assert 0 < w <= 0.6                                       # turn toward +yaw, capped
+    assert n.goal_rotation(0.05, 0.0, -1.5) < 0               # and the short way round
+    assert n.goal_rotation(0.05, 3.0, -3.0) > 0               # wraps across +-pi
+
+
+def test_creeps_through_the_last_25cm_then_stops():
+    plan = np.array([[x, 0.0] for x in np.linspace(0, 5, 21)])
+    vx, vy, info = n.compute_velocity('vo', 0, np.array([[4.8, 0.0]]), np.zeros((1, 2)), plan)
+    assert info['reason'] == 'creep' and 0.0 < vx <= 0.2 and abs(vy) < 1e-9
+    vx, vy, info = n.compute_velocity('vo', 0, np.array([[4.95, 0.0]]), np.zeros((1, 2)), plan)
+    assert info['reason'] == 'at_goal' and (vx, vy) == (0.0, 0.0)

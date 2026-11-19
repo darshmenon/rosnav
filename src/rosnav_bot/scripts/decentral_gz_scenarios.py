@@ -18,8 +18,14 @@ import sys
 
 import numpy as np
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.realpath(__file__))       # realpath: via `ros2 run` this is an install/ symlink
 PKG = os.path.normpath(os.path.join(HERE, '..'))
+if not os.path.isdir(os.path.join(PKG, 'maps')):           # non-symlink install: use the package share dir
+    try:
+        from ament_index_python.packages import get_package_share_directory
+        PKG = get_package_share_directory('rosnav_bot')
+    except Exception:
+        pass
 
 # ---- boxes: (cx, cy, sx, sy) in metres, wall height 2 -------------------------------------------------
 T = 0.2
