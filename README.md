@@ -11,21 +11,15 @@
 
 <br/>
 
-**Nav2 + SLAM in Gazebo — single command**
-
-```bash
-ros2 launch rosnav_bot slam_nav.launch.py world_name:=cafe explore:=true
-```
+<p align="center">
+  <img src="images/decentral_gz/corridor_4.gif" alt="4 robots interchanging through a 1.5 m corridor in Gazebo with Nav2" width="330"/>
+</p>
 
 </div>
 
-One launch → Gazebo + SLAM/Nav2 + RViz. Scale to a fleet with one arg. Humble/Jazzy params auto-selected from `$ROS_DISTRO`.
-
-Deep dive → [`concepts.md`](concepts.md) · launch args → `ros2 launch rosnav_bot <file> --show-args`
-
 ---
 
-<details>
+<details open>
 <summary><h2>Contents</h2></summary>
 
 **Get started**
@@ -33,7 +27,7 @@ Deep dive → [`concepts.md`](concepts.md) · launch args → `ros2 launch rosna
 - [2. Map · save · navigate](#2-map--save--navigate)
 
 **Navigation & platforms**
-- [3. Controllers, SLAM backends & benchmarking](#3-controllers-slam-backends--benchmarking)
+- [3. Controllers, SLAM backends & benchmarking](#3-controllers-slam-backends--benchmarking) (incl. [social navigation](#social-navigation-among-pedestrians) · [decentralized multi-robot](#decentralized-every-robot-its-own-goal))
 - [4. Platforms — drive bases, chassis skins, how to switch](#4-platforms--drive-bases-chassis-skins-how-to-switch)
 - [5. Worlds](#5-worlds)
 - [6. Update YAML (tuning)](#6-update-yaml-tuning)
@@ -54,21 +48,18 @@ Deep dive → [`concepts.md`](concepts.md) · launch args → `ros2 launch rosna
 - [16. AI training (YOLO · Gaussian Splat keepout · RL)](#16-ai-training-yolo--gaussian-splat-keepout--rl)
 
 **Reference**
+- [Standalone tools](#standalone-tools)
 - [17. Fixes](#17-fixes)
 
 </details>
 
 ---
 
-## Standalone tools
-
-Each works on any Nav2 stack: [nav2_doctor](https://github.com/darshmenon/nav2_doctor) (why isn't my robot moving?) · [nav_explore_eval](https://github.com/darshmenon/nav_explore_eval) (score an exploration run) · [nav2_fault_inject](https://github.com/darshmenon/nav2_fault_inject) (test recovery) · slam_doctor (is my SLAM healthy?) · nav_bench_kit (compare benchmark trials, guard shared-machine runs; local, not published yet). Copies and tests: `src/rosnav_bot/tools/`.
-
-Unit tests (no simulator, ~1 min, same as CI): `src/rosnav_bot/scripts/run_tests.sh`
-
----
-
 ## 1. Install
+
+One launch → Gazebo + SLAM/Nav2 + RViz. Scale to a fleet with one arg. Humble/Jazzy params auto-selected from `$ROS_DISTRO`.
+
+Deep dive → [`concepts.md`](concepts.md) · launch args → `ros2 launch rosnav_bot <file> --show-args`
 
 ```bash
 # Ubuntu 22.04 / Humble — use jazzy on 24.04
@@ -193,6 +184,18 @@ Multi-SLAM (`slam_mode:=multi`): save `/map_merged` with `-t /map_merged` or `fl
   <br/><sub>Nav2 patrol on the prebuilt hospital map (<code>slam:=false controller:=rpp</code>) · green = global plan</sub>
 </p>
 
+| Swap | Corridor (1.5 m) | Pedestrian hall |
+|:---:|:---:|:---:|
+| <img src="images/decentral_gz/swap_4.gif" alt="4 robots swapping places in Gazebo with Nav2" width="240"> | <img src="images/decentral_gz/corridor_4.gif" alt="4 robots interchanging through a 1.5 m corridor in Gazebo with Nav2" width="330"> | <img src="images/decentral_gz/crowd_4.gif" alt="4 robots crossing a pedestrian hall in Gazebo with Nav2" width="250"> |
+| 4 robots swap places | 4 robots interchange | 4 robots cross a hall of walkers |
+
+<sub>Live in Gazebo + Nav2 (`controller:=decentral decentral_ctrl:=vo`, 3x speed) · all goals reached, 0 robot collisions · [original corridor video (real speed)](images/decentral_gz/corridor_4.mp4)</sub>
+
+<p align="center">
+  <img src="images/decentral_gz/swap4_vo_vs_mppi_prior.gif" alt="4 robots swapping places in Gazebo: vo (left) vs mppi_prior (right)" width="560"/>
+  <br/><sub>Same 4-robot swap, two controllers: sampled velocity obstacle (<code>vo</code>, left) vs MPPI with a velocity-obstacle prior + yield rule (<code>mppi_prior</code>, right)</sub>
+</p>
+
 ---
 
 ## 3. Controllers, SLAM backends & benchmarking
@@ -278,7 +281,7 @@ ros2 action send_goal /robot1/navigate_to_pose nav2_msgs/action/NavigateToPose "
 ros2 action send_goal /robot2/navigate_to_pose nav2_msgs/action/NavigateToPose "{pose: {header: {frame_id: map}, pose: {position: {x: -3.0, y: -1.0}}}}"
 ```
 
-*Status: experimental. Unit-tested; in one live 2-robot cafe run the robot followed its plan to ~0.8 m of the goal but dithered short of it, and no head-on swap has been run live yet — see `todo.md`.*
+*Status: experimental. Live in Gazebo + Nav2 with `vo`: 4-robot swap, 4-robot 1.5 m corridor interchange and a 4-robot pedestrian hall all reached every goal with 0 robot collisions; `mppi_prior` is not reliable live yet (corridor 1/2) and 8 robots did not boot under load — details in [concepts.md](concepts.md).*
 
 ### SLAM in RViz
 
@@ -304,26 +307,14 @@ Per-robot slam_toolbox maps merged into `/map_merged` (10x speed).
 
 `controller:=mpc world_name:=maze explore:=true`
 
-![slam_toolbox with the MPC controller exploring the maze in RViz](images/slam_toolbox_mpc_maze.gif)
-
 #### RTAB-Map visual SLAM (RGB-D, cafe)
 
 `slam_algo:=vslam world_name:=cafe` (`vslam.rviz`)
 
-![RTAB-Map RGB-D visual SLAM exploring the cafe in RViz](images/rtabmap_visual_cafe.gif)
-
-Exported 3D cloud:
-
-| 3D cloud (RViz) | 3D cloud (MeshLab) |
-|:---:|:---:|
-| <img src="images/rtabmap/cafe_3d_cloud.png" width="260"> | <img src="images/rtabmap/cafe_3d_meshlab.png" width="260"> |
-| 682k coloured points | `rtabmap-export --cloud` |
-
-#### Frontier exploration
-
-Single-room `coverage_100` world, slam_toolbox (same session as the coverage screenshots in §5):
-
-![Frontier exploration of the coverage_100 world in RViz](images/frontier_exploration_coverage_100.gif)
+| Exploring the cafe (RViz) | 3D cloud (RViz) | 3D cloud (MeshLab) |
+|:---:|:---:|:---:|
+| <img src="images/rtabmap_visual_cafe.gif" alt="RTAB-Map RGB-D visual SLAM exploring the cafe in RViz" width="300"> | <img src="images/rtabmap/cafe_3d_cloud.png" width="260"> | <img src="images/rtabmap/cafe_3d_meshlab.png" width="260"> |
+| RTAB-Map RGB-D visual SLAM | 682k coloured points | `rtabmap-export --cloud` |
 
 #### ORB-SLAM3 (sidecar, cafe)
 
@@ -858,6 +849,14 @@ ros2 run rosnav_bot rl_policy_node.py --ros-args \
 ```
 
 `train_ppo.py` defaults to a pure-PyTorch PPO (`--backend torch`). `--backend sb3` needs a working stable-baselines3 build.
+
+---
+
+## Standalone tools
+
+Each works on any Nav2 stack: [nav2_doctor](https://github.com/darshmenon/nav2_doctor) (why isn't my robot moving?) · [nav_explore_eval](https://github.com/darshmenon/nav_explore_eval) (score an exploration run) · [nav2_fault_inject](https://github.com/darshmenon/nav2_fault_inject) (test recovery) · slam_doctor (is my SLAM healthy?) · nav_bench_kit (compare benchmark trials, guard shared-machine runs; local, not published yet). Copies and tests: `src/rosnav_bot/tools/`.
+
+Unit tests (no simulator, ~1 min, same as CI): `src/rosnav_bot/scripts/run_tests.sh`
 
 ---
 
