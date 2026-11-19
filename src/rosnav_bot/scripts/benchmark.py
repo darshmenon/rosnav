@@ -137,6 +137,14 @@ def _write_report(out_dir: str, label: str, mode: str, data: dict, logger):
 
 
 # ─────────────────────────── slam mode ──────────────────────────────────
+def path_step(prev, cur, max_jump=1.0):
+    """Distance between consecutive odom samples; 0 for the first sample or a jump > max_jump m (odom reset / teleport)."""
+    if prev is None:
+        return 0.0
+    d = math.hypot(cur[0] - prev[0], cur[1] - prev[1])
+    return d if d <= max_jump else 0.0
+
+
 class SlamBenchmark(Node):
     """Tracks /map growth over time: cell coverage % and convergence time."""
 
@@ -158,6 +166,8 @@ class SlamBenchmark(Node):
         self._converge_threshold = float(self.get_parameter('converge_threshold').value)
         self._explorable_m2 = float(self.get_parameter('explorable_area_m2').value)
         self._res = 0.05
+        self._odom_prev = None   # (x, y) of the previous /odom sample
+        self._path_m = 0.0       # distance driven, summed from /odom
 
         self._start = time.time()
         self._samples = []  # (t, free, occupied, unknown, total)
@@ -168,6 +178,7 @@ class SlamBenchmark(Node):
         qos.reliability = QoSReliabilityPolicy.RELIABLE
         qos.durability = QoSDurabilityPolicy.TRANSIENT_LOCAL
         self.create_subscription(OccupancyGrid, self._map_topic, self._map_cb, qos)
+        self.create_subscription(Odometry, '/odom', self._slam_odom_cb, 10)
 
         self.get_logger().info(
             f'[slam] label={self._label} duration={self._duration}s — '
@@ -209,6 +220,11 @@ class SlamBenchmark(Node):
         if elapsed >= self._duration:
             self._finish()
 
+    def _slam_odom_cb(self, msg: Odometry):
+        p = (msg.pose.pose.position.x, msg.pose.pose.position.y)
+        self._path_m += path_step(self._odom_prev, p)
+        self._odom_prev = p
+
     def _true_pct(self, free):
         """Free area over the world's explorable area (None if that area was not given)."""
         if self._explorable_m2 <= 0.0:
@@ -231,6 +247,7 @@ class SlamBenchmark(Node):
             'total_cells': total,
             'explorable_area_m2': self._explorable_m2 or None,
             'coverage_true_pct': self._true_pct(free),
+            'path_length_m': round(self._path_m, 2),
             'time_to_converge_sec': round(self._converged_at, 1) if self._converged_at else None,
             'converge_threshold': self._converge_threshold,
             'coverage_timeline': [

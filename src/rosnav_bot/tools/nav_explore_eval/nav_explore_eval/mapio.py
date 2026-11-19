@@ -36,7 +36,8 @@ def _read_pgm(path):
         end = pos
         while not raw[end:end + 1].isspace():
             end += 1
-        toks.append(raw[pos:end]); pos = end
+        toks.append(raw[pos:end])
+        pos = end
     magic, w, h, mx = toks[0], int(toks[1]), int(toks[2]), int(toks[3])
     if magic == b'P5':
         pix = np.frombuffer(raw[pos + 1:pos + 1 + w * h], dtype=np.uint8)
@@ -59,5 +60,9 @@ def load_yaml_map(yaml_path):
     g = np.full(p.shape, -1, dtype=np.int8)
     g[p > occ_t] = 100
     g[p < free_t] = 0
+    # Nav2's map_saver writes unknown as grey 205 (p = 0.196), which a free_thresh of 0.25 would read as FREE
+    # and inflate coverage. Trinary maps keep unknown as unknown.
+    if str(y.get('mode', 'trinary')) == 'trinary':
+        g[np.abs(v - 205.0 / 255.0) < 0.005] = -1
     g = g[::-1].copy()                                  # image row 0 is top
     return Grid(g, float(y['resolution']), float(y['origin'][0]), float(y['origin'][1]))

@@ -196,7 +196,8 @@ def rasterize(shape_list, res=0.05, margin=1.0, seed=(0.0, 0.0)):
             hy = abs(math.sin(yaw)) * d[0] / 2 + abs(math.cos(yaw)) * d[1] / 2
         else:
             hx = hy = d[0]
-        xs_ += [x - hx, x + hx]; ys_ += [y - hy, y + hy]
+        xs_ += [x - hx, x + hx]
+        ys_ += [y - hy, y + hy]
     x0, x1, y0, y1 = min(xs_) - margin, max(xs_) + margin, min(ys_) - margin, max(ys_) + margin
     w, h = int(math.ceil((x1 - x0) / res)), int(math.ceil((y1 - y0) / res))
     xs = x0 + (np.arange(w) + 0.5) * res
@@ -213,7 +214,8 @@ def rasterize(shape_list, res=0.05, margin=1.0, seed=(0.0, 0.0)):
     if not (0 <= si < h and 0 <= sj < w) or occ[si, sj]:
         raise ValueError(f'seed {seed} is outside the world or inside a wall - pass --seed X Y in free space')
     seen = np.zeros_like(occ)
-    q = deque([(si, sj)]); seen[si, sj] = True
+    q = deque([(si, sj)])
+    seen[si, sj] = True
     while q:
         i, j = q.popleft()
         for ni, nj in ((i + 1, j), (i - 1, j), (i, j + 1), (i, j - 1)):

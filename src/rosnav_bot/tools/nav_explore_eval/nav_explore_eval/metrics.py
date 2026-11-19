@@ -16,7 +16,8 @@ def resample(live: Grid, truth: Grid, dx=0.0, dy=0.0, yaw=0.0):
         j = np.floor((xs - live.ox) / live.resolution).astype(int)
         i = np.floor((ys - live.oy) / live.resolution).astype(int)
         out = np.full((h, w), -1, dtype=np.int8)
-        ok_i = (i >= 0) & (i < live.shape[0]); ok_j = (j >= 0) & (j < live.shape[1])
+        ok_i = (i >= 0) & (i < live.shape[0])
+        ok_j = (j >= 0) & (j < live.shape[1])
         out[np.ix_(ok_i, ok_j)] = live.data[np.ix_(i[ok_i], j[ok_j])]
         return out
     X, Y = np.meshgrid(xs, ys)
@@ -178,7 +179,7 @@ def _umeyama_2d(est, gt):
     return r, cg - r @ ce
 
 
-def localisation_error(est, gt, max_dt=0.25, align=True):
+def localisation_error(est, gt, max_dt=0.25, align=True, rpe_delta_m=1.0):
     """Absolute trajectory error of `est` against ground truth `gt`, both [(t, x, y)].
     Each est sample is paired with the nearest-in-time gt sample (within `max_dt` s). With `align` the
     est trajectory is first rigidly fitted to gt (standard ATE), so only drift counts, not the frame.
@@ -198,6 +199,29 @@ def localisation_error(est, gt, max_dt=0.25, align=True):
         pe = pe @ r.T + t
     err = np.hypot(*(pe - pg).T)
     length = path_length(pg)
-    return {'ate_rmse_m': float(np.sqrt((err ** 2).mean())), 'ate_max_m': float(err.max()),
-            'final_error_m': float(err[-1]),
-            'drift_pct': float(err[-1] / length * 100) if length > 0 else None, 'pairs': int(ok.sum())}
+    out = {'ate_rmse_m': float(np.sqrt((err ** 2).mean())), 'ate_max_m': float(err.max()),
+           'final_error_m': float(err[-1]),
+           'drift_pct': float(err[-1] / length * 100) if length > 0 else None, 'pairs': int(ok.sum())}
+    rpe = relative_pose_error(pe, pg, delta_m=rpe_delta_m)
+    if rpe is not None:
+        out.update(rpe)
+    return out
+
+
+def relative_pose_error(pe, pg, delta_m=1.0):
+    """Translational RPE over `delta_m` metres of ground-truth path: for each pair of samples that far apart
+    along gt, |(est_j - est_i) - (gt_j - gt_i)|. Frame-independent local drift (evo's RPE, translation part).
+    Returns {rpe_rmse_m, rpe_max_m, rpe_delta_m, rpe_pairs} or None if the path is shorter than delta_m."""
+    pe, pg = np.asarray(pe, float), np.asarray(pg, float)
+    if len(pg) < 2:
+        return None
+    s = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(pg, axis=0).T))])
+    j = np.searchsorted(s, s + delta_m)
+    ok = j < len(s)
+    if not ok.any():
+        return None
+    i = np.nonzero(ok)[0]
+    d = (pe[j[ok]] - pe[i]) - (pg[j[ok]] - pg[i])
+    err = np.hypot(*d.T)
+    return {'rpe_rmse_m': float(np.sqrt((err ** 2).mean())), 'rpe_max_m': float(err.max()),
+            'rpe_delta_m': float(delta_m), 'rpe_pairs': int(ok.sum())}

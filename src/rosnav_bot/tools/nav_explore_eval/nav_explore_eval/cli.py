@@ -60,8 +60,12 @@ def cmd_compare(a):
         for p in a.reports:
             r = json.load(open(p))
             ax.plot([s['t'] for s in r['series']], [s['coverage_pct'] for s in r['series']], label=r['label'])
-        ax.set_xlabel('time (s)'); ax.set_ylabel('coverage (%)'); ax.legend(); ax.grid(alpha=.3)
-        fig.tight_layout(); fig.savefig(a.png, dpi=140)
+        ax.set_xlabel('time (s)')
+        ax.set_ylabel('coverage (%)')
+        ax.legend()
+        ax.grid(alpha=.3)
+        fig.tight_layout()
+        fig.savefig(a.png, dpi=140)
         print(f'wrote {a.png}')
     return 0
 
@@ -128,7 +132,8 @@ def _record_once(a, ros_args):
         rclpy.spin(node)
     except (KeyboardInterrupt, SystemExit, ExternalShutdownException):
         pass
-    node.destroy_node(); rclpy.try_shutdown()
+    node.destroy_node()
+    rclpy.try_shutdown()
     if not series:
         print('no /map received - nothing to score', file=sys.stderr)
         return 1
@@ -192,7 +197,9 @@ def cmd_bag(a, ros_args):
     json.dump(rep, open(a.out, 'w'), indent=2)
     f = rep['final']
     if 'localisation' in rep:
-        print(f"localisation: ATE rmse {rep['localisation']['ate_rmse_m']:.3f} m, drift {rep['localisation']['drift_pct'] or 0:.1f}%")
+        print(f"localisation: ATE rmse {rep['localisation']['ate_rmse_m']:.3f} m, drift {rep['localisation']['drift_pct'] or 0:.1f}%"
+              + (f", RPE {rep['localisation']['rpe_rmse_m']:.3f} m/{rep['localisation']['rpe_delta_m']:g} m"
+                 if 'rpe_rmse_m' in rep['localisation'] else ''))
     print(f"scored {len(rep['series'])} samples over {rep['duration_s']:.0f}s: coverage {f['coverage_pct']:.1f}% "
           f"f1 {f['wall_f1_pct']:.1f}%  -> {a.out}")
     return 0
@@ -204,7 +211,8 @@ def cmd_multi(a):
     if a.json:
         print(json.dumps({'merged': m, 'robots': per}, indent=2))
         return 0
-    print('merged:'); print('\n'.join(f'  {k:20s} {v:8.2f}' for k, v in m.items()))
+    print('merged:')
+    print('\n'.join(f'  {k:20s} {v:8.2f}' for k, v in m.items()))
     for p, f in zip(a.maps, per):
         print(f"{p}: coverage {f['coverage_pct']:.1f}%  unique {f['unique_pct']:.1f}%  overlap {f['overlap_pct']:.1f}%")
     return 0
@@ -285,24 +293,30 @@ def main(argv=None):
     ap.add_argument('--version', action='version', version=f'nav_explore_eval {__version__}')
     sub = ap.add_subparsers(dest='cmd', required=True)
     s = sub.add_parser('score', help='score a saved map against a ground-truth map (offline)')
-    s.add_argument('map'); s.add_argument('truth')
+    s.add_argument('map')
+    s.add_argument('truth')
     s.add_argument('--offset', type=float, nargs=2, metavar=('DX', 'DY'))
     s.add_argument('--json', action='store_true')
     _align_args(s)
     t = sub.add_parser('truth-from-world', help='exact ground-truth map from a Gazebo/SDF world file')
-    t.add_argument('world'); t.add_argument('--out', required=True, help='output prefix (writes .pgm + .yaml)')
-    t.add_argument('--res', type=float, default=0.05); t.add_argument('--margin', type=float, default=1.0)
+    t.add_argument('world')
+    t.add_argument('--out', required=True, help='output prefix (writes .pgm + .yaml)')
+    t.add_argument('--res', type=float, default=0.05)
+    t.add_argument('--margin', type=float, default=1.0)
     t.add_argument('--z', type=float, default=0.2, help='lidar height: only collisions crossing it are walls')
     t.add_argument('--model-path', action='append', default=[], metavar='DIR',
                    help='extra directory to resolve model:// includes in (repeatable; also $GAZEBO_MODEL_PATH)')
     t.add_argument('--seed', type=float, nargs=2, default=(0.0, 0.0), metavar=('X', 'Y'),
                    help='a free point (robot spawn); free space = what is reachable from it')
     c = sub.add_parser('compare', help='table (and chart) comparing recorded runs')
-    c.add_argument('reports', nargs='+'); c.add_argument('--png')
+    c.add_argument('reports', nargs='+')
+    c.add_argument('--png')
     r = sub.add_parser('record', help='watch a live /map and score it over time')
     r.add_argument('--truth', required=True, help='ground-truth map yaml')
-    r.add_argument('--label', default='run'); r.add_argument('--out', default='run.json')
-    r.add_argument('--ns', default=''); r.add_argument('--duration', type=float, default=600)
+    r.add_argument('--label', default='run')
+    r.add_argument('--out', default='run.json')
+    r.add_argument('--ns', default='')
+    r.add_argument('--duration', type=float, default=600)
     r.add_argument('--robots', default='', help='comma-separated namespaces: score their merged maps (multi-robot)')
     r.add_argument('--repeat', type=int, default=1, help='N trials -> out_1.json .. out_N.json + mean/std table')
     r.add_argument('--between', default='', help='shell command run before each trial (restart your explorer)')
@@ -312,26 +326,35 @@ def main(argv=None):
                    help='ground-truth nav_msgs/Odometry topic: adds localisation error (ATE) of /odom to the report')
     _align_args(r)
     b = sub.add_parser('bag', help='score a recorded rosbag2 offline (needs /map, optional /odom)')
-    b.add_argument('bag'); b.add_argument('--truth', required=True)
-    b.add_argument('--label', default='bag'); b.add_argument('--out', default='run.json')
-    b.add_argument('--ns', default=''); b.add_argument('--interval', type=float, default=2.0)
+    b.add_argument('bag')
+    b.add_argument('--truth', required=True)
+    b.add_argument('--label', default='bag')
+    b.add_argument('--out', default='run.json')
+    b.add_argument('--ns', default='')
+    b.add_argument('--interval', type=float, default=2.0)
     b.add_argument('--stop-at', type=float, default=100.0)
     b.add_argument('--gt-odom', default='', metavar='TOPIC', help='ground-truth Odometry topic in the bag (adds ATE)')
     _align_args(b)
     m = sub.add_parser('score-multi', help='merge several robots\' saved maps and score them (offline)')
-    m.add_argument('maps', nargs='+'); m.add_argument('--truth', required=True); m.add_argument('--json', action='store_true')
+    m.add_argument('maps', nargs='+')
+    m.add_argument('--truth', required=True)
+    m.add_argument('--json', action='store_true')
     _align_args(m)
     st = sub.add_parser('stats', help='mean +/- std table, grouped by label (repeat trials)')
-    st.add_argument('reports', nargs='+', help='run JSON files, globs or directories'); st.add_argument('--md', action='store_true')
+    st.add_argument('reports', nargs='+', help='run JSON files, globs or directories')
+    st.add_argument('--md', action='store_true')
     rp = sub.add_parser('report', help='one-file HTML report (+ map-vs-truth overlay)')
-    rp.add_argument('reports', nargs='+'); rp.add_argument('--out', default='report.html')
+    rp.add_argument('reports', nargs='+')
+    rp.add_argument('--out', default='report.html')
     rp.add_argument('--title', default='Exploration report')
-    rp.add_argument('--map', help='saved map yaml to overlay on the truth'); rp.add_argument('--truth')
+    rp.add_argument('--map', help='saved map yaml to overlay on the truth')
+    rp.add_argument('--truth')
     _align_args(rp)
     v = sub.add_parser('validate', help='check run JSON files against the report schema')
     v.add_argument('files', nargs='+')
     lb = sub.add_parser('leaderboard', help='build LEADERBOARD.md from a directory of run JSONs')
-    lb.add_argument('dir', nargs='?', default='results'); lb.add_argument('--out', default='LEADERBOARD.md')
+    lb.add_argument('dir', nargs='?', default='results')
+    lb.add_argument('--out', default='LEADERBOARD.md')
     lb.add_argument('--check', action='store_true', help='fail if --out is stale (for CI)')
     a, ros_args = ap.parse_known_args(argv)
     if a.cmd == 'score':

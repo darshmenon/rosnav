@@ -110,3 +110,14 @@ def test_versions_match():
     pkg = re.search(r'<version>(.*?)</version>', open(os.path.join(ROOT, 'package.xml')).read()).group(1)
     setup = re.search(r"version='(.*?)'", open(os.path.join(ROOT, 'setup.py')).read()).group(1)
     assert __version__ == pkg == setup
+
+
+def test_nav2_saver_grey_205_is_unknown_not_free(tmp_path):
+    """Nav2 map_saver writes unknown as 205 with free_thresh 0.25; that must load as unknown (-1)."""
+    import numpy as np
+    pix = np.array([[254, 205], [0, 205]], dtype=np.uint8)
+    (tmp_path / 'm.pgm').write_bytes(b'P5\n2 2\n255\n' + pix.tobytes())
+    (tmp_path / 'm.yaml').write_text('image: m.pgm\nmode: trinary\nresolution: 0.05\norigin: [0, 0, 0]\n'
+                                     'negate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.25\n')
+    g = load_yaml_map(str(tmp_path / 'm.yaml'))
+    assert (g.data == -1).sum() == 2 and (g.data == 0).sum() == 1 and (g.data == 100).sum() == 1

@@ -115,7 +115,9 @@ def _chart_png(reports):
     fig, ax = plt.subplots(figsize=(7, 3.6))
     for r in reports:
         ax.plot([s['t'] for s in r['series']], [s['coverage_pct'] for s in r['series']], label=r['label'])
-    ax.set_xlabel('time (s)'); ax.set_ylabel('coverage (%)'); ax.grid(alpha=.3)
+    ax.set_xlabel('time (s)')
+    ax.set_ylabel('coverage (%)')
+    ax.grid(alpha=.3)
     ax.legend(fontsize=8)
     return _png_b64(fig)
 
@@ -123,7 +125,9 @@ def _chart_png(reports):
 def _png_b64(fig):
     import matplotlib.pyplot as plt
     buf = io.BytesIO()
-    fig.tight_layout(); fig.savefig(buf, format='png', dpi=120); plt.close(fig)
+    fig.tight_layout()
+    fig.savefig(buf, format='png', dpi=120)
+    plt.close(fig)
     return base64.b64encode(buf.getvalue()).decode()
 
 
@@ -150,8 +154,9 @@ def overlay_png(live, truth, scorer):
     h, w = truth.shape
     fig, ax = plt.subplots(figsize=(6, 6 * h / max(w, 1)))
     ax.imshow(img, origin='lower', extent=(truth.ox, truth.ox + w * truth.resolution,
-                                            truth.oy, truth.oy + h * truth.resolution))
-    ax.set_xlabel('x (m)'); ax.set_ylabel('y (m)')
+                                           truth.oy, truth.oy + h * truth.resolution))
+    ax.set_xlabel('x (m)')
+    ax.set_ylabel('y (m)')
     return _png_b64(fig)
 
 

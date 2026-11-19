@@ -153,3 +153,17 @@ def test_launch_declares_slam_debug_and_coverage_spawn():
     assert "slam_debug_monitor.py" in text
     assert "'coverage_100': {'x': '-1.6', 'y': '-0.8'" in text
     assert "'multi_terrain_robot_diff': {'x': '-9.2', 'y': '0.0'" in text
+
+
+def test_path_step_sums_small_steps_and_ignores_jumps():
+    import importlib.util, os
+    sp = importlib.util.spec_from_file_location('bm', os.path.join(os.path.dirname(__file__), '..', 'scripts', 'benchmark.py'))
+    bm = importlib.util.module_from_spec(sp)
+    try:
+        sp.loader.exec_module(bm)
+    except ImportError:
+        import pytest
+        pytest.skip('rclpy not available')
+    assert bm.path_step(None, (1.0, 1.0)) == 0.0
+    assert abs(bm.path_step((0.0, 0.0), (0.3, 0.4)) - 0.5) < 1e-9
+    assert bm.path_step((0.0, 0.0), (5.0, 0.0)) == 0.0   # odom reset / teleport
