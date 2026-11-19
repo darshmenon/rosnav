@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>rosnav_check</name>
+  <version>0.1.0</version>
+  <description>One report from all rosnav doctors: merge findings, correlate root causes, CI exit code.</description>
+  <maintainer email="darshmenon02@gmail.com">darshmenon</maintainer>
+  <license>Apache-2.0</license>
+  <test_depend>python3-pytest</test_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>
