@@ -72,7 +72,8 @@ class PlanWorld(sim.World):
     local grid. pref_dir/dist_field follow the plan instead of a BFS over a map.
     """
 
-    def __init__(self, plan_xy, scan_xy, extra_pts, lookahead=1.0, margin=4, plan_clear=0.35):
+    def __init__(self, plan_xy, scan_xy, extra_pts, lookahead=1.0, margin=4, plan_clear=0.35,
+                 cell_clear=0.8, goal_free_r=1.5):
         plan = resample(plan_xy)
         allp = np.vstack([plan, np.asarray(extra_pts, float).reshape(-1, 2)])
         lo = np.floor(allp.min(0)).astype(int) - margin
@@ -92,6 +93,16 @@ class PlanWorld(sim.World):
             if len(s):
                 d, _ = self.tree.query(s)
                 s = s[d > plan_clear]                  # the plan is already known-free: do not wall it in
+                # Coarse 1 m cells (the sim's grid) are only a cost-field hint. A cell whose CENTRE is within
+                # `cell_clear` of the plan would reach onto it (mppi's clear<1 penalty then covers the whole path),
+                # and near the goal a few such cells made the field inf/penalised all the way in (the observed
+                # ~0.35 m stall in corridor_2_mppi_prior). Exact-point collision checks (`ok`) still see every return.
+                if len(s):
+                    cc = np.rint(s)
+                    dc, _ = self.tree.query(cc)
+                    keep = dc > cell_clear
+                    keep &= np.linalg.norm(s - self.plan[-1], axis=1) > goal_free_r
+                    s = s[keep]
                 ix = np.rint(s[:, 0]).astype(int)
                 iy = np.rint(s[:, 1]).astype(int)
                 m = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
@@ -140,38 +151,147 @@ class PlanWorld(sim.World):
         return v / (n + 1e-9)
 
 
-def compute_velocity(ctrl, i, pos, vel, plan_xy, scan_xy=None, rng=None, vmax=0.5, lookahead=1.0):
+def _dist_to_segment(pts, a, b):
+    """Distance of each row of pts to segment a-b."""
+    pts, a, b = np.asarray(pts, float), np.asarray(a, float), np.asarray(b, float)
+    ab = b - a
+    t = np.clip(((pts - a) @ ab) / (ab @ ab + 1e-12), 0.0, 1.0)
+    return np.linalg.norm(pts - (a + t[:, None] * ab), axis=1)
+
+
+def _command(ctrl, i, lp, vel, goals, world, rng, arrived):
+    """sim.command, except `mppi_prior`'s id-priority yield ignores ARRIVED neighbours (they are parked obstacles:
+    sidestepping a robot that will never move made the robot circle its own goal forever)."""
+    if ctrl != 'mppi_prior' or not arrived:
+        return sim.command(ctrl, i, lp, vel, goals, world, rng)
+    g = goals[i]
+    if np.linalg.norm(g - lp[i]) < 0.25:
+        return np.zeros(2)
+    pref = sim.VMAX * world.pref_dir(lp[i], g)
+    prior = sim.vo_velocity(i, lp, vel, g, world, pref)
+    for j in range(len(lp)):
+        if j == i or j in arrived:
+            continue
+        rel = lp[j] - lp[i]
+        dist = np.linalg.norm(rel)
+        if dist < 2.2 and np.linalg.norm(vel[j]) < 0.15 and np.linalg.norm(vel[i]) < 0.15 and i > j:
+            prior = 0.6 * sim.VMAX * np.array([-rel[1], rel[0]]) / (dist + 1e-9)
+    return sim.mppi_velocity(i, lp, vel, g, world, pref, rng, prior=prior)
+
+
+def compute_velocity(ctrl, i, pos, vel, plan_xy, scan_xy=None, rng=None, vmax=0.5, lookahead=1.0,
+                     arrived=None, handoff_d=1.0):
     """Desired holonomic world-frame velocity for robot i.
 
     pos, vel: (N, 2) arrays in the plan frame (row i = this robot); plan_xy: Nx2 global plan;
-    scan_xy: optional Mx2 static obstacle points in the plan frame. Returns (vx, vy, info).
+    scan_xy: optional Mx2 static obstacle points in the plan frame; arrived: indices of neighbours that are parked at
+    their own goal (treated as static obstacles: velocity zeroed, no yield sidestep). Returns (vx, vy, info);
+    info['why'] is a one-line human-readable reason for the decision (logged by the node on every change).
     ROS-free: the node and the unit tests call exactly this.
     """
     pos = np.asarray(pos, float)
-    vel = np.asarray(vel, float)
+    vel = np.array(vel, float)
+    arrived = set(arrived or ()) - {i}
+    for j in arrived:
+        vel[j] = 0.0                                   # parked, not "moving at odom noise"
     rng = rng or np.random.default_rng(0)
     sim.VMAX = float(vmax)
     plan_xy = np.asarray(plan_xy, float)
     goal = plan_xy[-1]
     gd = float(np.linalg.norm(goal - pos[i]))
     if gd < 0.1:
-        return 0.0, 0.0, {'reason': 'at_goal', 'blocked_cells': 0}
+        return 0.0, 0.0, {'reason': 'at_goal', 'blocked_cells': 0, 'why': f'at_goal: {gd:.2f} m from goal'}
     if gd < 0.25:
         # the sim stops at 0.25 m, which is exactly Nav2's xy_goal_tolerance: creep the last stretch so the goal
         # checker is satisfied with margin (neighbours are ignored for these final 25 cm)
         d = (goal - pos[i]) / gd
         sp = min(0.2, 2.0 * gd, float(vmax))
-        return float(d[0] * sp), float(d[1] * sp), {'reason': 'creep', 'blocked_cells': 0}
+        return float(d[0] * sp), float(d[1] * sp), {'reason': 'creep', 'blocked_cells': 0,
+                                                    'why': f'creep: {gd:.2f} m from goal, neighbours ignored'}
+    others = [j for j in range(len(pos)) if j != i]
+    if gd < handoff_d:
+        # Near-goal handoff (cf. Nav2 RPP's approach-velocity scaling / regulated slow-down near the goal: stop
+        # re-planning a manoeuvre and just drive the last metre in): follow the plan straight in unless a neighbour
+        # actually sits on that last stretch, then fall through to the avoidance controller.
+        pl = resample(plan_xy)
+        seg = np.linalg.norm(np.diff(pl, axis=0), axis=1) if len(pl) > 1 else np.zeros(0)
+        rem = np.concatenate([[0.0], np.cumsum(seg)])
+        rem = rem[-1] - rem
+        k = int(np.argmin(np.linalg.norm(pl - pos[i], axis=1)))
+        tgt = pl[int(np.argmin(np.abs(rem - max(rem[k] - 0.5, 0.0))))]
+        if np.linalg.norm(tgt - pos[i]) < 0.15:
+            tgt = goal
+        blockers = [j for j in others
+                    if float(_dist_to_segment(pos[j][None], pos[i], goal)[0]) < 2 * sim.R + 0.1
+                    and np.linalg.norm(pos[j] - goal) > 0.25]
+        if not blockers:
+            d = (tgt - pos[i]) / (np.linalg.norm(tgt - pos[i]) + 1e-9)
+            sp = min(float(vmax), max(0.2, 0.8 * gd))
+            return float(d[0] * sp), float(d[1] * sp), {
+                'reason': 'handoff', 'blocked_cells': 0,
+                'why': f'handoff: {gd:.2f} m from goal, last stretch clear of {len(others)} neighbour(s)'}
+        why_block = f'avoid: {gd:.2f} m from goal but robot idx {blockers} on the last stretch'
+    else:
+        why_block = None
     world = PlanWorld(plan_xy, scan_xy, pos, lookahead=lookahead)
     o = world.origin
     lp, lg = pos - o, goal - o
     goals = np.tile(lg, (len(pos), 1))
-    v = sim.command(ctrl, i, lp, vel, goals, world, rng)
-    return float(v[0]), float(v[1]), {'reason': 'ok', 'blocked_cells': world.n_blocked}
+    v = _command(ctrl, i, lp, vel, goals, world, rng, arrived)
+    why = why_block or (f'follow: {gd:.2f} m from goal, {world.n_blocked} blocked cell(s)'
+                        + (f', {len(arrived)} parked neighbour(s) ignored as movers' if arrived else ''))
+    return float(v[0]), float(v[1]), {'reason': 'ok', 'blocked_cells': world.n_blocked, 'why': why}
+
+
+class HeadingHysteresis:
+    """Keep the commanded heading unless the new one is clearly different / persistently so.
+
+    Sampled-velocity controllers (VO, MPPI) pick argmin of a noisy cost each tick, so near the goal the best
+    heading can flip +-90..180 deg between ticks and the unicycle tracker spins in place. This is the standard
+    deadband + persistence fix (cf. ORCA/VO oscillation remedies: velocity smoothing and commit-to-side).
+      - change < `dead` rad: hold the previous heading (no jitter);
+      - change >= `flip` rad: accepted only after `persist` consecutive ticks, meanwhile hold heading at half speed;
+      - otherwise accept.
+    update() returns (vx, vy, why_or_None)."""
+
+    def __init__(self, dead=0.12, flip=1.2, persist=5):
+        self.dead, self.flip, self.persist = dead, flip, persist
+        self.h = None
+        self.cnt = 0
+
+    def reset(self):
+        self.h, self.cnt = None, 0
+
+    def update(self, vx, vy):
+        sp = math.hypot(vx, vy)
+        if sp < 0.03:
+            self.cnt = 0
+            return vx, vy, None
+        new = math.atan2(vy, vx)
+        if self.h is None:
+            self.h = new
+            return vx, vy, None
+        diff = abs(wrap(new - self.h))
+        if diff < self.dead:
+            self.cnt = 0
+            return sp * math.cos(self.h), sp * math.sin(self.h), None
+        if diff >= self.flip:
+            self.cnt += 1
+            if self.cnt < self.persist:
+                s2 = 0.5 * sp
+                return (s2 * math.cos(self.h), s2 * math.sin(self.h),
+                        f'hysteresis: holding heading {math.degrees(self.h):.0f} deg, ignoring {math.degrees(new):.0f} deg '
+                        f'flip ({self.cnt}/{self.persist})')
+            self.cnt = 0
+            self.h = new
+            return vx, vy, f'hysteresis: accepted flip to {math.degrees(new):.0f} deg after {self.persist} ticks'
+        self.cnt = 0
+        self.h = new
+        return vx, vy, None
 
 
 def track_unicycle(vd, yaw, v_prev=0.0, w_prev=0.0, v_max=0.5, w_max=1.0, k_w=2.0,
-                   a_max=1.0, alpha_max=3.0, dt=0.1):
+                   a_max=1.0, alpha_max=3.0, dt=0.1, err_dead=0.05):
     """Holonomic velocity (vx, vy) in world frame -> diff-drive (v, w). Turn toward the desired heading,
     scale forward speed by cos(heading error) (zero beyond 90 deg: rotate in place), slew-limit both."""
     sp = math.hypot(vd[0], vd[1])
@@ -179,7 +299,7 @@ def track_unicycle(vd, yaw, v_prev=0.0, w_prev=0.0, v_max=0.5, w_max=1.0, k_w=2.
         v_t, w_t = 0.0, 0.0
     else:
         err = wrap(math.atan2(vd[1], vd[0]) - yaw)
-        w_t = max(-w_max, min(w_max, k_w * err))
+        w_t = 0.0 if abs(err) < err_dead else max(-w_max, min(w_max, k_w * err))   # no twitching on tiny error
         v_t = min(sp, v_max) * max(0.0, math.cos(err))
     v = v_prev + max(-a_max * dt, min(a_max * dt, v_t - v_prev))
     w = w_prev + max(-alpha_max * dt, min(alpha_max * dt, w_t - w_prev))
@@ -255,10 +375,16 @@ def main():
             self.goal_yaw = 0.0
             self.goal_xy_tol, self.goal_yaw_tol = 0.12, 0.12
             self.last_reason = 'startup'
+            self.hyst = HeadingHysteresis()
+            self.last_why = ''
+            self.neigh_goal = {}                  # name -> last point of that robot's own plan
+            self.last_info = None
             self.create_subscription(Path, g('plan_topic'), self.on_plan, 1)
             self.create_subscription(Odometry, g('odom_topic'), lambda m: self.on_odom(self.ns, m), 10)
             for n in self.neigh:
                 self.create_subscription(Odometry, f'/{n}/odom', lambda m, n=n: self.on_odom(n, m), 10)
+            for n in self.neigh:
+                self.create_subscription(Path, f'/{n}/plan', lambda m, n=n: self.on_nplan(n, m), 1)
             if self.use_scan:
                 self.create_subscription(LaserScan, g('scan_topic'), self.on_scan, qos_profile_sensor_data)
             self.pub = self.create_publisher(Twist, g('cmd_vel_topic'), 10)
@@ -277,15 +403,23 @@ def main():
             if len(msg.poses) < 2:
                 self.get_logger().warn('[decentral_nav] ignoring plan with <2 poses')
                 return
+            old_goal = None if self.plan is None else self.plan[-1].copy()
             self.plan = np.array([[p.pose.position.x, p.pose.position.y] for p in msg.poses])
             q = msg.poses[-1].pose.orientation
             self.goal_yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
             self.plan_frame = msg.header.frame_id or 'map'
+            if old_goal is not None and np.linalg.norm(old_goal - self.plan[-1]) > 0.5:
+                self.hyst.reset()
             first = self.plan_t is None
             self.plan_t = self.now()
             if first:
                 self.get_logger().info(f'[decentral_nav] first plan: {len(self.plan)} poses in {self.plan_frame}, '
                                        f'goal=({self.plan[-1][0]:.2f},{self.plan[-1][1]:.2f})')
+
+        def on_nplan(self, name, msg):
+            if msg.poses:
+                p = msg.poses[-1].pose.position
+                self.neigh_goal[name] = (p.x, p.y)
 
         def on_odom(self, name, msg):
             self.odom_twist[name] = (msg.twist.twist.linear.x, msg.twist.twist.angular.z)
@@ -354,8 +488,19 @@ def main():
                     names.append(n)
                     pos.append([p[0], p[1]])
                     vel.append(v)
+            # arrived = parked (speed < 0.05) within 0.5 m of the end of its own plan -> static obstacle, not a mover
+            arrived = []
+            for k, n in enumerate(names[1:], start=1):
+                g = self.neigh_goal.get(n)
+                if g is not None and math.hypot(*vel[k]) < 0.05 and math.hypot(pos[k][0] - g[0], pos[k][1] - g[1]) < 0.5:
+                    arrived.append(k)
             vx, vy, info = compute_velocity(self.ctrl, 0, np.array(pos), np.array(vel), self.plan,
-                                            self.scan_points(), self.rng, self.vmax, self.lookahead)
+                                            self.scan_points(), self.rng, self.vmax, self.lookahead, arrived)
+            vx, vy, hwhy = self.hyst.update(vx, vy)
+            why = hwhy or info['why']
+            if why.split(':')[0] != self.last_why.split(':')[0] or (hwhy and why != self.last_why):
+                self.get_logger().info(f'[decentral_nav] {self.ns}: why -> {why}')   # one line per decision change
+            self.last_why = why
             self.last_info = dict(info, n_neigh=len(names) - 1)
             gd = float(np.linalg.norm(self.plan[-1] - np.array(pos[0])))
             w_rot = goal_rotation(gd, me[2], self.goal_yaw, self.goal_xy_tol, self.goal_yaw_tol)
