@@ -54,6 +54,8 @@ class CloudInfo:
 
 
 HINTS = {
+    'CLOUD_STALE': 'the cloud stopped: check the lidar bridge and any adapter node (lidar_ring_time_adapter) between it and the estimator',
+    'IMU_STALE': 'the IMU stopped: check the IMU bridge and any relay node (imu_yaw_relay) the estimator reads through',
     'ODOM_NONE': 'no odometry: is the LIO node running, and is its topic/QoS (best-effort?) what you subscribed to?',
     'ODOM_RATE_LOW': 'odometry slower than the sensor: CPU starved or scans dropped; lower the voxel size or the cloud rate',
     'STAMP_BACKWARDS': 'odometry stamps go back in time: two publishers, or a sim-time / wall-time mix',
@@ -480,6 +482,8 @@ class LioDoctor:
                 f.append(Finding(lvl, kind, f'{len(ev)}x in {recent_s:.0f}s, {detail}'))
         if self.cloud_info is None:
             f.append(Finding('WARN', 'CLOUD_NONE', 'no PointCloud2 received'))
+        elif self.cloud_arrivals and now - self.cloud_arrivals[-1] > SILENT_S:
+            f.append(Finding('ERROR', 'CLOUD_STALE', f'no PointCloud2 for {now - self.cloud_arrivals[-1]:.1f}s (was {self.cloud_hz() or 0:.1f} Hz)'))
         else:
             f += [x for x in check_cloud_fields(self.cloud_info)]
             pos = self.stamp_pos()
@@ -490,6 +494,8 @@ class LioDoctor:
         ihz = self.imu_hz()
         if ihz is None:
             f.append(Finding('WARN', 'IMU_NONE', 'no IMU data received'))
+        elif self.imu_arrivals and now - self.imu_arrivals[-1] > SILENT_S:
+            f.append(Finding('ERROR', 'IMU_STALE', f'no IMU for {now - self.imu_arrivals[-1]:.1f}s (was {ihz:.0f} Hz)'))
         else:
             chz = self.cloud_hz()
             if ihz < IMU_HZ_MIN or (chz and ihz < IMU_RATIO_MIN * chz):
@@ -529,3 +535,15 @@ class LioDoctor:
         d = self.drift()
         return {'score': self.score(now), 'odom_hz': self.odom_hz(), 'cloud_hz': self.cloud_hz(), 'imu_hz': self.imu_hz(),
                 'stamp_position': self.stamp_pos(), 'drift_end_err_m': None if d is None else round(d[1], 3)}
+
+
+def health_overlay(findings, summary):
+    """(text, (r, g, b)) for an RViz text marker: score, rates, then one line per ERROR/WARN finding. Colour by worst level."""
+    bad = [x for x in findings if x.level in ('ERROR', 'WARN')]
+    lines = [f"LIO health {summary['score']}/100"]
+    rates = [f'{n} {summary[k]:.1f} Hz' for n, k in (('odom', 'odom_hz'), ('cloud', 'cloud_hz'), ('imu', 'imu_hz')) if summary.get(k)]
+    if rates:
+        lines.append('  '.join(rates))
+    lines += [f'{x.level} {x.code}' for x in bad[:6]] + ([f'+{len(bad) - 6} more'] if len(bad) > 6 else [])
+    color = (1.0, 0.2, 0.2) if any(x.level == 'ERROR' for x in bad) else (1.0, 0.8, 0.1) if bad else (0.3, 1.0, 0.4)
+    return '\n'.join(lines), color

@@ -7,7 +7,8 @@ import sys
 import time
 
 from . import __version__
-from .core import ESTIMATORS, HINTS, CloudInfo, Finding, LioDoctor, check_cloud_fields, check_imu_yaw, field_range, imu_yaw_offset, readiness, time_field
+from .core import (ESTIMATORS, HINTS, CloudInfo, Finding, LioDoctor, check_cloud_fields, check_imu_yaw, field_range, health_overlay,
+                   imu_yaw_offset, readiness, time_field)
 
 
 def fmt(findings, hints=False):
@@ -90,6 +91,8 @@ def main(argv=None):
     p.add_argument('--tf-topics', default='/tf,/tf_static', help='comma-separated TF topics to read (a LIO stack with a private tree: /lio_tf,/lio_tf_static)')
     p.add_argument('--drift-window', type=float, default=30.0, help='seconds of history for the drift check')
     p.add_argument('--interval', type=float, default=5.0, help='report every N seconds')
+    p.add_argument('--health-topic', default='', help='also publish an RViz text Marker with the score and findings (e.g. /lio_health)')
+    p.add_argument('--health-frame', default='base_link', help='frame the health marker floats above (default base_link)')
     p.add_argument('--preflight', action='store_true', help='collect --duration s, print which of KISS-ICP/RKO-LIO/LIO-SAM can run, exit')
     p.add_argument('--duration', type=float, default=8.0, help='preflight collection time')
     p.add_argument('--once', action='store_true', help='report once after --duration and exit (exit 1 on ERROR)')
@@ -104,6 +107,10 @@ def main(argv=None):
                     frames=tuple(x for x in a.frames.split(',') if x), drift_window_s=a.drift_window)
     sensor_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
     t0 = time.time()
+    health_pub = None
+    if a.health_topic:
+        from visualization_msgs.msg import Marker
+        health_pub = node.create_publisher(Marker, a.health_topic, 1)
 
     def stamp_s(m):
         return m.header.stamp.sec + m.header.stamp.nanosec * 1e-9
@@ -151,6 +158,13 @@ def main(argv=None):
             print(fmt_readiness(res))
             return 0 if any(v[0] != 'BLOCKED' for v in res.values()) else 1
         findings = doc.diagnose(now)
+        if health_pub is not None:
+            text, (r, g, b) = health_overlay(findings, doc.summary(now))
+            mk = Marker()
+            mk.header.frame_id, mk.ns, mk.id, mk.type, mk.action = a.health_frame, 'lio_health', 0, Marker.TEXT_VIEW_FACING, Marker.ADD
+            mk.pose.position.z, mk.pose.orientation.w, mk.scale.z = 1.2, 1.0, 0.25
+            mk.color.r, mk.color.g, mk.color.b, mk.color.a, mk.text = r, g, b, 1.0, text
+            health_pub.publish(mk)
         print(to_json(findings, doc.summary(now), now) if a.json else f'--- lio_doctor score {doc.score(now)}/100\n' + fmt(findings, a.hints), flush=True)
         return 1 if any(x.level == 'ERROR' for x in findings) else 0
 

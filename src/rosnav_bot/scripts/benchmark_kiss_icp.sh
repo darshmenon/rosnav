@@ -3,7 +3,8 @@
 # Needs: kiss-icp built in the workspace (src/kiss-icp), lidar_type:=3d (publishes /points).
 # Drives a slow circle for DUR s; localization_accuracy_bench.py rigidly aligns each estimator at
 # the first sample and reports RMSE / final drift (% of path) per estimator, incl. kiss_icp.
-# Usage: scripts/benchmark_kiss_icp.sh [world]      Env: ROS_DOMAIN_ID (default 206), OUT, DUR
+# Usage: scripts/benchmark_kiss_icp.sh [world]      Env: ROS_DOMAIN_ID (default 206), OUT, DUR,
+#   PATTERN=circle (slow, default) | weave (0.5 m/s, +-0.8 rad/s flipping every 4 s: exercises the IMU)
 set -u
 source "$(dirname "${BASH_SOURCE[0]}")/bench_load_guard.sh"; bench_load_guard
 WORLD=${1:-cafe}
@@ -42,8 +43,18 @@ setsid ros2 run ros_gz_bridge parameter_bridge \
     "/model/$MODEL/odometry_with_covariance@nav_msgs/msg/Odometry[gz.msgs.OdometryWithCovariance" \
     --ros-args -r /model/$MODEL/odometry_with_covariance:=/gt_odom > "$OUT/gt.log" 2>&1 < /dev/null & PIDS+=($!)
 sleep 10
-setsid timeout $((DUR+20)) ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist \
-    "{linear: {x: 0.2}, angular: {z: 0.1}}" > /dev/null 2>&1 < /dev/null & PIDS+=($!)
+PATTERN=${PATTERN:-circle}
+log "drive pattern: $PATTERN"
+if [ "$PATTERN" = weave ]; then
+  ( end=$((SECONDS+DUR+20)); w=0.8
+    while [ $SECONDS -lt $end ]; do
+      timeout 4 ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.5}, angular: {z: $w}}" > /dev/null 2>&1
+      w=$(python3 -c "print(-($w))")
+    done ) < /dev/null & PIDS+=($!)
+else
+  setsid timeout $((DUR+20)) ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist \
+      "{linear: {x: 0.2}, angular: {z: 0.1}}" > /dev/null 2>&1 < /dev/null & PIDS+=($!)
+fi
 log "measuring for ${DUR}s"
 ros2 run rosnav_bot localization_accuracy_bench.py --ros-args -p use_sim_time:=true \
     -p duration:=${DUR}.0 -p model:=$MODEL -p out:="$OUT/result.json" > "$OUT/bench.out" 2>&1

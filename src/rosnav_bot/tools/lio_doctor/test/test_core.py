@@ -91,7 +91,7 @@ def test_healthy_odom():
     d = LioDoctor(expected_hz=10.0)
     feed_odom(d)
     d.cloud(good_info(), 0.0, (0.0, 0.1))
-    for k in range(5):
+    for k in range(60):
         d.cloud(good_info(), 100.0 + k * 0.1, (0.0, 0.1))
     for k in range(600):
         d.imu(100 + k * 0.01, 100 + k * 0.01, 0.0, True)
@@ -257,3 +257,33 @@ def test_live_doctor_yaw():
         d.ref_odom(i * 0.01, 0, 0, _q(0))
     assert any(x.code == 'IMU_YAW_OFFSET' for x in d.diagnose(0.5))
     assert abs(d.imu_yaw_deg() + 90) < 1e-6
+
+
+def test_stalled_cloud_and_imu_are_flagged():
+    d = LioDoctor(expected_hz=10.0)
+    for k in range(40):
+        t = 100.0 + k * 0.1
+        d.odom(t, 0, 0, 0, t)
+        d.cloud(good_info(), t)
+        d.imu(t, t)
+    assert not {'CLOUD_STALE', 'IMU_STALE'} & codes(d.diagnose(103.95))
+    c = codes(d.diagnose(107.0))           # everything stopped ~3 s ago
+    assert {'CLOUD_STALE', 'IMU_STALE'} <= c
+    d2 = LioDoctor()
+    for k in range(40):
+        t = 100.0 + k * 0.1
+        d2.odom(t, 0, 0, 0, t)
+        d2.cloud(good_info(), t)
+        d2.imu(t, t)
+    d2.cloud(good_info(), 107.0)           # cloud back, IMU still dead
+    c2 = codes(d2.diagnose(107.1))
+    assert 'IMU_STALE' in c2 and 'CLOUD_STALE' not in c2
+
+
+def test_health_overlay_text_and_colour():
+    from lio_doctor.core import Finding, health_overlay
+    summ = {'score': 60, 'odom_hz': 9.8, 'cloud_hz': 10.0, 'imu_hz': None}
+    t, col = health_overlay([Finding('ERROR', 'CLOUD_STALE', 'x'), Finding('WARN', 'IMU_RATE_LOW', 'y')], summ)
+    assert t.splitlines()[0] == 'LIO health 60/100' and 'ERROR CLOUD_STALE' in t and 'imu' not in t and col[0] == 1.0 and col[1] < 0.5
+    t, col = health_overlay([Finding('OK', 'HEALTHY', 'z')], dict(summ, score=100))
+    assert 'HEALTHY' not in t and col[1] == 1.0

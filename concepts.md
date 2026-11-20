@@ -2925,6 +2925,22 @@ Live headless cafe run (domain 93), `lidar_type:=3d` + `lio_sam_sim.launch.py`, 
 - **Cafe remap.** Default spawn (0, -2, yaw -1.57), `explore:=true`, headless: 96% explored, 260 x 190 cells (13 x 9.5 m), closed walls, exploration reported complete. Installed as `maps/map_cafe.pgm/.yaml` (+ `map_cafe.png`); the earlier uncommitted map was the same size transposed (190 x 260), i.e. built from another spawn orientation. With it `nav2_doctor` is HEALTHY (no `AMCL_UNCERTAIN`) and `map -> odom` exists.
 - **Not bugs:** the `/imu_rot` and `/points_traversability` "incompatible QoS" warnings came from my own `ros2 topic` commands (reliable subscribers); RViz and LIO-SAM are best-effort. `lio_doctor` `TF_MISSING lio_base/laser_frame` was the missing `/lio_tf` read (above).
 
+### 44d. Weave bench after the relay fix, ray-cast maps, doctor fault checks (2026-11-20)
+
+`PATTERN=weave DUR=150 scripts/benchmark_kiss_icp.sh cafe` (0.5 m/s, +-0.8 rad/s flipping every 4 s, live, headless, machine load 10-14). Result `images/lio_bench/weave_2026-11-20.json`, chart `scripts/gen_lio_bench_chart.py`:
+
+| estimator | RMSE (m) | final drift (% path) | yaw RMSE (deg) |
+|---|---|---|---|
+| KISS-ICP | **0.25** | 2.1 | 5.7 |
+| RKO-LIO | 0.29 | 2.9 | 6.0 |
+| LIO-SAM | 8.2 | 85 | 46 |
+| EKF / wheel odom | 8.5 / 9.0 | 128 / 103 | 0.6 / 70 |
+
+- Only 13.8 m of true path in 150 s (the robot spent most of the run pressed against walls), so wheel odom and the EKF drift against a robot that is not moving. That is a flaw of this driving pattern, not a result about those estimators. Compare the lidar estimators with each other.
+- LIO-SAM is better than the earlier weave (468 m, repeated `Large velocity, reset`: zero resets now, the relay calibrated to +0.0 deg), but it still diverges. The cloud arrived at 6.5 Hz under load, so the cause is not settled. KISS-ICP stays the default.
+- `scripts/world_to_map.py world --spawn X Y YAW --out prefix` builds an exact map from the world's box/cylinder collisions in the robot start frame (flood fill from the spawn, leak check; mesh collisions skipped with a warning). `maps/map_cafe_raycast.*` (14.4 x 10.6 m) shows the explorer-built `map_cafe.*` has ~200 spurious occupied cells (15%, a phantom diagonal wall near y = -1).
+- `lio_doctor` gained `CLOUD_STALE` / `IMU_STALE`, `--health-topic /lio_health` (RViz text marker, started by `lio_sam_sim.launch.py`) and `scenarios/lio_faults.yaml` (3/3 faults detected in 1.5-2.2 s with `nav2_fault_inject --check`).
+
 ## 45. Distorted SLAM map: cause and fix (written 2026-11-08 from history)
 
 Reconstructed from `EXPLORATION_TESTING_NOTES.md` and commits `cfd6b49`, `7cd34d8`, `63abfac`; the drift mechanism was never fully root-caused, so treat the cause as the best-supported hypothesis.

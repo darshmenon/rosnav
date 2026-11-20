@@ -46,3 +46,7 @@ Not yet tried on a live stack: the node and CLI are covered by unit tests on syn
 ```bash
 colcon build --packages-select lio_doctor && python3 -m pytest test   # tests need no ROS
 ```
+
+## Fault-injection check
+
+`scenarios/lio_faults.yaml` pauses each stage of the sim LIO-SAM chain with `nav2_fault_inject` and asserts the doctor notices (and recovers). Command is in the file header.

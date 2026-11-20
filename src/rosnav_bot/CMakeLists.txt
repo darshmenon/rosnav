@@ -151,6 +151,7 @@ install(
     scripts/lidar_ring_time_adapter.py
     scripts/resource_bench.py
     scripts/imu_yaw_relay.py
+    scripts/world_to_map.py
     scripts/mapf_compare.py
   DESTINATION lib/${PROJECT_NAME}
 )

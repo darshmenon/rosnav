@@ -10,7 +10,7 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import LogInfo
+from launch.actions import ExecuteProcess, LogInfo
 from launch_ros.actions import Node
 
 
@@ -33,4 +33,13 @@ def generate_launch_description():
                 'lio_sam_featureExtraction', 'lio_sam_mapOptimization'):
         nodes.append(Node(package='lio_sam', executable=exe, name=exe, output='screen',
                           parameters=[cfg, sim], remappings=remap))
+    # live health text for RViz (lio_doctor on PATH or PYTHONPATH); harmless no-op if it is not installed
+    nodes.append(ExecuteProcess(
+        cmd=['python3', '-c',
+             'import sys\ntry:\n from lio_doctor.doctor import main\nexcept ImportError:\n print("[lio_sam_sim] lio_doctor not importable, no /lio_health")\n sys.exit(0)\n'
+             'sys.exit(main(["--imu","/imu_rot","--cloud","/points_lio","--ref-odom","/odom","--interval","2","--health-topic","/lio_health"]))'],
+        name='lio_health', output='screen',
+        # source-tree fallback: with --symlink-install this file resolves into src/, next to tools/lio_doctor
+        additional_env={'PYTHONPATH': os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'tools', 'lio_doctor')
+                        + os.pathsep + os.environ.get('PYTHONPATH', '')}))
     return LaunchDescription(nodes)

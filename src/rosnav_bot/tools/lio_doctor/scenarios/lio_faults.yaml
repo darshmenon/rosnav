@@ -1,0 +1,7 @@
+# Pause each stage of the sim LIO-SAM chain and check lio_doctor notices (lio_sam_sim.launch.py running).
+#   nav2_fault_inject --domain 93 run scenarios/lio_faults.yaml --check \
+#     --doctor-cmd "python3 -m lio_doctor.doctor --imu /imu_rot --cloud /points_lio --ref-odom /odom --interval 1 --json"
+faults:
+  - {at: 5,  node: lidar_ring_time_adapter, for: 6, expect: {detect: [CLOUD_STALE], within: 8, clear_within: 15}}
+  - {at: 25, node: imu_yaw_relay,           for: 6, expect: {detect: [IMU_STALE],   within: 8, clear_within: 15}}
+  - {at: 45, node: lio_sam_mapOptimization, for: 6, expect: {detect: [ODOM_NONE],   within: 8, clear_within: 20}}
