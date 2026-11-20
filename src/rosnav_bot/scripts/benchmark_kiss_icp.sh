@@ -4,7 +4,8 @@
 # Drives a slow circle for DUR s; localization_accuracy_bench.py rigidly aligns each estimator at
 # the first sample and reports RMSE / final drift (% of path) per estimator, incl. kiss_icp.
 # Usage: scripts/benchmark_kiss_icp.sh [world]      Env: ROS_DOMAIN_ID (default 206), OUT, DUR,
-#   PATTERN=circle (slow, default) | weave (0.5 m/s, +-0.8 rad/s flipping every 4 s: exercises the IMU)
+#   PATTERN=circle (slow, default) | weave (0.5 m/s, +-0.8 rad/s flipping every 4 s: exercises the IMU, can pin the robot to walls)
+#            | fig8 (0.4 m/s, +-0.4 rad/s flipping every half circle: stays in the room, keeps the IMU busy)
 set -u
 source "$(dirname "${BASH_SOURCE[0]}")/bench_load_guard.sh"; bench_load_guard
 WORLD=${1:-cafe}
@@ -45,12 +46,10 @@ setsid ros2 run ros_gz_bridge parameter_bridge \
 sleep 10
 PATTERN=${PATTERN:-circle}
 log "drive pattern: $PATTERN"
-if [ "$PATTERN" = weave ]; then
-  ( end=$((SECONDS+DUR+20)); w=0.8
-    while [ $SECONDS -lt $end ]; do
-      timeout 4 ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.5}, angular: {z: $w}}" > /dev/null 2>&1
-      w=$(python3 -c "print(-($w))")
-    done ) < /dev/null & PIDS+=($!)
+if [ "$PATTERN" = fig8 ] || [ "$PATTERN" = weave ]; then
+  # driven on SIM time: a wall-clock `timeout N ros2 topic pub` flips direction too fast when the sim runs below real time
+  setsid python3 "$REPO/src/rosnav_bot/scripts/drive_pattern.py" --ros-args -p use_sim_time:=true -p pattern:=$PATTERN \
+      -p duration:=$((DUR+10)).0 > "$OUT/drive.log" 2>&1 < /dev/null & PIDS+=($!)
 else
   setsid timeout $((DUR+20)) ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist \
       "{linear: {x: 0.2}, angular: {z: 0.1}}" > /dev/null 2>&1 < /dev/null & PIDS+=($!)
