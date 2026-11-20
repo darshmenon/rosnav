@@ -10,7 +10,9 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import ExecuteProcess, LogInfo
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, LogInfo
+from launch.substitutions import LaunchConfiguration
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.actions import Node
 
 
@@ -20,8 +22,10 @@ def generate_launch_description():
     sim = {'use_sim_time': True}
     remap = [('/tf', '/lio_tf'), ('/tf_static', '/lio_tf_static')]
     nodes = [LogInfo(msg='[lio_sam_sim] adapter + LIO-SAM (tf -> /lio_tf, odom -> /lio_sam/mapping/odometry)'),
+             DeclareLaunchArgument('stamp_shift_s', default_value='-0.1',
+                                   description='added to the cloud stamp (the sim stamps at sweep END, LIO-SAM wants START)'),
              Node(package='rosnav_bot', executable='lidar_ring_time_adapter.py', name='lidar_ring_time_adapter',
-                  output='screen', parameters=[sim]),
+                  output='screen', parameters=[sim, {'stamp_shift_s': ParameterValue(LaunchConfiguration('stamp_shift_s'), value_type=float)}]),
              # IMU yaw vs odom is measured at startup (auto_cal: -90 deg in the old cafe bag, 0 deg live) and corrected on /imu_rot
              Node(package='rosnav_bot', executable='imu_yaw_relay.py', name='imu_yaw_relay', output='screen',
                   parameters=[sim, {'yaw_deg': 0.0, 'auto_cal': True, 'ref_odom': '/odom'}])]
