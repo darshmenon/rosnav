@@ -7,7 +7,7 @@ import sys
 import time
 
 from . import __version__
-from .core import ESTIMATORS, HINTS, CloudInfo, Finding, LioDoctor, check_cloud_fields, field_range, readiness, time_field
+from .core import ESTIMATORS, HINTS, CloudInfo, Finding, LioDoctor, check_cloud_fields, check_imu_yaw, field_range, imu_yaw_offset, readiness, time_field
 
 
 def fmt(findings, hints=False):
@@ -47,7 +47,14 @@ def check_cloud_main(path, as_json=False):
         spec = json.load(fh)
     info = CloudInfo.from_dict(spec)
     findings = check_cloud_fields(info) or [Finding('OK', 'CLOUD_OK', 'cloud layout is valid')]
-    res = readiness(info, spec.get('stamp_position', 'unknown'), spec.get('imu_hz'), spec.get('imu_orientation'))
+    yaw_off = spec.get('imu_yaw_offset_deg')
+    if 'imu_yaw' in spec:    # {"imu": [[stamp, [x, y, z, w]], ...], "odom": [...]}: measure the offset from samples
+        iy = spec['imu_yaw']
+        imu, odom = [(t, tuple(q)) for t, q in iy.get('imu', [])], [(t, tuple(q)) for t, q in iy.get('odom', [])]
+        findings = [x for x in findings if x.code != 'CLOUD_OK'] + check_imu_yaw(imu, odom, iy.get('max_gap', 0.05))
+        r = imu_yaw_offset(imu, odom, iy.get('max_gap', 0.05))
+        yaw_off = r[0] if r and r[2] >= 10 else yaw_off
+    res = readiness(info, spec.get('stamp_position', 'unknown'), spec.get('imu_hz'), spec.get('imu_orientation'), yaw_off)
     if as_json:
         print(json.dumps({'findings': [x.__dict__ for x in findings], 'readiness': {k: {'verdict': v[0], 'reasons': v[1]} for k, v in res.items()}}))
     else:
@@ -67,7 +74,7 @@ def main(argv=None):
     import rclpy
     from nav_msgs.msg import Odometry
     from rclpy.node import Node
-    from rclpy.qos import QoSProfile, ReliabilityPolicy
+    from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
     from sensor_msgs.msg import Imu, PointCloud2
     from tf2_msgs.msg import TFMessage
 
@@ -80,6 +87,7 @@ def main(argv=None):
     p.add_argument('--v-max', type=float, default=2.0, help='max real robot speed, m/s (pose-jump limit)')
     p.add_argument('--w-max', type=float, default=3.0, help='max real turn rate, rad/s')
     p.add_argument('--frames', default='', help='comma-separated TF frames that must exist (odom,base_link,laser_frame,imu_link)')
+    p.add_argument('--tf-topics', default='/tf,/tf_static', help='comma-separated TF topics to read (a LIO stack with a private tree: /lio_tf,/lio_tf_static)')
     p.add_argument('--drift-window', type=float, default=30.0, help='seconds of history for the drift check')
     p.add_argument('--interval', type=float, default=5.0, help='report every N seconds')
     p.add_argument('--preflight', action='store_true', help='collect --duration s, print which of KISS-ICP/RKO-LIO/LIO-SAM can run, exit')
@@ -105,7 +113,8 @@ def main(argv=None):
         doc.odom(stamp_s(m), pose.position.x, pose.position.y, yaw_of(pose.orientation), time.time())
 
     def on_ref(m):
-        doc.ref_odom(stamp_s(m), m.pose.pose.position.x, m.pose.pose.position.y)
+        q = m.pose.pose.orientation
+        doc.ref_odom(stamp_s(m), m.pose.pose.position.x, m.pose.pose.position.y, (q.x, q.y, q.z, q.w))
 
     def on_cloud(m):
         info = CloudInfo(fields=[(f.name, f.offset, f.datatype, f.count) for f in m.fields], point_step=m.point_step, width=m.width,
@@ -116,7 +125,8 @@ def main(argv=None):
 
     def on_imu(m):
         orient = not (m.orientation_covariance[0] == -1.0)
-        doc.imu(stamp_s(m), time.time(), m.angular_velocity.z, orient)
+        q = m.orientation
+        doc.imu(stamp_s(m), time.time(), m.angular_velocity.z, orient, (q.x, q.y, q.z, q.w))
 
     def on_tf(m):
         doc.tf([t.child_frame_id.lstrip('/') for t in m.transforms] + [t.header.frame_id.lstrip('/') for t in m.transforms])
@@ -125,8 +135,10 @@ def main(argv=None):
         node.create_subscription(typ, topic, cb, sensor_qos)
     if a.ref_odom:
         node.create_subscription(Odometry, a.ref_odom, on_ref, sensor_qos)
-    node.create_subscription(TFMessage, '/tf', on_tf, QoSProfile(depth=100))
-    node.create_subscription(TFMessage, '/tf_static', on_tf, QoSProfile(depth=100, durability=2))
+    for tf_topic in (x.strip() for x in a.tf_topics.split(',') if x.strip()):
+        # *_static is latched (TRANSIENT_LOCAL): a VOLATILE subscriber never sees transforms published before it started
+        durability = DurabilityPolicy.TRANSIENT_LOCAL if tf_topic.endswith('static') else DurabilityPolicy.VOLATILE
+        node.create_subscription(TFMessage, tf_topic, on_tf, QoSProfile(depth=100, durability=durability))
 
     def report():
         now = time.time()
@@ -135,7 +147,7 @@ def main(argv=None):
                 print(fmt([Finding('ERROR', 'CLOUD_NONE', f'no PointCloud2 on {a.cloud}')], a.hints))
                 return 1
             print(fmt(check_cloud_fields(doc.cloud_info), a.hints))
-            res = readiness(doc.cloud_info, doc.stamp_pos(), doc.imu_hz(), doc.imu_has_orientation)
+            res = readiness(doc.cloud_info, doc.stamp_pos(), doc.imu_hz(), doc.imu_has_orientation, doc.imu_yaw_deg())
             print(fmt_readiness(res))
             return 0 if any(v[0] != 'BLOCKED' for v in res.values()) else 1
         findings = doc.diagnose(now)

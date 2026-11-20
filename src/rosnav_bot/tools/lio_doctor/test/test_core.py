@@ -184,3 +184,76 @@ def test_drift_high_in_diagnose():
         t = 100.0 + k / 10.0
         d.ref_odom(t, 0.8 * k / 10.0, 0.0)
     assert 'DRIFT_HIGH' in codes(d.diagnose(120.0))
+
+
+# ---- IMU heading vs odometry ----
+from lio_doctor.core import check_imu_yaw, imu_yaw_offset  # noqa: E402
+
+
+def _q(yaw_deg):
+    h = math.radians(yaw_deg) / 2
+    return (0.0, 0.0, math.sin(h), math.cos(h))
+
+
+def _series(offset_deg, n=50, noise=0.0, base=lambda i: 3.0 * i, dt=0.01, gap=0.0):
+    odom = [(i * dt, _q(base(i))) for i in range(n)]
+    imu = [(i * dt + gap, _q(base(i) + offset_deg + (noise if i % 2 else -noise))) for i in range(n)]
+    return imu, odom
+
+
+def test_yaw_offsets_by_size():
+    for off, code in ((-90, 'IMU_YAW_OFFSET'), (0, 'IMU_YAW_OK'), (4, 'IMU_YAW_OK'), (6, 'IMU_YAW_OFFSET')):
+        f = check_imu_yaw(*_series(off))
+        assert codes(f) == {code}, off
+    m, s, n = imu_yaw_offset(*_series(-90))
+    assert abs(m + 90) < 1e-6 and s < 1e-3 and n == 50
+    msg = check_imu_yaw(*_series(-90))[0]
+    assert msg.level == 'ERROR' and '-90.0' in msg.msg
+
+
+def test_yaw_offset_message_names_the_relay_fix():
+    msg = check_imu_yaw(*_series(-90))[0].msg
+    assert 'yaw_deg:=+90.0' in msg
+    assert 'yaw_deg:=-90.0' in check_imu_yaw(*_series(90))[0].msg
+
+
+def test_yaw_noisy():
+    f = check_imu_yaw(*_series(0, n=200, noise=15))
+    assert f[0].level == 'WARN' and f[0].code == 'IMU_YAW_NOISY'
+
+
+def test_yaw_wraparound():
+    imu, odom = _series(0, base=lambda i: 175 + 0.2 * i)   # crosses +-180
+    assert codes(check_imu_yaw(imu, odom)) == {'IMU_YAW_OK'}
+    imu, odom = _series(8, base=lambda i: 175 + 0.2 * i)
+    m, s, _ = imu_yaw_offset(imu, odom)
+    assert abs(m - 8) < 1e-6 and s < 1e-3
+    imu, odom = _series(-175, base=lambda i: 170)           # +-180 straddle of the difference itself
+    assert abs(abs(imu_yaw_offset(imu, odom)[0]) - 175) < 1e-6
+
+
+def test_yaw_too_few_or_unmatched():
+    assert codes(check_imu_yaw(*_series(-90, n=9))) == {'IMU_YAW_SKIPPED'}
+    assert codes(check_imu_yaw([], _series(0)[1])) == {'IMU_YAW_SKIPPED'}
+    assert codes(check_imu_yaw(*_series(-90, gap=2.0))) == {'IMU_YAW_SKIPPED'}   # beyond the 50 ms match gap
+
+
+def test_yaw_readiness_effect():
+    r = readiness(good_info(), 'start', 200, True, -90.0)
+    assert r['LIO-SAM'][0] == 'DEGRADED' and 'IMU_YAW_OFFSET' in r['LIO-SAM'][1][0]
+    assert r['KISS-ICP'][0] == 'READY'
+    assert readiness(good_info(), 'start', 200, True, 3.0)['LIO-SAM'][0] == 'READY'
+    assert readiness(good_info(), 'start', 200, True)['LIO-SAM'][0] == 'READY'
+
+
+def test_live_doctor_yaw():
+    d = LioDoctor()
+    for i in range(50):
+        t = i * 0.01
+        d.odom(t, 0, 0, 0.0, t)
+        d.imu(t, t, 0.0, True, _q(-90))
+    assert any(x.code == 'IMU_YAW_SKIPPED' for x in d.diagnose(0.5))   # no reference odom: INFO skip
+    for i in range(50):
+        d.ref_odom(i * 0.01, 0, 0, _q(0))
+    assert any(x.code == 'IMU_YAW_OFFSET' for x in d.diagnose(0.5))
+    assert abs(d.imu_yaw_deg() + 90) < 1e-6

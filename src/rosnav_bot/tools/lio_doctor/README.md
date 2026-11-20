@@ -6,7 +6,7 @@ Is my lidar(-inertial) odometry healthy? Attach to a running KISS-ICP / RKO-LIO 
 lio_doctor --odom /lio_sam/mapping/odometry --cloud /points_lio --imu /imu --ref-odom /gt_odom \
            --frames odom,lio_base,laser_frame --expected-hz 7 --hints
 lio_doctor --preflight --cloud /points --imu /imu        # which of KISS-ICP / RKO-LIO / LIO-SAM can run?
-lio_doctor --check-cloud cloud.json                      # offline, no ROS: validate a cloud layout
+lio_doctor --check-cloud cloud.json                      # offline, no ROS: validate a cloud layout (optional `imu_yaw: {imu, odom}` quaternion samples or `imu_yaw_offset_deg` for the heading check)
 ```
 
 ## Checks
@@ -19,6 +19,7 @@ lio_doctor --check-cloud cloud.json                      # offline, no ROS: vali
 | `CLOUD_*` | PointCloud2 layout: x/y/z f32, field past `point_step`, unaligned offset, overlap, `point_step` not 4-aligned, data length != `row_step*height`, `ring` not u16, per-point `time` not f32 |
 | `STAMP_AT_END` | per-point times all negative = header stamp is the sweep end (estimators expect the start) |
 | `IMU_NONE`, `IMU_RATE_LOW`, `IMU_TIME_OFFSET` | IMU missing / under 50 Hz or 5x the lidar rate; gyro-z vs odometry yaw-rate cross-correlation gives the clock offset |
+| `IMU_YAW_OFFSET`, `IMU_YAW_NOISY`, `IMU_YAW_SKIPPED` | circular mean/std of IMU yaw minus `--ref-odom` yaw (nearest stamp, within 50 ms): ERROR if \|mean\| > 5 deg (fix: relay `/imu` with the orientation rotated by the opposite yaw, `scripts/imu_yaw_relay.py` `yaw_deg`; `extrinsicRPY` is not the fix, it also rotates acc/gyro), WARN if std > 5 deg, INFO skip if no orientation, no `--ref-odom`, or under 10 matches. Makes LIO-SAM DEGRADED in `--preflight`; KISS-ICP ignores IMU orientation |
 | `TF_MISSING` | a `--frames` entry never appears in `/tf` or `/tf_static` |
 | `DRIFT_HIGH` | rigid-aligned end error over a `--drift-window` against `--ref-odom` above 5 % of the path |
 

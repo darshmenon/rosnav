@@ -16,6 +16,10 @@ OFFSET_CORR_MIN = 0.5
 DRIFT_PCT = 5.0             # end error / path length over a window
 DRIFT_MIN_PATH_M = 2.0
 STAMP_END_TOL = 0.02
+YAW_MAX_GAP_S = 0.05        # max stamp gap when matching an IMU sample to an odometry sample
+YAW_OFFSET_DEG = 5.0        # |mean(imu_yaw - odom_yaw)| above this = IMU_YAW_OFFSET
+YAW_NOISE_DEG = 5.0         # std of the same above this = IMU_YAW_NOISY
+YAW_MIN_MATCHES = 10
 
 # sensor_msgs/PointField datatype -> (size, struct code)
 DTYPES = {1: (1, 'b'), 2: (1, 'B'), 3: (2, 'h'), 4: (2, 'H'), 5: (4, 'i'), 6: (4, 'I'), 7: (4, 'f'), 8: (8, 'd')}
@@ -72,6 +76,9 @@ HINTS = {
     'STAMP_UNKNOWN': 'cannot tell whether the stamp is sweep start or end: publish per-point time so it can be checked',
     'IMU_NONE': 'no IMU data: LIO needs one; check the topic and that the bridge/driver publishes it',
     'IMU_RATE_LOW': 'IMU is too slow relative to the lidar: raise the IMU rate (200 Hz+ typical)',
+    'IMU_YAW_OFFSET': 'IMU orientation yaw differs from odometry by a constant: relay /imu with the orientation rotated by the opposite yaw '
+                      '(scripts/imu_yaw_relay.py, param yaw_deg); acc/gyro stay untouched. extrinsicRPY is NOT the fix, it also rotates acc/gyro',
+    'IMU_YAW_NOISY': 'IMU yaw vs odometry yaw scatters: noisy or drifting magnetometer/orientation filter; LIO-SAM deskew and initial guess suffer',
     'IMU_TIME_OFFSET': 'IMU and odometry clocks are offset: set the estimator time-offset parameter or fix the driver stamps',
     'TF_MISSING': 'required frame not in TF: check static transforms and frame_id names (and namespace prefix)',
     'DRIFT_HIGH': 'drift against the reference is high: check extrinsics, deskew, IMU noise settings, and the stamp offset',
@@ -156,11 +163,61 @@ def stamp_position(point_time_range, period):
     return 'unknown'
 
 
+# ---- IMU heading vs odometry ----
+def quat_yaw(x, y, z, w):
+    return math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+
+
+def imu_yaw_offset(imu, odom, max_gap=YAW_MAX_GAP_S):
+    """imu, odom: lists of (stamp, (x, y, z, w)). Nearest-stamp match (within max_gap), then the circular mean and
+    circular std (deg) of imu_yaw - odom_yaw. Returns (mean_deg, std_deg, n_matches) or None if nothing matched."""
+    if not imu or not odom:
+        return None
+    od = sorted(odom, key=lambda p: p[0])
+    ts = [p[0] for p in od]
+    diffs = []
+    for t, q in imu:
+        lo, hi = 0, len(ts)
+        while lo < hi:
+            m = (lo + hi) // 2
+            if ts[m] < t:
+                lo = m + 1
+            else:
+                hi = m
+        cand = [i for i in (lo - 1, lo) if 0 <= i < len(ts)]
+        i = min(cand, key=lambda k: abs(ts[k] - t))
+        if abs(ts[i] - t) <= max_gap:
+            diffs.append(_wrap(quat_yaw(*q) - quat_yaw(*od[i][1])))
+    if not diffs:
+        return None
+    c = sum(math.cos(d) for d in diffs) / len(diffs)
+    s = sum(math.sin(d) for d in diffs) / len(diffs)
+    r = min(1.0, math.hypot(c, s))
+    std = math.sqrt(-2.0 * math.log(r)) if r > 1e-12 else math.pi
+    return math.degrees(math.atan2(s, c)), math.degrees(std), len(diffs)
+
+
+def check_imu_yaw(imu, odom, max_gap=YAW_MAX_GAP_S):
+    """Findings for the IMU-orientation-vs-odometry heading check. imu=None means no orientation in the IMU data."""
+    r = imu_yaw_offset(imu, odom, max_gap) if imu and odom else None
+    if r is None or r[2] < YAW_MIN_MATCHES:
+        n = 0 if r is None else r[2]
+        why = 'no IMU orientation' if not imu else 'no reference orientation' if not odom else f'only {n} stamp-matched samples'
+        return [Finding('INFO', 'IMU_YAW_SKIPPED', f'IMU heading check skipped: {why}')]
+    mean, std, n = r
+    if abs(mean) > YAW_OFFSET_DEG:
+        return [Finding('ERROR', 'IMU_YAW_OFFSET', f'IMU yaw is {mean:+.1f} deg off odometry yaw (std {std:.1f} deg, {n} matches); '
+                        f'fix: imu_yaw_relay yaw_deg:={-mean:+.1f} (add to the relay\'s current yaw if this was measured on its output)')]
+    if std > YAW_NOISE_DEG:
+        return [Finding('WARN', 'IMU_YAW_NOISY', f'IMU yaw vs odometry yaw std {std:.1f} deg (mean {mean:+.1f} deg, {n} matches)')]
+    return [Finding('INFO', 'IMU_YAW_OK', f'IMU yaw agrees with odometry: mean {mean:+.1f} deg, std {std:.1f} deg ({n} matches)')]
+
+
 # ---- preflight ----
 ESTIMATORS = ('KISS-ICP', 'RKO-LIO', 'LIO-SAM')
 
 
-def readiness(info, stamp_pos='unknown', imu_hz=None, imu_orientation=None):
+def readiness(info, stamp_pos='unknown', imu_hz=None, imu_orientation=None, imu_yaw_offset_deg=None):
     """Which of KISS-ICP / RKO-LIO / LIO-SAM can run on this cloud (+ IMU). {name: (verdict, [reasons])}.
     verdict: READY / DEGRADED (runs with a documented option, e.g. deskew off) / BLOCKED."""
     names = {f[0]: f for f in info.fields}
@@ -214,6 +271,11 @@ def readiness(info, stamp_pos='unknown', imu_hz=None, imu_orientation=None):
     elif imu_orientation is False:
         v = 'BLOCKED' if v != 'BLOCKED' else v
         r.append('IMU has no orientation (LIO-SAM needs a 9-axis IMU)')
+    if imu_yaw_offset_deg is not None and abs(imu_yaw_offset_deg) > YAW_OFFSET_DEG:
+        if v == 'READY':
+            v = 'DEGRADED'
+        r.append(f'IMU_YAW_OFFSET: IMU yaw is {imu_yaw_offset_deg:+.1f} deg off odometry: LIO-SAM initial guess/deskew diverge; '
+                 'relay /imu with corrected orientation (imu_yaw_relay.py)')
     res['LIO-SAM'] = (v, r)
     return res
 
@@ -321,6 +383,8 @@ class LioDoctor:
     tf_seen: set = field(default_factory=set)
     track: deque = field(default_factory=lambda: deque(maxlen=4000))        # (stamp, x, y)
     ref_track: deque = field(default_factory=lambda: deque(maxlen=4000))
+    imu_quats: deque = field(default_factory=lambda: deque(maxlen=3000))    # (stamp, (x, y, z, w))
+    ref_quats: deque = field(default_factory=lambda: deque(maxlen=3000))
 
     # inputs
     def odom(self, stamp, x, y, yaw, now):
@@ -347,14 +411,18 @@ class LioDoctor:
             self.odom_series.append((stamp, yaw))
             self.track.append((stamp, x, y))
 
-    def ref_odom(self, stamp, x, y):
+    def ref_odom(self, stamp, x, y, quat=None):
         self.ref_track.append((stamp, x, y))
+        if quat is not None:
+            self.ref_quats.append((stamp, tuple(quat)))
 
     def cloud(self, info, now, point_time_range=None):
         self.cloud_info, self.cloud_range = info, point_time_range
         self.cloud_arrivals.append(now)
 
-    def imu(self, stamp, now, gyro_z=0.0, has_orientation=None):
+    def imu(self, stamp, now, gyro_z=0.0, has_orientation=None, quat=None):
+        if quat is not None and has_orientation is not False:
+            self.imu_quats.append((stamp, tuple(quat)))
         self.imu_arrivals.append(now)
         self.imu_series.append((stamp, gyro_z))
         if has_orientation is not None:
@@ -430,6 +498,13 @@ class LioDoctor:
                                      [p[0] for p in self.odom_series], [p[1] for p in self.odom_series])
             if r and abs(r[0]) > OFFSET_WARN_S and r[1] >= OFFSET_CORR_MIN:
                 f.append(Finding('WARN', 'IMU_TIME_OFFSET', f'odom lags IMU by {r[0]:+.3f}s (correlation {r[1]:.2f})'))
+        if ihz is not None and self.imu_has_orientation is False:
+            f.append(Finding('INFO', 'IMU_YAW_SKIPPED', 'IMU heading check skipped: no IMU orientation'))
+        elif ihz is not None and self.imu_quats:
+            if not self.ref_quats:
+                f.append(Finding('INFO', 'IMU_YAW_SKIPPED', 'IMU heading check skipped: no reference orientation (--ref-odom)'))
+            else:
+                f += check_imu_yaw(list(self.imu_quats), list(self.ref_quats))
         if self.frames:
             missing = [x for x in self.frames if x not in self.tf_seen]
             if missing:
@@ -444,6 +519,11 @@ class LioDoctor:
     def score(self, now):
         """0-100 health score: ERROR -40, WARN -10 each, floor 0."""
         return max(0, 100 - sum(40 if x.level == 'ERROR' else 10 if x.level == 'WARN' else 0 for x in self.diagnose(now)))
+
+    def imu_yaw_deg(self):
+        """Measured IMU-vs-reference yaw offset in degrees, or None if it cannot be measured."""
+        r = imu_yaw_offset(list(self.imu_quats), list(self.ref_quats))
+        return r[0] if r and r[2] >= YAW_MIN_MATCHES else None
 
     def summary(self, now):
         d = self.drift()
