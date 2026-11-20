@@ -1,4 +1,4 @@
-"""rosnav_check CLI: preflight | merge | eval. Degrades gracefully when a sibling tool is missing."""
+"""rosnav_check CLI: preflight | merge | map-guard | eval. Degrades gracefully when a sibling tool is missing."""
 import argparse
 import contextlib
 import io
@@ -9,6 +9,7 @@ import sys
 
 from . import __version__
 from .core import Item, load, normalize, render, report
+from .mapcheck import check_map
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOLS_DIR = os.path.dirname(os.path.dirname(HERE))      # .../tools
@@ -102,6 +103,28 @@ def emit(items, a):
     return rep['exit_code']
 
 
+def cmd_map_guard(a):
+    ref = a.ref
+    tmp = None
+    if a.ref_git:       # reference = the map at a git revision (e.g. HEAD), extracted to a temp dir
+        import tempfile
+        tmp = tempfile.mkdtemp(prefix='rosnav_map_ref_')
+        try:
+            ydir = os.path.dirname(os.path.abspath(a.map))
+            top = subprocess.check_output(['git', '-C', ydir, 'rev-parse', '--show-toplevel'], text=True).strip()
+            rel = os.path.relpath(os.path.abspath(a.map), top)
+            ymlt = subprocess.check_output(['git', '-C', top, 'show', f'{a.ref_git}:{rel}'], text=True)
+            img = next(ln.split(':', 1)[1].strip() for ln in ymlt.splitlines() if ln.startswith('image:'))
+            open(os.path.join(tmp, 'ref.yaml'), 'w').write(ymlt)
+            data = subprocess.check_output(['git', '-C', top, 'show', f'{a.ref_git}:{os.path.join(os.path.dirname(rel), img)}'])
+            open(os.path.join(tmp, img), 'wb').write(data)
+            ref = os.path.join(tmp, 'ref.yaml')
+        except (subprocess.CalledProcessError, OSError, StopIteration) as e:
+            print(f'map-guard: cannot read {a.ref_git} version of {a.map}: {e}', file=sys.stderr)
+    items = check_map(a.map, tuple(a.initial_pose), ref)
+    return emit(items, a)
+
+
 def cmd_eval(a):
     if not os.path.isfile(FUSION_EVAL):
         print(f'eval_traj.sh not found at {FUSION_EVAL}')
@@ -122,6 +145,13 @@ def main(argv=None):
     m.add_argument('files', nargs='+')
     m.add_argument('--json', action='store_true')
     m.set_defaults(fn=cmd_merge)
+    g = sub.add_parser('map-guard', help='check a saved map yaml against the AMCL start and a reference map (rotated / incomplete / wrong spawn)')
+    g.add_argument('map', help='map yaml')
+    g.add_argument('--ref', help='known-good reference map yaml of the same world')
+    g.add_argument('--ref-git', metavar='REV', help='use the git REV version of the same map file as the reference (e.g. HEAD)')
+    g.add_argument('--initial-pose', type=float, nargs=2, default=[0.0, 0.0], metavar=('X', 'Y'), help='AMCL start in the map frame (default 0 0)')
+    g.add_argument('--json', action='store_true')
+    g.set_defaults(fn=cmd_map_guard)
     e = sub.add_parser('eval', help='APE/RPE via ~/fusion_tools/eval_traj.sh (read-only use)')
     e.add_argument('reference')
     e.add_argument('estimates', nargs='+')

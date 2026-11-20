@@ -31,6 +31,8 @@ RULES = [
      'the cloud problem is the likely cause of the odometry misbehaving: fix the cloud layout/stamp first'),
     ('IMU_CLOCK', [('lio_doctor', ('IMU_TIME_OFFSET',)), ('lio_doctor', ('POSE_JUMP', 'YAW_JUMP', 'DRIFT_HIGH'))],
      'IMU/odometry clock offset is the likely cause of the pose/heading jumps: fix the offset before touching extrinsics'),
+    ('IMU_YAW', [('lio_doctor', ('IMU_YAW_OFFSET',)), ('lio_doctor', ('POSE_JUMP', 'YAW_JUMP', 'DRIFT_HIGH'))],
+     'constant IMU yaw offset vs odometry is the likely cause of the jumps/divergence: relay /imu with fixed orientation (imu_yaw_relay.py), not extrinsicRPY'),
     ('SLAM_TF_ROOT', [('nav2_doctor', ('TF_FREEZE', 'TF_EDGE_STALE', 'NO_MAP_ODOM')), ('slam_doctor', ('NO_MAP_ODOM', 'TRACKING_LOST'))],
      'Nav2 TF trouble is a symptom: SLAM is not publishing map->odom; fix SLAM first'),
     ('TF_FREEZE_FILTERS', [('nav2_doctor', ('TF_FREEZE',)), ('nav2_doctor', ('FILTER_NO_INFO', 'FILTER_NO_MASK'))],

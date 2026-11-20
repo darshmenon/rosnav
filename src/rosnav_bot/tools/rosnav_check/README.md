@@ -6,6 +6,7 @@ One report from all rosnav doctors. ROS-free core, thin CLI.
 rosnav_check preflight --cloud-spec spec.json          # offline: lio_doctor cloud/readiness checks
 rosnav_check preflight --live 8                        # also run lio/slam/nav2 doctors live (needs ROS + stack)
 rosnav_check merge lio_out.json slam_out.json nav2=n.json --json
+rosnav_check map-guard map_cafe.yaml --ref-git HEAD     # rotated / half-size / wrong-spawn map? (ROS-free)
 rosnav_check eval ref.tum est1.tum est2.tum            # shells to ~/fusion_tools/eval_traj.sh (read-only)
 ```
 
