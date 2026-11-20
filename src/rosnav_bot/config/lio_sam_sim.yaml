@@ -8,7 +8,7 @@
 
     # Topics
     pointCloudTopic: "/points_lio"                   # Point cloud data
-    imuTopic: "/imu"                        # IMU data
+    imuTopic: "/imu_rot"                        # IMU data
     odomTopic: "odometry/imu"                    # IMU pre-preintegration odometry, same frequency as IMU
     gpsTopic: "odometry/gpsz"                    # GPS odometry topic from navsat, see module_navsat.launch file
 
@@ -38,15 +38,20 @@
     lidarMaxRange: 1000.0                        # default: 1000.0, maximum lidar range to be used
 
     # IMU Settings
-    imuAccNoise: 3.9939570888238808e-03
-    imuGyrNoise: 1.5636343949698187e-03
-    imuAccBiasN: 6.4356659353532566e-05
-    imuGyrBiasN: 3.5640318696367613e-05
+    # Derived from the gz imu sensor in urdf/imu.xacro: gaussian per-sample stddev at 100 Hz, no bias model.
+    # LIO-SAM wants continuous-time densities: sigma_c = sigma_d * sqrt(dt) (dt=0.01 s -> x0.1).
+    #   gyro 0.0002 rad/s -> 2.0e-5 ; accel 0.017 m/s^2 -> 1.7e-3. (Old values were Velodyne-IMU defaults, gyro ~78x too noisy.)
+    # Bias random walk: sim has none, so a small nonzero value (GTSAM needs a valid prior) = 1e-3 x white noise.
+    imuAccNoise: 1.7e-03
+    imuGyrNoise: 2.0e-05
+    imuAccBiasN: 1.0e-06
+    imuGyrBiasN: 1.0e-07
 
-    imuGravity: 9.80511
+    imuGravity: 9.8                              # gz default world gravity
     imuRPYWeight: 0.01
 
-    extrinsicTrans:  [ 0.0,  0.0,  0.0 ]
+    # lidar origin expressed in the IMU frame: imu_link is chassis+(0,0,0.05), laser_frame chassis+(0.1,0,0.25)
+    extrinsicTrans:  [ 0.1,  0.0,  0.2 ]
     extrinsicRot:    [1.0, 0.0, 0.0,
                       0.0, 1.0, 0.0,
                       0.0, 0.0, 1.0]

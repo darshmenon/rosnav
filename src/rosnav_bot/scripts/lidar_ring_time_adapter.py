@@ -14,7 +14,9 @@ sim's lidar3d_vfov_deg), period (0.1 s = 10 Hz), stamp_shift_s (-0.1: the sim st
 sweep, odometry wants the START).
 The geometry is a pure function (`ring_and_time`) so it is unit-tested without ROS.
 """
+import array
 import math
+import time
 
 import numpy as np
 
@@ -28,6 +30,23 @@ def ring_and_time(xyz, n_ring=16, vfov_deg=10.0, period=0.1):
     az = np.arctan2(y, x)                                   # -pi .. pi
     t = ((az + math.pi) / (2.0 * math.pi) * period).astype(np.float32)
     return ring, np.clip(t, 0.0, period).astype(np.float32)
+
+
+_NP = {1: 'i1', 2: 'u1', 3: 'i2', 4: 'u2', 5: 'i4', 6: 'u4', 7: 'f4', 8: 'f8'}   # sensor_msgs/PointField datatype -> numpy
+
+
+def cloud_xyzi(fields, data, point_step, n_points, stride=1):
+    """(M,4) float32 [x, y, z, intensity] from raw PointCloud2 bytes, NaN/inf rows dropped, every `stride`-th point kept.
+    Reads the buffer with one numpy view instead of sensor_msgs_py.read_points (which was ~120 ms for 28.8k points)."""
+    by = {f.name: f for f in fields}
+    names = [n for n in ('x', 'y', 'z', 'intensity') if n in by]
+    dt = np.dtype({'names': names, 'formats': [_NP[by[n].datatype] for n in names], 'offsets': [by[n].offset for n in names],
+                   'itemsize': point_step})
+    rec = np.frombuffer(data, dtype=dt, count=n_points)[::stride]
+    out = np.zeros((len(rec), 4), np.float32)
+    for i, n in enumerate(names):
+        out[:, i] = rec[n]
+    return out[np.isfinite(out[:, :3]).all(axis=1)]
 
 
 # Velodyne-style XYZIRT record, explicit aligned layout: ring (u2) at 16, time (f4) at 20, 24 bytes per point.
@@ -45,7 +64,6 @@ def main():
     from rclpy.node import Node
     from rclpy.qos import qos_profile_sensor_data
     from sensor_msgs.msg import PointCloud2, PointField
-    from sensor_msgs_py import point_cloud2
 
     class Adapter(Node):
         def __init__(self):
@@ -55,9 +73,12 @@ def main():
             self.declare_parameter('n_ring', 16)
             self.declare_parameter('vfov_deg', 10.0)
             self.declare_parameter('period', 0.1)
+            self.declare_parameter('stride', 1)             # keep every k-th point (1 = all) if the estimator cannot keep up
             self.declare_parameter('stamp_shift_s', -0.1)   # added to the cloud stamp (end-of-sweep -> start-of-sweep)
             g = lambda k: self.get_parameter(k).value
             self.n_ring, self.vfov, self.period = int(g('n_ring')), float(g('vfov_deg')), float(g('period'))
+            self.stride = max(1, int(g('stride')))
+            self.proc_s = self.t_read = self.t_pub = 0.0
             self.stamp_shift_ns = int(float(g('stamp_shift_s')) * 1e9)
             self.pub = self.create_publisher(PointCloud2, g('out_topic'), qos_profile_sensor_data)
             self.create_subscription(PointCloud2, g('in_topic'), self.cb, qos_profile_sensor_data)
@@ -68,12 +89,12 @@ def main():
                                    f'vfov=+/-{self.vfov} deg period={self.period} s')
 
         def cb(self, msg):
-            names = [f.name for f in msg.fields]
-            pts = point_cloud2.read_points(msg, field_names=['x', 'y', 'z'] + (['intensity'] if 'intensity' in names else []),
-                                           skip_nans=True)
-            a = np.stack([pts[k].astype(np.float32) for k in pts.dtype.names], axis=1)
+            t_start = time.perf_counter()
+            t_a = time.perf_counter()
+            a = cloud_xyzi(msg.fields, msg.data, msg.point_step, msg.width * msg.height, self.stride)
             xyz = a[:, :3]
-            inten = a[:, 3] if a.shape[1] > 3 else np.zeros(len(a), np.float32)
+            inten = a[:, 3]
+            t_b = time.perf_counter()
             ring, t = ring_and_time(xyz, self.n_ring, self.vfov, self.period)
             out = np.zeros(len(a), dtype=OUT_DTYPE)
             out['x'], out['y'], out['z'], out['intensity'], out['ring'], out['time'] = \
@@ -87,14 +108,24 @@ def main():
             m.height, m.width = 1, len(out)
             m.fields, m.is_bigendian, m.point_step = self.fields, False, POINT_STEP
             m.row_step, m.is_dense = POINT_STEP * len(out), True
-            m.data = out.tobytes()
+            buf = array.array('B')       # an array('B') skips rclpy's per-element validation of bytes (~100 ms for 700 KB)
+            buf.frombytes(out.tobytes())
+            m.data = buf
+            t_c = time.perf_counter()
             self.pub.publish(m)
+            self.t_read += t_b - t_a
+            self.t_pub += time.perf_counter() - t_c
             self.n_in += 1
             self.n_out += len(out)
+            self.proc_s += time.perf_counter() - t_start
 
         def report(self):
-            self.get_logger().info(f'{self.n_in} clouds adapted ({self.n_out} points) in the last 10 s')
+            ms = 1000.0 * self.proc_s / self.n_in if self.n_in else 0.0
+            self.get_logger().info(f'{self.n_in} clouds adapted ({self.n_out} points, stride {self.stride}) in the last 10 s, '
+                                   f'{ms:.1f} ms/cloud ({self.n_in / 10.0:.1f} Hz; of which read {1000.0 * self.t_read / max(1, self.n_in):.1f} ms, '
+                                   f'publish {1000.0 * self.t_pub / max(1, self.n_in):.1f} ms)')
             self.n_in = self.n_out = 0
+            self.proc_s = self.t_read = self.t_pub = 0.0
 
     rclpy.init()
     rclpy.spin(Adapter())

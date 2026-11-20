@@ -2,7 +2,7 @@
 lio_sam_sim.launch.py - LIO-SAM (built outside this repo, e.g. ~/lio_ws) on the sim's 3D lidar + IMU.
 
 Needs: slam_nav.launch.py lidar_type:=3d running, and `source ~/lio_ws/install/setup.bash`.
-Starts lidar_ring_time_adapter (adds ring/time to /points -> /points_lio) and the four LIO-SAM nodes.
+Starts imu_yaw_relay (/imu -> /imu_rot), lidar_ring_time_adapter (adds ring/time to /points -> /points_lio) and the four LIO-SAM nodes.
 LIO-SAM's TF goes to /lio_tf (its /tf is remapped) so the robot's TF tree is never touched; its pose is on
 /lio_sam/mapping/odometry (frame lio_odom), scored by localization_accuracy_bench.py as `lio_sam`.
 """
@@ -21,7 +21,10 @@ def generate_launch_description():
     remap = [('/tf', '/lio_tf'), ('/tf_static', '/lio_tf_static')]
     nodes = [LogInfo(msg='[lio_sam_sim] adapter + LIO-SAM (tf -> /lio_tf, odom -> /lio_sam/mapping/odometry)'),
              Node(package='rosnav_bot', executable='lidar_ring_time_adapter.py', name='lidar_ring_time_adapter',
-                  output='screen', parameters=[sim])]
+                  output='screen', parameters=[sim]),
+             # IMU yaw vs odom is measured at startup (auto_cal: -90 deg in the old cafe bag, 0 deg live) and corrected on /imu_rot
+             Node(package='rosnav_bot', executable='imu_yaw_relay.py', name='imu_yaw_relay', output='screen',
+                  parameters=[sim, {'yaw_deg': 0.0, 'auto_cal': True, 'ref_odom': '/odom'}])]
     # lio_base -> laser_frame: the real lidar mount (chassis +0.1 m forward, +0.25 m up), inside the private /lio_tf tree
     nodes.append(Node(package='tf2_ros', executable='static_transform_publisher', name='lio_base_to_lidar',
                       arguments=['0.1', '0', '0.25', '0', '0', '0', 'lio_base', 'laser_frame'],
