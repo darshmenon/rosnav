@@ -29,3 +29,11 @@ def test_unknown_pattern_raises():
     except ValueError:
         return
     raise AssertionError('expected ValueError')
+
+
+def test_avoid_hysteresis():
+    assert d.avoid(0.4, 0.4, None, False) == (0.4, 0.4, False)            # no scan yet: follow the pattern
+    assert d.avoid(0.4, 0.4, 2.0, False) == (0.4, 0.4, False)
+    assert d.avoid(0.4, 0.4, 0.6, False) == (0.0, 0.6, True)              # too close: turn in place
+    assert d.avoid(0.4, 0.4, 0.85, True) == (0.0, 0.6, True)              # still inside the clear band
+    assert d.avoid(0.4, 0.4, 1.2, True) == (0.4, 0.4, False)              # clear: resume

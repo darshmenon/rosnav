@@ -2939,6 +2939,18 @@ Live headless cafe run (domain 93), `lidar_type:=3d` + `lio_sam_sim.launch.py`, 
 - **Treat this table as invalid for ranking (found afterwards).** Only 13.8 m of true path in 150 s. The cause was the driver, not walls: `timeout N ros2 topic pub` counts wall seconds, and with the sim at a real-time factor of ~0.2 the turn direction flipped every ~0.8 sim seconds, so the robot jittered in place. Wheel odom/EKF errors (~9 m) come from that jitter. `scripts/drive_pattern.py` now drives on sim time and `benchmark_kiss_icp.sh` uses it for `PATTERN=weave|fig8`; see the rerun below.
 - LIO-SAM is better than the earlier weave (468 m, repeated `Large velocity, reset`: zero resets now, the relay calibrated to +0.0 deg), but it still diverges. The cloud arrived at 6.5 Hz under load, so the cause is not settled. KISS-ICP stays the default.
 - **Rerun, `PATTERN=fig8` on sim time** (`images/lio_bench/fig8_simtime_2026-11-20.json`): KISS-ICP 0.072 m, RKO-LIO 0.135 m, **LIO-SAM 0.316 m** (6.2 % of path, zero `Large velocity` resets). LIO-SAM no longer diverges, so the relay + noise retune hold. But the ground-truth path is only 5.9 m in 150 s (commanded ~60 m) while wheel odom/EKF report far more, so the robot is mostly stuck (likely against the table/counter near the spawn). Not conclusive: needs a drive pattern verified to cover 30+ m, e.g. record `/gt_odom` and check the path before trusting a run.
+- **Valid run, `PATTERN=fig8` with the obstacle guard** (200 s, 62.3 m true path, 13 avoidance turns, `images/lio_bench/fig8_avoid_2026-11-20.json`). Cause of the earlier short paths: the figure-8 drove into table2 (world 2.4, -5.5) and stuck there while wheel odom kept counting; `drive_pattern.py` now turns away from anything < 0.7 m ahead (`avoid:=true`).
+
+| estimator | RMSE (m) | final drift (% path) | yaw RMSE (deg) |
+|---|---|---|---|
+| EKF | 0.036 | 0.03 | 0.6 |
+| slam_toolbox map->base | 0.071 | 0.08 | 1.9 |
+| KISS-ICP | 0.133 | 0.17 | 3.5 |
+| RKO-LIO | 0.231 | 0.08 | 3.7 |
+| wheel odom | 0.51 | 2.1 | 6.2 |
+| **LIO-SAM** | **4.03** | **13.7** | **26.7** |
+
+  This supersedes the weave table and the short fig8 numbers above. LIO-SAM is the one real failure: no `Large velocity` resets, relay calibrated to +0.0 deg, cloud 9.3 Hz at 5 ms/cloud, yet 4 m off after 62 m with a 27 deg yaw error. It was fine over 5.9 m, so the error is accumulated drift, not a startup bug. Suspects: the ~70 ms IMU-vs-odometry time offset `lio_doctor` measured (`IMU_TIME_OFFSET`, with the adapter's `stamp_shift_s` = -0.1), and no loop closure.
 - `scripts/world_to_map.py world --spawn X Y YAW --out prefix` builds an exact map from the world's box/cylinder collisions in the robot start frame (flood fill from the spawn, leak check; mesh collisions skipped with a warning). `maps/map_cafe_raycast.*` (14.4 x 10.6 m) shows the explorer-built `map_cafe.*` has ~200 spurious occupied cells (15%, a phantom diagonal wall near y = -1).
 - `lio_doctor` gained `CLOUD_STALE` / `IMU_STALE`, `--health-topic /lio_health` (RViz text marker, started by `lio_sam_sim.launch.py`) and `scenarios/lio_faults.yaml` (3/3 faults detected in 1.5-2.2 s with `nav2_fault_inject --check`).
 

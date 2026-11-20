@@ -1,0 +1,60 @@
+{
+  "duration_s": 200.0,
+  "ground_truth_path_m": 62.27,
+  "estimators": {
+    "wheel_odom": {
+      "samples": 401,
+      "rmse_m": 0.511,
+      "max_m": 1.447,
+      "final_m": 1.316,
+      "yaw_rmse_deg": 6.18,
+      "yaw_final_deg": 9.06,
+      "final_pct_of_path": 2.11
+    },
+    "ekf": {
+      "samples": 401,
+      "rmse_m": 0.036,
+      "max_m": 0.063,
+      "final_m": 0.02,
+      "yaw_rmse_deg": 0.56,
+      "yaw_final_deg": -0.04,
+      "final_pct_of_path": 0.03
+    },
+    "slam(map->base)": {
+      "samples": 95,
+      "rmse_m": 0.071,
+      "max_m": 0.248,
+      "final_m": 0.049,
+      "yaw_rmse_deg": 1.87,
+      "yaw_final_deg": -0.97,
+      "final_pct_of_path": 0.08
+    },
+    "kiss_icp": {
+      "samples": 400,
+      "rmse_m": 0.133,
+      "max_m": 0.324,
+      "final_m": 0.105,
+      "yaw_rmse_deg": 3.45,
+      "yaw_final_deg": 0.41,
+      "final_pct_of_path": 0.17
+    },
+    "rko_lio": {
+      "samples": 400,
+      "rmse_m": 0.231,
+      "max_m": 0.536,
+      "final_m": 0.051,
+      "yaw_rmse_deg": 3.72,
+      "yaw_final_deg": 0.99,
+      "final_pct_of_path": 0.08
+    },
+    "lio_sam": {
+      "samples": 400,
+      "rmse_m": 4.028,
+      "max_m": 8.499,
+      "final_m": 8.499,
+      "yaw_rmse_deg": 26.71,
+      "yaw_final_deg": 40.47,
+      "final_pct_of_path": 13.65
+    }
+  }
+}
