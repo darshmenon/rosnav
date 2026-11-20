@@ -50,3 +50,9 @@ def test_mesh_collision_warns(tmp_path):
     p.write_text(BOX % "<model name='m'><link name='l'><collision name='c'><geometry><mesh><uri>x.dae</uri></mesh></geometry></collision></link></model>")
     _s, warns = w.load_shapes(str(p), [])
     assert warns and 'mesh' in warns[0]
+
+
+def test_pgm_header_has_no_comment_line(tmp_path):
+    w.write_map(str(tmp_path / 'm'), bytes([254] * 6), 3, 2, 0.0, 0.0, 0.05)
+    head = (tmp_path / 'm.pgm').read_bytes()[:12]
+    assert head.startswith(b'P5\n3 2\n255\n') and b'#' not in head

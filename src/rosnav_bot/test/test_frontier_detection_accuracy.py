@@ -18,7 +18,7 @@ RES, OX, OY = 0.05, -5.93, -5.6
 
 
 def _gt():
-    with open(os.path.join(_HERE, '..', 'maps', 'map_cafe.pgm'), 'rb') as f:
+    with open(os.path.join(_HERE, 'data', 'cafe_truth.pgm'), 'rb') as f:
         assert f.readline().strip() == b'P5'
         w, h = map(int, f.readline().split())
         f.readline()

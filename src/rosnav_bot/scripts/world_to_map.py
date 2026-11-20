@@ -180,7 +180,7 @@ def crop(occ, free, w, h, ox, oy, res, pad=15):
 
 def write_map(prefix, img, w, h, ox, oy, res):
     with open(prefix + '.pgm', 'wb') as f:
-        f.write(b'P5\n# world_to_map.py\n%d %d\n255\n' % (w, h))
+        f.write(b'P5\n%d %d\n255\n' % (w, h))        # no comment line: simple PGM readers (tests, tools) choke on it
         f.write(img)
     with open(prefix + '.yaml', 'w') as f:
         f.write(f'image: {os.path.basename(prefix)}.pgm\nmode: trinary\nresolution: {res}\n'

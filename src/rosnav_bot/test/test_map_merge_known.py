@@ -16,7 +16,7 @@ RES = 0.05
 
 def _cafe():
     """Ground truth cafe grid, row 0 = y min, values FREE/OCCUPIED/UNKNOWN. Origin (-5.93, -5.6)."""
-    path = os.path.join(_HERE, '..', 'maps', 'map_cafe.pgm')
+    path = os.path.join(_HERE, 'data', 'cafe_truth.pgm')
     with open(path, 'rb') as f:
         assert f.readline().strip() == b'P5'
         w, h = map(int, f.readline().split())
