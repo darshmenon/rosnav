@@ -2951,6 +2951,16 @@ Live headless cafe run (domain 93), `lidar_type:=3d` + `lio_sam_sim.launch.py`, 
 | **LIO-SAM** | **4.03** | **13.7** | **26.7** |
 
   This supersedes the weave table and the short fig8 numbers above. LIO-SAM is the one real failure: no `Large velocity` resets, relay calibrated to +0.0 deg, cloud 9.3 Hz at 5 ms/cloud, yet 4 m off after 62 m with a 27 deg yaw error. It was fine over 5.9 m, so the error is accumulated drift, not a startup bug. Suspects: the ~70 ms IMU-vs-odometry time offset `lio_doctor` measured (`IMU_TIME_OFFSET`, with the adapter's `stamp_shift_s` = -0.1), and no loop closure.
+- **LIO-SAM is fine at real-time speed (2026-11-21, quiet machine, load < 1, sim real-time factor 1.00).** `scripts/lio_stamp_sweep.sh` (LIO-SAM restarted per run, robot still for 25 s, then a fig8 with the obstacle guard, 90 s scored vs Gazebo ground truth, 18-29 m of true path):
+
+| variant (runs) | RMSE (m) | drift (% path) | yaw RMSE (deg) |
+|---|---|---|---|
+| default config, stride 1, shift -0.1 (4 runs) | 0.24, 0.25, 0.27, 0.25 | 0.07-1.4 | 8.6-9.7 |
+| stride 2 / stride 4 (1 run each) | 2.4 / 2.2 | 25 / 46 | 23 / 13 |
+| `odometrySurfLeafSize` 0.4 (4 runs) | 0.23, 0.41, 0.58, 8.9 | 1-31 | 8.5-42 |
+| shift 0.0 instead of -0.1 (1 run, earlier) | 115 | 1388 | 71 |
+
+  Conclusions: (1) the earlier 4-8 m divergences came from running while the machine was loaded (sim real-time factor 0.07-0.3 and CPU contention), not from the config; (2) the default config is the best and most stable of everything tried, so no config change; thinning the cloud (`stride`) or coarser voxels made it worse; (3) `stamp_shift_s` must stay near -0.1 (0.0 blows up; -0.2 behaved like -0.1 in one run); (4) LIO-SAM's odometry runs at ~5 Hz even at real-time speed (the mapping stage, not the point count) and its yaw error (~9 deg) is still ~2.5x KISS-ICP/RKO-LIO (3-4 deg), so KISS-ICP stays the default. Benchmarks of the LIO estimators are only meaningful when the machine is idle (the bench scripts' load guard exists for this).
 - `scripts/world_to_map.py world --spawn X Y YAW --out prefix` builds an exact map from the world's box/cylinder collisions in the robot start frame (flood fill from the spawn, leak check; mesh collisions skipped with a warning). `maps/map_cafe_raycast.*` (14.4 x 10.6 m) shows the explorer-built `map_cafe.*` has ~200 spurious occupied cells (15%, a phantom diagonal wall near y = -1).
 - `lio_doctor` gained `CLOUD_STALE` / `IMU_STALE`, `--health-topic /lio_health` (RViz text marker, started by `lio_sam_sim.launch.py`) and `scenarios/lio_faults.yaml` (3/3 faults detected in 1.5-2.2 s with `nav2_fault_inject --check`).
 

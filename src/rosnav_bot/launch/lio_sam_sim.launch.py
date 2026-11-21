@@ -22,10 +22,13 @@ def generate_launch_description():
     sim = {'use_sim_time': True}
     remap = [('/tf', '/lio_tf'), ('/tf_static', '/lio_tf_static')]
     nodes = [LogInfo(msg='[lio_sam_sim] adapter + LIO-SAM (tf -> /lio_tf, odom -> /lio_sam/mapping/odometry)'),
+             DeclareLaunchArgument('config', default_value=cfg, description='LIO-SAM parameter yaml (default config/lio_sam_sim.yaml)'),
+             DeclareLaunchArgument('stride', default_value='1', description='keep every k-th point of the cloud (cuts LIO-SAM CPU load)'),
              DeclareLaunchArgument('stamp_shift_s', default_value='-0.1',
                                    description='added to the cloud stamp (the sim stamps at sweep END, LIO-SAM wants START)'),
              Node(package='rosnav_bot', executable='lidar_ring_time_adapter.py', name='lidar_ring_time_adapter',
-                  output='screen', parameters=[sim, {'stamp_shift_s': ParameterValue(LaunchConfiguration('stamp_shift_s'), value_type=float)}]),
+                  output='screen', parameters=[sim, {'stamp_shift_s': ParameterValue(LaunchConfiguration('stamp_shift_s'), value_type=float),
+                                              'stride': ParameterValue(LaunchConfiguration('stride'), value_type=int)}]),
              # IMU yaw vs odom is measured at startup (auto_cal: -90 deg in the old cafe bag, 0 deg live) and corrected on /imu_rot
              Node(package='rosnav_bot', executable='imu_yaw_relay.py', name='imu_yaw_relay', output='screen',
                   parameters=[sim, {'yaw_deg': 0.0, 'auto_cal': True, 'ref_odom': '/odom'}])]
@@ -36,7 +39,7 @@ def generate_launch_description():
     for exe in ('lio_sam_imuPreintegration', 'lio_sam_imageProjection',
                 'lio_sam_featureExtraction', 'lio_sam_mapOptimization'):
         nodes.append(Node(package='lio_sam', executable=exe, name=exe, output='screen',
-                          parameters=[cfg, sim], remappings=remap))
+                          parameters=[LaunchConfiguration('config'), sim], remappings=remap))
     # live health text for RViz (lio_doctor on PATH or PYTHONPATH); harmless no-op if it is not installed
     nodes.append(ExecuteProcess(
         cmd=['python3', '-c',
