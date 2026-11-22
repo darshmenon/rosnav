@@ -194,27 +194,49 @@ def topic(rosbag2_py, name, typ):
         return rosbag2_py.TopicMetadata(id=0, name=name, type=typ, serialization_format='cdr')
 
 
+_WRITE_BAG = r"""
+import sys
+import numpy as np
+import rosbag2_py
+from nav_msgs.msg import OccupancyGrid, Odometry
+from rclpy.serialization import serialize_message
+bag, npy, res = sys.argv[1], sys.argv[2], float(sys.argv[3])
+g = np.load(npy)
+def topic(name, typ):
+    try:
+        return rosbag2_py.TopicMetadata(name=name, type=typ, serialization_format='cdr')
+    except TypeError:
+        return rosbag2_py.TopicMetadata(id=0, name=name, type=typ, serialization_format='cdr')
+w = rosbag2_py.SequentialWriter()
+w.open(rosbag2_py.StorageOptions(uri=bag, storage_id='sqlite3'), rosbag2_py.ConverterOptions('', ''))
+for name, typ in (('/map', 'nav_msgs/msg/OccupancyGrid'), ('/odom', 'nav_msgs/msg/Odometry')):
+    w.create_topic(topic(name, typ))
+for k in range(1, 11):                                   # reveal 6 columns per 2 s, odom moving
+    t = int(k * 2e9)
+    d = g.copy(); d[:, k * 6:] = -1
+    m = OccupancyGrid(); m.info.resolution, m.info.width, m.info.height = res, g.shape[1], g.shape[0]
+    m.data = d.flatten().tolist()
+    w.write('/map', serialize_message(m), t)
+    o = Odometry(); o.pose.pose.position.x = float(k)
+    w.write('/odom', serialize_message(o), t)
+del w
+"""
+
+
 def test_bag_scoring(tmp_path):
-    rosbag2_py = pytest.importorskip('rosbag2_py')
+    pytest.importorskip('rosbag2_py')
     pytest.importorskip('rclpy')
-    from nav_msgs.msg import OccupancyGrid, Odometry
-    from rclpy.serialization import serialize_message
     g = room()
     truth = write_map(tmp_path, 'truth', g)
     bag = str(tmp_path / 'bag')
-    w = rosbag2_py.SequentialWriter()
-    w.open(rosbag2_py.StorageOptions(uri=bag, storage_id='sqlite3'), rosbag2_py.ConverterOptions('', ''))
-    for name, typ in (('/map', 'nav_msgs/msg/OccupancyGrid'), ('/odom', 'nav_msgs/msg/Odometry')):
-        w.create_topic(topic(rosbag2_py, name, typ))
-    for k in range(1, 11):                                   # reveal 6 columns per 2 s, odom moving
-        t = int(k * 2e9)
-        d = g.data.copy(); d[:, k * 6:] = -1
-        m = OccupancyGrid(); m.info.resolution, m.info.width, m.info.height = g.resolution, g.shape[1], g.shape[0]
-        m.data = d.flatten().tolist()
-        w.write('/map', serialize_message(m), t)
-        o = Odometry(); o.pose.pose.position.x = float(k)
-        w.write('/odom', serialize_message(o), t)
-    del w
+    # The bag is written in a CHILD process: rosbag2's C++ state and the rclpy context are process-global, and writing
+    # in the pytest process aborted (core dump, exit 134) at the end of a full `pytest test` run once earlier tests had
+    # initialised/shut down rclpy. A fresh interpreter makes this test independent of test order.
+    npy = tmp_path / 'grid.npy'
+    np.save(npy, np.asarray(g.data))
+    w = subprocess.run([sys.executable, '-c', _WRITE_BAG, bag, str(npy), str(g.resolution)],
+                       capture_output=True, text=True, timeout=120)
+    assert w.returncode == 0, w.stdout + w.stderr
     out = tmp_path / 'run.json'
     p = cli('bag', bag, '--truth', truth, '--label', 'bagged', '--out', out, '--interval', '2')
     assert p.returncode == 0, p.stdout + p.stderr

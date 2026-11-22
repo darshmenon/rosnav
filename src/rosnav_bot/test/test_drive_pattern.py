@@ -3,12 +3,28 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'scripts'))
-sys.modules.setdefault('rclpy', type(sys)('rclpy'))
-for m in ('geometry_msgs', 'geometry_msgs.msg', 'rclpy.node'):
-    sys.modules.setdefault(m, type(sys)(m))
-sys.modules['geometry_msgs.msg'].Twist = object
-sys.modules['rclpy.node'].Node = object
-import drive_pattern as d  # noqa: E402
+# drive_pattern only needs `Twist` and `Node` as base-class placeholders. Stub them ONLY while it is imported and then
+# restore sys.modules and the real attributes: overwriting geometry_msgs.msg.Twist / rclpy.node.Node on the real modules
+# (as this file used to) broke every later test that builds a real Twist (collision monitor, nudge, rosbag replay).
+_MISSING = object()
+_saved_mods = {m: sys.modules.get(m, _MISSING) for m in ('rclpy', 'geometry_msgs', 'geometry_msgs.msg', 'rclpy.node')}
+_saved_attrs = {}
+for _m in _saved_mods:
+    sys.modules.setdefault(_m, type(sys)(_m))
+for _m, _a in (('geometry_msgs.msg', 'Twist'), ('rclpy.node', 'Node')):
+    _saved_attrs[(_m, _a)] = getattr(sys.modules[_m], _a, _MISSING)
+    setattr(sys.modules[_m], _a, object)
+try:
+    import drive_pattern as d  # noqa: E402
+finally:
+    for (_m, _a), _v in _saved_attrs.items():
+        if _v is _MISSING:
+            delattr(sys.modules[_m], _a)
+        else:
+            setattr(sys.modules[_m], _a, _v)
+    for _m, _v in _saved_mods.items():
+        if _v is _MISSING:
+            sys.modules.pop(_m, None)
 
 
 def test_fig8_flips_each_half_circle():

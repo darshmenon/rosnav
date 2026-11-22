@@ -59,7 +59,7 @@ def test_record_reports_progress(tmp_path):
     cov = [s['coverage_pct'] for s in r['series']]
     assert cov == sorted(cov) or max(cov) > 90                    # grows over time
     assert r['final']['coverage_pct'] > 85 and r['final']['wall_f1_pct'] > 85
-    assert r['time_to_pct_s']['50'] is not None and r['time_to_pct_s']['25'] < r['time_to_pct_s']['50']
+    assert r['time_to_pct_s']['50'] is not None and r['time_to_pct_s']['25'] <= r['time_to_pct_s']['50']   # equal when one coarse sample (loaded machine) crosses both
     assert r['path_length_m'] > 1.0 and r['label'] == 'fake'
 
 
