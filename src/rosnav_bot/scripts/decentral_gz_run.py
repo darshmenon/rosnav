@@ -18,10 +18,25 @@ from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
 from rclpy.node import Node
+from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import decentral_gz_scenarios as sc  # noqa: E402
+
+
+def person_distances(robots, peds, limit):
+    """robots {name: (x, y) | None}, peds [(id, x, y)] -> (min distance or inf, {(robot, ped id) closer than limit})."""
+    best, hits = float('inf'), set()
+    for nm, pos in robots.items():
+        if not pos:
+            continue
+        for pid, px, py in peds:
+            d = math.hypot(pos[0] - px, pos[1] - py)
+            best = min(best, d)
+            if d < limit:
+                hits.add((nm, pid))
+    return best, hits
 
 
 class Runner(Node):
@@ -48,7 +63,18 @@ class Runner(Node):
         self.min_pair = float('inf')
         self.coll_pairs = set()
         self.t0 = None
+        self.peds = []                          # latest /social_peds/gt positions (empty without walking people)
+        self.min_person = float('inf')
+        self.person_hits = set()                # (robot, ped id) pairs closer than person_dist
+        self.declare_parameter('person_dist', 0.5)
+        self.create_subscription(String, '/social_peds/gt', self._gt, 10)
         self.create_timer(0.1, self._track)
+
+    def _gt(self, msg):
+        try:
+            self.peds = [(int(q['id']), float(q['x']), float(q['y'])) for q in json.loads(msg.data)['peds']]
+        except (ValueError, KeyError, TypeError):
+            pass
 
     def _pos(self, nm):
         try:
@@ -69,6 +95,10 @@ class Runner(Node):
                     self.min_pair = min(self.min_pair, d)
                     if d < cd:
                         self.coll_pairs.add((a, b))
+        pd = float(self.get_parameter('person_dist').value)
+        d, hits = person_distances(p, self.peds, pd)
+        self.min_person = min(self.min_person, d)
+        self.person_hits |= hits
 
     def run(self):
         log = self.get_logger()
@@ -130,14 +160,18 @@ class Runner(Node):
         mk = max((v['t'] for v in self.res.values() if v['ok']), default=None)
         out = dict(scenario=self.s['kind'], n=n, ctrl=self.get_parameter('label').value, success=ok,
                    makespan_s=mk, min_pair_m=None if self.min_pair == float('inf') else round(self.min_pair, 2),
-                   collision_pairs=len(self.coll_pairs), robots=self.res)
+                   collision_pairs=len(self.coll_pairs), robots=self.res,
+                   min_person_m=None if self.min_person == float('inf') else round(self.min_person, 2),
+                   person_collisions=len(self.person_hits))
         d = self.get_parameter('out_dir').value
         os.makedirs(d, exist_ok=True)
         path = os.path.join(d, f"{out['scenario']}_{n}_{out['ctrl']}.json")
         with open(path, 'w') as f:
             json.dump(out, f, indent=1)
         self.get_logger().info(f"RESULT {out['scenario']} n={n} ctrl={out['ctrl']}: {ok}/{n} reached, makespan={mk}s, "
-                               f"min pair dist={out['min_pair_m']} m, collision pairs={out['collision_pairs']} -> {path}")
+                               f"min pair dist={out['min_pair_m']} m, collision pairs={out['collision_pairs']}, "
+                               f"min person dist={out['min_person_m']} m, "
+                               f"person hits={out['person_collisions']} -> {path}")
         return 0 if ok == n else 1
 
 
