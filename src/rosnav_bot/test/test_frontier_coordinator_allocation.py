@@ -374,3 +374,57 @@ def test_nudge_stops_when_something_is_close_ahead():
     n._nudges = {'robot1': {'deadline': time.monotonic() + 60, 'start': None}}
     n._nudge_tick()
     assert published == [0.0] and not n._nudges
+
+
+def make_assigning(pick_table, assign_r=1.0, allocation='hungarian'):
+    """Like make_bare, but _pick honours self._assigned (other robots' goals count as taken) the way the real one does,
+    so _assign_idle can be exercised end to end without a ROS graph."""
+    obj = make_bare(pick_table, assign_r)
+    obj._allocation = allocation
+    obj._assigned = {r: None for r in pick_table}
+
+    def _pick(frontiers, pos, ns, collect=None):
+        taken = [g for r, g in obj._assigned.items() if r != ns and g is not None]
+        ok = [(s, xy) for s, xy in pick_table[ns]
+              if not any(math.hypot(xy[0] - t[0], xy[1] - t[1]) < assign_r for t in taken)]
+        diag = {'score': 0.0, 'distance': 1.0, 'size_m': 1.0, 'info_gain': 0.0, 'clearance': 0.0,
+                'suspicious_ratio': 0.0, 'n_total': len(pick_table[ns])}
+        if collect is not None:
+            for s, xy in ok:
+                collect.append((s, xy, dict(diag, score=s)))
+        if not ok:
+            return None, diag
+        s, xy = max(ok)
+        return xy, dict(diag, score=s)
+    obj._pick = _pick
+    return obj
+
+
+def _no_duplicates(chosen, radius=1.0):
+    goals = [g for _, g, _ in chosen if g is not None]
+    return all(math.hypot(a[0] - b[0], a[1] - b[1]) >= radius
+               for i, a in enumerate(goals) for b in goals[i + 1:])
+
+
+def test_planned_goals_are_reserved_before_fallback_picks():
+    # r1's planned goal A2 is dropped (it is within assign_radius of r2's higher-scoring A), so r1 falls back to the
+    # greedy pick. r1 comes BEFORE r2 in idle order: unless every planned goal is reserved first, r1's fallback sees
+    # no goal assigned to r2 yet and takes A2, giving two robots goals 0.5 m apart.
+    A, A2, B = (0.0, 0.0), (0.5, 0.0), (10.0, 0.0)
+    node = make_assigning({'r1': [(6, A2)], 'r2': [(8, A)], 'r3': [(7, B)]})
+    chosen = node._assign_idle(['r1', 'r2', 'r3'], [], {r: (0, 0) for r in ('r1', 'r2', 'r3')})
+    assert _no_duplicates(chosen), chosen
+    by = {r: g for r, g, _ in chosen}
+    assert by['r2'] == A and by['r3'] == B and by['r1'] is None
+
+
+def test_assign_idle_records_goals_and_skips_robots_without_pose():
+    A, B = (0.0, 0.0), (10.0, 0.0)
+    node = make_assigning({'r1': [(5, A), (4, B)], 'r2': [(5, A), (3, B)]}, allocation='greedy')
+    chosen = node._assign_idle(['r1', 'r2'], [], {'r1': (0, 0)})      # r2 has no pose
+    assert [(r, g) for r, g, _ in chosen] == [('r1', A)]
+    assert node._assigned == {'r1': A, 'r2': None}
+    # greedy mode: the second robot sees the first one's goal as taken
+    node = make_assigning({'r1': [(5, A), (4, B)], 'r2': [(5, A), (3, B)]}, allocation='greedy')
+    chosen = node._assign_idle(['r1', 'r2'], [], {'r1': (0, 0), 'r2': (0, 0)})
+    assert dict((r, g) for r, g, _ in chosen) == {'r1': A, 'r2': B}
