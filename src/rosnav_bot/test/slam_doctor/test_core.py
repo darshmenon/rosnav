@@ -94,3 +94,30 @@ def test_score_and_summary():
     assert d.score(3) == 100
     assert d.score(20) == 60                 # TRACKING_LOST error costs 40
     assert d.summary(3)['corrections'] == 0
+
+
+def test_one_nan_pose_sample_does_not_silence_map_stall():
+    # found by a code-review hunt (2026-11-22): a single NaN odom sample made `travel` NaN for good, so MAP_STALL (an
+    # ERROR) could never fire again; NaN map->odom likewise poisoned the jump detector. NaN samples are now skipped and
+    # reported as POSE_NONFINITE.
+    d = SlamDoctor()
+    d.map_stats(1000, 100, 5000, 0.0)
+    for i in range(60):
+        d.odom(float('nan') if i == 10 else i * 0.1, 0.0, float(i))
+        d.map_stats(1000, 100, 5000, float(i))
+    assert math.isfinite(d.travel) and d.travel > 5.0
+    codes = {f.code for f in d.diagnose(60.0)}
+    assert 'MAP_STALL' in codes
+    # the NaN itself is reported while it is recent
+    d = SlamDoctor()
+    d.odom(0.0, 0.0, 0.0); d.odom(float('nan'), 0.0, 1.0)
+    assert 'POSE_NONFINITE' in {f.code for f in d.diagnose(2.0)}
+    assert 'POSE_NONFINITE' not in {f.code for f in d.diagnose(30.0)}
+
+
+def test_nan_map_odom_does_not_poison_the_jump_detector():
+    d = SlamDoctor()
+    d.map_odom(0.0, 0.0, 0.0, 0.0)
+    d.map_odom(float('nan'), 0.0, 0.0, 1.0)            # skipped
+    d.map_odom(2.0, 0.0, 0.0, 2.0)                     # a real 2 m correction must still be seen
+    assert any(e['kind'] == 'correction' and e['dist'] >= 1.9 for e in d.events)

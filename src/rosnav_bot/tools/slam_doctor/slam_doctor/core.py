@@ -11,6 +11,7 @@ STORM_COUNT = 4          # this many corrections in the window = periodic jumpin
 GAP_S = 1.0              # map->odom silent this long = tracker stopped publishing
 FLAP_WINDOW_S = 30.0
 FLAP_COUNT = 3
+BAD_POSE_S = 10.0       # a non-finite pose sample is reported for this long
 LOST_S = 5.0             # silent this long = tracking lost, not a blip
 STALL_S = 20.0           # no new free cells for this long ...
 STALL_TRAVEL_M = 1.0     # ... while the robot travelled this far = map not growing
@@ -32,6 +33,7 @@ HINTS = {
     'JUMP_STORM': 'map corrections arrive in bursts: raise loop-closure / scan-match thresholds',
     'BIG_JUMP': 'large map correction: expect plan and costmap jumps; clear costmaps after it (costmap_ghost_clear)',
     'MAP_STALL': 'map stopped growing while the robot moves: check /map publisher, SLAM node queue, and tracking state',
+    'POSE_NONFINITE': 'odometry or map->odom contained NaN/inf: the estimator (EKF/SLAM) diverged; check its covariance and sensor inputs, then restart it',
     'MAP_NONE': 'no /map seen: is the SLAM node running and publishing in this namespace?',
     'NO_MAP_ODOM': 'SLAM publishes no map->odom: check the SLAM node and its frame names / namespace',
     'DRIFT_HIGH': 'odometry is drifting: check wheel radius/track width, IMU fusion, slip on this surface',
@@ -62,9 +64,20 @@ class SlamDoctor:
         self.travel_at_change = 0.0
         self.frames = deque(maxlen=FEATURE_FRAMES)
         self.last_frame = None
+        self.bad_pose_t = None      # time of the last non-finite map->odom / odom sample (skipped)
 
     # ---- inputs ----
+    def _finite(self, now, *vals):
+        """A NaN/inf pose sample is skipped, never stored: one NaN made `travel` and the last pose NaN for good, and every
+        later `>=` / `>` check is False for NaN, so MAP_STALL / DRIFT_HIGH / jump detection went permanently silent."""
+        if all(math.isfinite(v) for v in vals):
+            return True
+        self.bad_pose_t = now
+        return False
+
     def map_odom(self, x, y, yaw, now):
+        if not self._finite(now, x, y, yaw):
+            return
         if self.last_mo is not None:
             if now - self.last_mo_t > GAP_S:
                 self.gaps.append(now)
@@ -78,6 +91,8 @@ class SlamDoctor:
         self.last_mo, self.last_mo_t = (x, y, yaw), now
 
     def odom(self, x, y, now):
+        if not self._finite(now, x, y):
+            return
         if self.odom_xy is not None:
             self.travel += math.hypot(x - self.odom_xy[0], y - self.odom_xy[1])
         self.odom_xy = (x, y)
@@ -103,6 +118,9 @@ class SlamDoctor:
             f.append(Finding('WARN', 'NO_MAP_ODOM', 'no map->odom seen yet'))
         elif now - self.last_mo_t > LOST_S:
             f.append(Finding('ERROR', 'TRACKING_LOST', f'map->odom silent for {now - self.last_mo_t:.1f}s'))
+        if self.bad_pose_t is not None and now - self.bad_pose_t <= BAD_POSE_S:
+            f.append(Finding('WARN', 'POSE_NONFINITE', f'NaN/inf pose received {now - self.bad_pose_t:.0f}s ago '
+                                                       '(sample skipped) - the estimator feeding it has diverged'))
         if not self.map_seen:
             f.append(Finding('WARN', 'MAP_NONE', 'no /map received'))
         while self.gaps and now - self.gaps[0] > FLAP_WINDOW_S:
