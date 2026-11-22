@@ -633,7 +633,8 @@ def main():
             if why.split(':')[0] != self.last_why.split(':')[0] or (hwhy and why != self.last_why):
                 self.get_logger().info(f'[decentral_nav] {self.ns}: why -> {why}')   # one line per decision change
             self.last_why = why
-            self.last_info = dict(info, n_neigh=len(names) - 1)
+            n_people = sum(1 for nm in names if nm.startswith('person'))
+            self.last_info = dict(info, n_neigh=len(names) - 1 - n_people, n_people=n_people)
             gd = float(np.linalg.norm(self.plan[-1] - np.array(pos[0])))
             w_rot = goal_rotation(gd, me[2], self.goal_yaw, self.goal_xy_tol, self.goal_yaw_tol)
             if w_rot is not None:
@@ -660,7 +661,7 @@ def main():
                 return
             self.get_logger().info(
                 f'[decentral_nav] {self.ns}: cmd v={self.v:.2f} w={self.w:.2f} desired=({self.last_vd[0]:.2f},'
-                f'{self.last_vd[1]:.2f}) goal_d={self.last_goal_d:.2f} neighbours_seen={g["n_neigh"]}/{len(self.neigh)} '
+                f'{self.last_vd[1]:.2f}) goal_d={self.last_goal_d:.2f} neighbours_seen={g["n_neigh"]}/{len(self.neigh)} people_seen={g.get("n_people", 0)} '
                 f'blocked_cells={g["blocked_cells"]} state={g["reason"]} zero_ticks={self.n_zero}/{self.n_ticks}')
 
     rclpy.init()

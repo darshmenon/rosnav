@@ -196,11 +196,6 @@ Multi-SLAM (`slam_mode:=multi`): save `/map_merged` with `-t /map_merged` or `fl
   <br/><sub>Same 4-robot swap, two controllers: sampled velocity obstacle (<code>vo</code>, left) vs MPPI with a velocity-obstacle prior + yield rule (<code>mppi_prior</code>, right)</sub>
 </p>
 
-<p align="center">
-  <img src="images/lio_bench/weave_rmse.png" alt="LIO benchmark, cafe weave" width="420"/>
-  <br/><sub>Lidar(-inertial) odometry on a 150 s cafe weave: KISS-ICP and RKO-LIO hold, LIO-SAM still diverges (concepts.md 44d)</sub>
-</p>
-
 ---
 
 ## 3. Controllers, SLAM backends & benchmarking
