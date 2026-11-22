@@ -1,3 +1,4 @@
+import math
 import os
 import sys
 
@@ -86,3 +87,81 @@ def test_realism_options_and_ped_metrics():
     assert not np.allclose(noisy['trail'], clean['trail'])
     r = d.simulate('crowd', 'vo', n=3, seed=0, max_t=8.0)
     assert r['ped_contacts'] >= 0 and r['ped_intrusion_s'] >= 0 and np.isfinite(r['min_ped_dist'])
+
+
+# ── ORCA ─────────────────────────────────────────────────────────────────────
+def _run_orca(pos, goals, steps=400, world=None):
+    """Drive robots with orca_velocity only; returns (trail, min pair distance)."""
+    world = world or d.open_world(30)
+    pos = np.array(pos, float)
+    goals = np.array(goals, float)
+    vel = np.zeros_like(pos)
+    mind = np.inf
+    for _ in range(steps):
+        cmds = np.array([d.command('orca', i, pos, vel, goals, world, None)
+                         for i in range(len(pos))])
+        new = pos + cmds * d.DT
+        vel, pos = (new - pos) / d.DT, new
+        dm = np.linalg.norm(pos[:, None] - pos[None], axis=2) + np.eye(len(pos)) * 99
+        mind = min(mind, float(dm.min()))
+        if np.all(np.linalg.norm(goals - pos, axis=1) < 0.3):
+            break
+    return pos, mind
+
+
+def test_orca_single_robot_reaches_goal():
+    pos, _ = _run_orca([[5, 15]], [[22, 15]])
+    assert np.linalg.norm(pos[0] - [22, 15]) < 0.3
+
+
+def test_orca_head_on_no_collision():
+    pos, mind = _run_orca([[5, 15], [20, 15]], [[20, 15], [5, 15]], steps=600)
+    assert mind > 2 * d.R - 0.02
+    assert np.linalg.norm(pos - [[20, 15], [5, 15]], axis=1).max() < 0.35
+
+
+def _circle_swap(n, jitter, steps=900):
+    c = np.array([15.0, 15.0])
+    ang = np.arange(n) * 2 * math.pi / n
+    st = c + 6 * np.stack([np.cos(ang), np.sin(ang)], 1)
+    st_j = st + np.random.default_rng(1).normal(0, jitter, st.shape)
+    pos, mind = _run_orca(st_j, 2 * c - st, steps=steps)
+    return np.linalg.norm(pos - (2 * c - st), axis=1).max(), mind
+
+
+def test_orca_symmetric_swap_six():
+    err, mind = _circle_swap(6, 0.0)              # exactly symmetric start
+    assert mind > 2 * d.R - 0.02 and err < 0.35
+
+
+def test_orca_swap_four_jittered():
+    # exactly symmetric 4/8-robot swaps can jam in the centre (known ORCA symmetry
+    # deadlock, no tie-break); 5 cm of start jitter is enough to resolve it
+    err, mind = _circle_swap(4, 0.05)
+    assert mind > 2 * d.R - 0.02 and err < 0.35
+
+
+def test_orca_lp_fallback_when_infeasible():
+    # robot boxed in by three static neighbours whose half-planes cannot all hold:
+    # the LP must still return a finite velocity within the speed limit
+    world = d.open_world(30)
+    pos = np.array([[15.0, 15.0], [15.45, 15.0], [14.55, 15.0], [15.0, 15.45]])
+    vel = np.zeros_like(pos)
+    pref = np.array([1.0, 0.0])
+    v = d.orca_velocity(0, pos, vel, np.array([25.0, 15.0]), world, pref)
+    assert np.all(np.isfinite(v)) and np.linalg.norm(v) <= d.VMAX + 1e-9
+    lines = [d._orca_line(pos[j] - pos[0], -vel[j], 2 * d.R + 0.05, 3.0) for j in (1, 2, 3)]
+    lines = [(u, dr) for u, dr in lines]
+    _, fail = d._lp2(lines, d.VMAX, pref, False)
+    assert fail < len(lines)                      # genuinely infeasible, fallback used
+
+
+def test_orca_lp_feasible_matches_pref():
+    v, fail = d._lp2([], d.VMAX, np.array([0.4, 0.3]), False)
+    assert fail == 0 and np.allclose(v, [0.4, 0.3])
+    v, _ = d._lp2([], d.VMAX, np.array([3.0, 4.0]), False)
+    assert np.allclose(np.linalg.norm(v), d.VMAX)
+
+
+def test_orca_registered():
+    assert 'orca' in d.CTRLS and 'orca' in d.CTRL_NAMES

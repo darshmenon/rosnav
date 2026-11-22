@@ -39,7 +39,7 @@ R = 0.30            # robot radius
 VMAX = 1.0
 OUT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'images', 'decentral_nav'))
 MAP_DIR = os.path.expanduser('~/inspiration/movingai_maps/maps')
-CTRLS = ('pref', 'vo', 'mppi', 'mppi_prior')
+CTRLS = ('pref', 'vo', 'mppi', 'mppi_prior', 'orca')
 SCENARIOS = ('swap', 'maze', 'convoy', 'corridor', 'crowd')
 BASE_SCENARIOS = ('swap', 'maze', 'convoy')   # default bench set (unchanged)
 PED_R = 0.25                                  # pedestrian radius
@@ -406,6 +406,158 @@ def vo_velocity(i, pos, vel, goal, world, pref, k=121, horizon=3.0):
     return cand[int(np.argmin(cost))]
 
 
+# ── ORCA (van den Berg et al. 2011) ──────────────────────────────────────────
+def _det(a, b):
+    return a[0] * b[1] - a[1] * b[0]
+
+
+def _orca_line(rel_pos, rel_vel, comb_r, tau, dt=DT):
+    """One ORCA half-plane for a disc at rel_pos (B - A), rel_vel = vA - vB.
+    Returns (u, direction): u = smallest change of rel_vel that leaves the VO
+    truncated at tau; the allowed side is det(direction, v - point) >= 0."""
+    d2 = float(rel_pos @ rel_pos)
+    if d2 > comb_r * comb_r:
+        w = rel_vel - rel_pos / tau
+        w2 = float(w @ w)
+        dot1 = float(w @ rel_pos)
+        if dot1 < 0.0 and dot1 * dot1 > comb_r * comb_r * w2:      # project on cutoff circle
+            wl = math.sqrt(w2)
+            uw = w / max(wl, 1e-12)
+            return (comb_r / tau - wl) * uw, np.array([uw[1], -uw[0]])
+        leg = math.sqrt(d2 - comb_r * comb_r)                       # project on a leg
+        if _det(rel_pos, w) > 0.0:
+            dr = np.array([rel_pos[0] * leg - rel_pos[1] * comb_r,
+                           rel_pos[0] * comb_r + rel_pos[1] * leg]) / d2
+        else:
+            dr = -np.array([rel_pos[0] * leg + rel_pos[1] * comb_r,
+                            -rel_pos[0] * comb_r + rel_pos[1] * leg]) / d2
+        return float(rel_vel @ dr) * dr - rel_vel, dr
+    w = rel_vel - rel_pos / dt                                      # already overlapping:
+    wl = math.sqrt(float(w @ w))                                    # resolve within one tick
+    uw = w / max(wl, 1e-12)
+    return (comb_r / dt - wl) * uw, np.array([uw[1], -uw[0]])
+
+
+def _lp1(lines, k, radius, opt, direction_opt, v_out):
+    p, d = lines[k]
+    dot = float(p @ d)
+    disc = dot * dot + radius * radius - float(p @ p)
+    if disc < 0.0:
+        return False
+    sq = math.sqrt(disc)
+    lo, hi = -dot - sq, -dot + sq
+    for q, e in lines[:k]:
+        den = _det(d, e)
+        num = _det(e, p - q)
+        if abs(den) <= 1e-9:
+            if num < 0.0:
+                return False
+            continue
+        t = num / den
+        if den >= 0.0:
+            hi = min(hi, t)
+        else:
+            lo = max(lo, t)
+        if lo > hi:
+            return False
+    if direction_opt:
+        t = hi if float(opt @ d) > 0.0 else lo
+    else:
+        t = min(max(float(d @ (opt - p)), lo), hi)
+    v_out[:] = p + t * d
+    return True
+
+
+def _lp2(lines, radius, opt, direction_opt):
+    v = opt * radius if direction_opt else opt.copy()
+    if not direction_opt and float(v @ v) > radius * radius:
+        v = v / math.sqrt(float(v @ v)) * radius
+    v = np.array(v, float)
+    for k, (p, d) in enumerate(lines):
+        if _det(d, p - v) > 0.0:                                    # v violates line k
+            keep = v.copy()
+            if not _lp1(lines, k, radius, opt, direction_opt, v):
+                return keep, k
+    return v, len(lines)
+
+
+def _lp3(lines, begin, radius, v, n_obst=0):
+    """Fallback when the lines are jointly infeasible: minimise the worst violation
+    (wall lines stay hard constraints, neighbour lines are projected)."""
+    dist = 0.0
+    for i in range(begin, len(lines)):
+        p_i, d_i = lines[i]
+        if _det(d_i, p_i - v) > dist:
+            proj = list(lines[:n_obst])
+            for j in range(n_obst, i):
+                p_j, d_j = lines[j]
+                den = _det(d_i, d_j)
+                if abs(den) <= 1e-9:
+                    if float(d_i @ d_j) > 0.0:
+                        continue
+                    pt = 0.5 * (p_i + p_j)
+                else:
+                    pt = p_i + (_det(d_j, p_i - p_j) / den) * d_i
+                dd = d_j - d_i
+                proj.append((pt, dd / max(math.sqrt(float(dd @ dd)), 1e-12)))
+            cand, fail = _lp2(proj, radius, np.array([-d_i[1], d_i[0]]), True)
+            if fail == len(proj):
+                v = cand
+            dist = _det(d_i, p_i - v)
+    return v
+
+
+def _static_points(world, p, reach=2):
+    """Nearest point of each blocked cell / slab near p (static obstacles, as points)."""
+    ix, iy = int(math.floor(p[0] + 0.5)), int(math.floor(p[1] + 0.5))
+    boxes = []
+    for cy in range(iy - reach, iy + reach + 1):
+        for cx in range(ix - reach, ix + reach + 1):
+            if not (0 <= cx < world.w and 0 <= cy < world.h and world.free[cy, cx]):
+                boxes.append((cx - 0.5, cx + 0.5, cy - 0.5, cy + 0.5))
+    boxes += list(getattr(world, 'slabs', []))
+    pts = []
+    for xa, xb, ya, yb in boxes:
+        q = np.array([min(max(p[0], xa), xb), min(max(p[1], ya), yb)])
+        if float(np.linalg.norm(q - p)) < reach + 0.5:
+            pts.append(q)
+    return pts
+
+
+def orca_velocity(i, pos, vel, goal, world, pref, tau=3.0, tau_obs=1.0, n_robots=None,
+                  max_nb=10, nb_dist=6.0, margin=0.05, parked=0.05):
+    """True ORCA: one half-plane per neighbour (reciprocal share 0.5; static, parked or
+    non-robot neighbours such as pedestrians: full share 1.0) plus one per nearby wall
+    point, then the 2-D LP closest to `pref` inside the speed disc; when jointly
+    infeasible, the 3-D-LP fallback minimises the worst constraint violation."""
+    n_robots = len(pos) if n_robots is None else n_robots
+    pi, vi = pos[i], vel[i]
+    nbs = []
+    for j in range(len(pos)):
+        if j != i:
+            d = float(np.linalg.norm(pos[j] - pi))
+            if d < nb_dist:
+                nbs.append((d, j))
+    nbs.sort()
+    lines = []
+    for pt in _static_points(world, pi):          # walls first (RVO2 puts obstacles first)
+        rp = pt - pi
+        if float(rp @ rp) < 1e-12:
+            continue
+        u, dr = _orca_line(rp, vi, R + margin, tau_obs)
+        lines.append((vi + u, dr))
+    n_obst = len(lines)
+    for _, j in nbs[:max_nb]:
+        rel_pos, rel_vel = pos[j] - pi, vi - vel[j]
+        u, dr = _orca_line(rel_pos, rel_vel, 2 * R + margin, tau)
+        share = 0.5 if (j < n_robots and float(np.linalg.norm(vel[j])) > parked) else 1.0
+        lines.append((vi + share * u, dr))
+    v, fail = _lp2(lines, VMAX, pref, False)
+    if fail < len(lines):
+        v = _lp3(lines, fail, VMAX, v, n_obst)
+    return v
+
+
 def mppi_velocity(i, pos, vel, goal, world, pref, rng, prior=None, K=96, H=12, lam=0.35, sigma=0.55):
     mean = pref if prior is None else prior
     u = mean[None, :] + rng.normal(0, sigma, (K, 2))
@@ -442,6 +594,8 @@ def command(ctrl, i, pos, vel, goals, world, rng):
         return pref
     if ctrl == 'vo':
         return vo_velocity(i, pos, vel, g, world, pref)
+    if ctrl == 'orca':
+        return orca_velocity(i, pos, vel, g, world, pref, n_robots=len(goals))
     if ctrl == 'mppi':
         return mppi_velocity(i, pos, vel, g, world, pref, rng)
     # mppi_prior: VO velocity as prior + id-priority yield in head-on symmetry
@@ -654,6 +808,7 @@ CTRL_NAMES = {
     'vo': 'Sampled velocity obstacle (ORCA-like)',
     'mppi': 'MPPI, uninformed sampling',
     'mppi_prior': 'MPPI + velocity-obstacle prior + yield rule',
+    'orca': 'ORCA (half-planes + 2-D LP, van den Berg 2011)',
 }
 
 

@@ -11,7 +11,7 @@ PLAN = np.stack([np.linspace(0, 10, 41), np.zeros(41)], axis=1)   # straight alo
 
 
 def test_follows_plan_direction():
-    for ctrl in ('vo', 'mppi_prior'):
+    for ctrl in ('vo', 'mppi_prior', 'orca'):
         vx, vy, info = n.compute_velocity(ctrl, 0, [[1.0, 0.0]], [[0.0, 0.0]], PLAN, vmax=0.5)
         assert vx > 0.2 and abs(vy) < 0.25, (ctrl, vx, vy)
         assert info['reason'] == 'ok'
@@ -107,7 +107,7 @@ def test_creeps_through_the_last_25cm_then_stops():
 
 # ── near-goal dither fixes (2026-11-20) ──────────────────────────────────────
 def test_handoff_follows_plan_straight_in_near_goal():
-    for ctrl in ('vo', 'mppi_prior'):
+    for ctrl in ('vo', 'mppi_prior', 'orca'):
         vx, vy, info = n.compute_velocity(ctrl, 0, [[9.2, 0.0]], [[0.0, 0.0]], PLAN, vmax=0.5)
         assert info['reason'] == 'handoff' and vx > 0.2 and abs(vy) < 1e-6, (ctrl, vx, vy)
         assert info['why'].startswith('handoff')
@@ -173,3 +173,151 @@ def test_dithering_goal_approach_converges():
         if np.linalg.norm(pos - plan[-1]) < 0.15:
             break
     assert np.linalg.norm(pos - plan[-1]) < 0.15, pos
+
+
+# ── orca controller (2026-11-20) ─────────────────────────────────────────────
+def test_orca_is_a_valid_ctrl():
+    assert 'orca' in n.CTRLS and set(n.CTRLS) <= set(n.sim.CTRLS)
+
+
+def test_orca_head_on_deflects_and_bounded():
+    pos, vel = [[2.0, 0.0], [4.0, 0.0]], [[0.4, 0.0], [-0.4, 0.0]]
+    vx, vy, info = n.compute_velocity('orca', 0, pos, vel, PLAN, vmax=0.5)
+    assert info['reason'] == 'ok' and math.hypot(vx, vy) <= 0.5 + 1e-6
+    assert abs(vy) > 0.02 or vx < 0.4            # ORCA yields its share of the avoidance
+
+
+def test_orca_handoff_and_creep_same_as_vo():
+    for me, reason in (([[9.2, 0.0]], 'handoff'), ([[9.85, 0.0]], 'creep')):
+        _, _, io = n.compute_velocity('orca', 0, me, [[0.0, 0.0]], PLAN, vmax=0.5)
+        _, _, iv = n.compute_velocity('vo', 0, me, [[0.0, 0.0]], PLAN, vmax=0.5)
+        assert io['reason'] == iv['reason'] == reason
+    pos, vel = [[9.2, 0.0], [9.6, 0.0]], [[0.3, 0.0], [-0.3, 0.0]]
+    _, _, info = n.compute_velocity('orca', 0, pos, vel, PLAN, vmax=0.5)
+    assert info['why'].startswith('avoid')
+
+
+def test_orca_parked_neighbour_is_a_static_obstacle_not_a_yield_partner():
+    me = np.array([[3.0, 1.5], [3.0, 0.0]])
+    vx, vy, info = n.compute_velocity('orca', 1, me, np.zeros((2, 2)), PLAN, vmax=0.5, arrived=[0])
+    assert vx > 0.15 and 'parked' in info['why']
+
+
+def test_orca_rejects_unknown_ctrl_in_node_list():
+    assert 'nope' not in n.CTRLS
+
+
+def test_orca_roundabout_bias_only_with_a_moving_neighbour_nearby():
+    solo = n.compute_velocity('orca', 0, [[1.0, 0.0]], [[0.0, 0.0]], PLAN, vmax=0.5)
+    assert abs(solo[1]) < 0.05                                   # alone: straight along the plan
+    far = n.compute_velocity('orca', 0, [[1.0, 0.0], [1.0, 6.0]], [[0.0, 0.0], [0.0, 0.0]], PLAN, vmax=0.5)
+    assert abs(far[1]) < 0.05                                    # neighbour 6 m away: no bias
+    near = n.compute_velocity('orca', 0, [[1.0, 0.0], [1.0, 2.5]], [[0.0, 0.0], [0.0, 0.0]], PLAN, vmax=0.5)
+    assert near[1] > 0.03                                        # neighbour within 3 m: CCW bias
+    parked = n.compute_velocity('orca', 0, [[1.0, 0.0], [1.0, 2.5]], [[0.0, 0.0], [0.0, 0.0]], PLAN, vmax=0.5, arrived=[1])
+    assert abs(parked[1]) < 0.05                                 # arrived neighbours do not trigger it
+
+
+def test_orca_stall_breaker_higher_id_sidesteps_when_mutually_stopped():
+    pos, vel = [[3.0, 0.0], [3.8, 0.0]], np.zeros((2, 2))
+    lo = n.compute_velocity('orca', 0, pos, vel, PLAN, vmax=0.5)
+    hi = n.compute_velocity('orca', 1, pos, vel, PLAN, vmax=0.5)
+    assert abs(hi[1]) > 0.1 or abs(hi[0]) < 0.1 and abs(hi[1]) > 0.05, hi    # id 1 moves sideways
+    assert math.hypot(lo[0], lo[1]) <= 0.5 + 1e-6
+
+
+# ── orca in a 1.5 m corridor (live corridor_4 deadlock, 2026-11-20) ──────────
+def _corridor_walls(width=1.5, length=10.0):
+    xs = np.arange(-0.5, length + 0.5, 0.05)
+    return np.vstack([np.stack([xs, np.full_like(xs, s * width / 2)], 1) for s in (1, -1)])
+
+
+def test_orca_nose_to_nose_in_corridor_has_a_sidestep():
+    """Walls at +-0.75 round to +-0.5 in the 1 m cost-field cells; ORCA must see the exact returns, else the +-0.15 m
+    lane left no sidestep and both robots parked."""
+    walls = _corridor_walls()
+    pos = np.array([[5.5, -0.15], [4.85, 0.15]])
+    plan = np.stack([np.linspace(5.5, -4.0, 40), np.linspace(-0.15, 0.3, 40)], 1)
+    vx, vy, info = n.compute_velocity('orca', 0, pos, np.zeros((2, 2)), plan, walls, vmax=0.5, ids=[1, 0])
+    assert math.hypot(vx, vy) > 0.1, (vx, vy, info)
+    assert info['why'].startswith('stall-break'), info['why']
+
+
+def test_orca_stall_break_uses_global_ids_not_row_index():
+    """The node is always row 0, so `i > j` on rows never fired: the higher GLOBAL id must be the one that yields."""
+    pos, vel = np.array([[3.0, 0.0], [3.8, 0.0]]), np.zeros((2, 2))
+    hi = n.compute_velocity('orca', 0, pos, vel, PLAN, vmax=0.5, ids=[5, 2])
+    lo = n.compute_velocity('orca', 0, pos, vel, PLAN, vmax=0.5, ids=[2, 5])
+    assert hi[2]['why'].startswith('stall-break') and abs(hi[1]) > 0.05
+    assert not lo[2]['why'].startswith('stall-break')
+
+
+def test_orca_ignores_neighbour_bodies_in_the_scan_as_walls():
+    w = n.PlanWorld(PLAN, np.array([[5.0, 1.0], [5.2, 1.0]]), [[1.0, 0.0], [5.1, 1.0]])
+    assert len(n._ExactWalls(w, np.array([[1.0, 0.0], [5.1, 1.0]]) - w.origin, 0, near=9.0).slabs) == 0
+
+
+def _run_corridor_swap(ctrl, T=90.0, dt=0.1):
+    """4 node-logic instances (2 per side) head-on through a 1.5 m corridor: scan = wall returns + neighbour bodies,
+    straight plans, odom-derived velocities, heading hysteresis + unicycle tracker, exactly the node's tick path."""
+    starts = [(-3.0, -0.25, 0.0), (-4.5, 0.25, 0.0), (13.0, 0.25, math.pi), (14.5, -0.25, math.pi)]
+    goals = np.array([(14.0, -0.3), (15.5, 0.3), (-4.0, 0.3), (-5.5, -0.3)])
+    pos = np.array([[s[0], s[1]] for s in starts])
+    yaw = np.array([s[2] for s in starts])
+    v, w = np.zeros(4), np.zeros(4)
+    hy = [n.HeadingHysteresis() for _ in range(4)]
+    walls = _corridor_walls()
+    for k in range(int(T / dt)):
+        vel = np.stack([v * np.cos(yaw), v * np.sin(yaw)], 1)
+        parked = [np.linalg.norm(goals[j] - pos[j]) < 0.5 and abs(v[j]) < 0.05 for j in range(4)]
+        nv, nw = v.copy(), w.copy()
+        for i in range(4):
+            order = [i] + [j for j in range(4) if j != i]
+            plan = np.stack([np.linspace(pos[i][0], goals[i][0], 60), np.linspace(pos[i][1], goals[i][1], 60)], 1)
+            sc = [walls[np.linalg.norm(walls - pos[i], axis=1) < 4.0]]
+            a = np.linspace(0, 2 * math.pi, 12, endpoint=False)
+            for j in order[1:]:
+                if np.linalg.norm(pos[j] - pos[i]) < 4:
+                    sc.append(pos[j] + 0.3 * np.stack([np.cos(a), np.sin(a)], 1))
+            arr = [kk for kk, j in enumerate(order) if kk and parked[j]]
+            vx, vy, _ = n.compute_velocity(ctrl, 0, pos[order], vel[order], plan, np.vstack(sc), None, 0.5, 1.0, arr,
+                                           ids=order)
+            vx, vy, _ = hy[i].update(vx, vy)
+            if np.linalg.norm(goals[i] - pos[i]) < 0.15:
+                nv[i] = nw[i] = 0.0
+            else:
+                nv[i], nw[i] = n.track_unicycle((vx, vy), yaw[i], v[i], w[i], 0.5, 1.0, dt=dt)
+        v, w = nv, nw
+        yaw = yaw + w * dt
+        pos = pos + dt * np.stack([v * np.cos(yaw), v * np.sin(yaw)], 1)
+        if min(np.linalg.norm(pos[a_] - pos[b_]) for a_ in range(4) for b_ in range(a_)) < 0.6:
+            return False, k * dt
+        if all(np.linalg.norm(goals[j] - pos[j]) < 0.3 for j in range(4)):
+            return True, k * dt
+    return False, T
+
+
+def test_orca_four_robots_head_on_in_1p5m_corridor_all_arrive():
+    ok, t = _run_corridor_swap('orca')
+    assert ok, f'corridor deadlock/collision at t={t}'
+
+
+def test_people_tracker_finite_difference_and_radius():
+    import json
+    pt = n.PeopleTracker(radius=3.0, max_age=1.0)
+    pt.update(json.dumps({'peds': [{'id': 1, 'x': 0.0, 'y': 0.0, 'vx': 0.0, 'vy': 0.0},
+                                   {'id': 2, 'x': 9.0, 'y': 0.0}]}), 0.0)
+    pt.update(json.dumps({'peds': [{'id': 1, 'x': 0.4, 'y': 0.0, 'vx': 0.0, 'vy': 0.0},
+                                   {'id': 2, 'x': 9.0, 'y': 0.0}]}), 1.0)
+    near = pt.near((0.0, 0.0), 1.0)
+    assert [n[0] for n in near] == [1]                    # person 2 is outside the radius
+    assert abs(near[0][2][0] - 0.2) < 1e-9                # 0.4 m/s raw, alpha 0.5 smoothing from 0
+    assert pt.near((0.0, 0.0), 5.0) == []                 # stale feed drops out
+
+
+def test_people_tracker_uses_feed_velocity_and_survives_bad_json():
+    import json
+    pt = n.PeopleTracker()
+    assert pt.update('not json', 0.0) == 0
+    pt.update(json.dumps({'peds': [{'id': 7, 'x': 1.0, 'y': 1.0, 'vx': 0.3, 'vy': -0.1}]}), 0.0)
+    assert pt.near((1.0, 1.0), 0.0)[0][2] == (0.3, -0.1)

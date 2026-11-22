@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 decentral_nav_node.py — per-robot ROS 2 wrapper around decentral_nav_sim's decentralized controllers
-(`vo` sampled velocity obstacle, `mppi_prior` MPPI around a VO prior). Research controller, same
+(`vo` sampled velocity obstacle, `mppi_prior` MPPI around a VO prior, `orca` true ORCA half-planes + 2-D LP). Research controller, same
 status as mpc_controller.py: it publishes `cmd_vel_topic` (default `cmd_vel_nav`, relative -> /robotN/cmd_vel_nav)
 instead of Nav2's controller_server output (the launch sends that to an unused topic).
 
@@ -26,6 +26,7 @@ The pure computation lives in ROS-free functions (`compute_velocity`, `track_uni
 from __future__ import annotations
 
 import importlib.util
+import json
 import math
 import os
 
@@ -159,9 +160,74 @@ def _dist_to_segment(pts, a, b):
     return np.linalg.norm(pts - (a + t[:, None] * ab), axis=1)
 
 
-def _command(ctrl, i, lp, vel, goals, world, rng, arrived):
+CTRLS = ('vo', 'mppi_prior', 'orca')   # valid `ctrl` values (orca: arrived neighbours are zero-velocity -> full-share walls)
+
+
+ORCA_BIAS = 0.17      # rad (~10 deg), CCW; see _orca_command
+ORCA_BIAS_R = 3.0     # m: only while a not-yet-parked neighbour is this close
+
+
+class _ExactWalls:
+    """World view for sim.orca_velocity with EXACT wall points instead of the PlanWorld's 1 m cost-field cells.
+
+    orca_velocity takes the nearest point of every blocked 1 m cell as a wall point; a 1.5 m corridor whose walls
+    round into the neighbouring cells then looks ~1.0 m wide (walls at +-0.5), leaving robots (R=0.3 + margin) a
+    +-0.15 m lane: no sidestep exists, ORCA returns ~0 and two head-on robots park nose to nose (live corridor_4
+    orca, 2026-11-20). Here the walls are the real scan returns (voxel-thinned, near the robot only), minus returns
+    that are just other robots' bodies (those are reciprocal ORCA neighbours, not static walls)."""
+
+    def __init__(self, world, lp, i, near=1.4, voxel=0.1, body_r=0.45):
+        self.w, self.h = world.w, world.h
+        self.free = np.ones((world.h, world.w), bool)
+        self.slabs = []
+        pts = getattr(world, 'pts', None)
+        if pts is None or not len(pts):
+            self.free = world.free                      # no scan: keep the coarse-cell behaviour
+            return
+        pts = pts[np.linalg.norm(pts - lp[i], axis=1) < near]
+        for j in range(len(lp)):
+            if j != i and len(pts):
+                pts = pts[np.linalg.norm(pts - lp[j], axis=1) > body_r]
+        if len(pts):
+            _, keep = np.unique(np.rint(pts / voxel).astype(int), axis=0, return_index=True)
+            self.slabs = [(x - 0.01, x + 0.01, y - 0.01, y + 0.01) for x, y in pts[keep]]
+
+
+def _orca_command(i, lp, vel, goals, world, arrived, ids=None, notes=None):
+    """sim.command('orca') plus a roundabout bias: with the live Nav2 stack the exactly symmetric 4-robot circle swap
+    deadlocked at the centre (all four ORCA solutions ~0, 0/4 in Gazebo, 2026-11-20): plain ORCA has no tie-break. While a
+    moving neighbour is within ORCA_BIAS_R, every robot rotates its preferred velocity ORCA_BIAS rad counter-clockwise,
+    so all pass on the same side (right-hand traffic); two mutually stopped robots (both <0.15 m/s, <2.2 m apart) break the tie by id (higher id sidesteps). Goal creep / parked neighbours are unaffected."""
+    g = goals[i]
+    if np.linalg.norm(g - lp[i]) < 0.25:
+        return np.zeros(2)
+    pref = sim.VMAX * world.pref_dir(lp[i], g)
+    near = any(j != i and j not in arrived and np.linalg.norm(lp[j] - lp[i]) < ORCA_BIAS_R for j in range(len(lp)))
+    if near:
+        c, s_ = math.cos(ORCA_BIAS), math.sin(ORCA_BIAS)
+        pref = np.array([c * pref[0] - s_ * pref[1], s_ * pref[0] + c * pref[1]])
+    # stall breaker (same id-priority rule as mppi_prior): bias alone did not unlock a mutual stop at the centre (live,
+    # 2026-11-20: all four robots parked at ~0.5 m from the centre, ORCA treats a stopped neighbour as a static wall).
+    for j in range(len(lp)):
+        if j == i or j in arrived:
+            continue
+        rel = lp[j] - lp[i]
+        dist = np.linalg.norm(rel)
+        # `ids`: global priority of each row. The node always puts ITSELF at row 0, so comparing row indices (i > j)
+        # could never be true there and the breaker was dead code live; ids restore a consistent global order.
+        hi = (ids[i] > ids[j]) if ids is not None else (i > j)
+        if dist < 2.2 and np.linalg.norm(vel[j]) < 0.15 and np.linalg.norm(vel[i]) < 0.15 and hi:
+            pref = 0.6 * sim.VMAX * np.array([-rel[1], rel[0]]) / (dist + 1e-9)
+            if notes is not None:
+                notes.append(f'stall-break: stopped nose to nose with idx {j} ({dist:.2f} m), higher id sidesteps')
+    return sim.orca_velocity(i, lp, vel, g, _ExactWalls(world, lp, i), pref, n_robots=len(goals))
+
+
+def _command(ctrl, i, lp, vel, goals, world, rng, arrived, ids=None, notes=None):
     """sim.command, except `mppi_prior`'s id-priority yield ignores ARRIVED neighbours (they are parked obstacles:
     sidestepping a robot that will never move made the robot circle its own goal forever)."""
+    if ctrl == 'orca':
+        return _orca_command(i, lp, vel, goals, world, arrived, ids, notes)
     if ctrl != 'mppi_prior' or not arrived:
         return sim.command(ctrl, i, lp, vel, goals, world, rng)
     g = goals[i]
@@ -180,7 +246,7 @@ def _command(ctrl, i, lp, vel, goals, world, rng, arrived):
 
 
 def compute_velocity(ctrl, i, pos, vel, plan_xy, scan_xy=None, rng=None, vmax=0.5, lookahead=1.0,
-                     arrived=None, handoff_d=1.0):
+                     arrived=None, handoff_d=1.0, ids=None):
     """Desired holonomic world-frame velocity for robot i.
 
     pos, vel: (N, 2) arrays in the plan frame (row i = this robot); plan_xy: Nx2 global plan;
@@ -237,8 +303,9 @@ def compute_velocity(ctrl, i, pos, vel, plan_xy, scan_xy=None, rng=None, vmax=0.
     o = world.origin
     lp, lg = pos - o, goal - o
     goals = np.tile(lg, (len(pos), 1))
-    v = _command(ctrl, i, lp, vel, goals, world, rng, arrived)
-    why = why_block or (f'follow: {gd:.2f} m from goal, {world.n_blocked} blocked cell(s)'
+    notes = []
+    v = _command(ctrl, i, lp, vel, goals, world, rng, arrived, ids, notes)
+    why = notes[0] if notes else why_block or (f'follow: {gd:.2f} m from goal, {world.n_blocked} blocked cell(s)'
                         + (f', {len(arrived)} parked neighbour(s) ignored as movers' if arrived else ''))
     return float(v[0]), float(v[1]), {'reason': 'ok', 'blocked_cells': world.n_blocked, 'why': why}
 
@@ -318,6 +385,53 @@ def goal_rotation(dist, yaw, goal_yaw, xy_tol=0.15, yaw_tol=0.12, w_max=0.6, k_w
 
 
 # ── ROS node ─────────────────────────────────────────────────────────────────
+class PeopleTracker:
+    """Walking people from a ground-truth JSON feed ({'peds': [{id, x, y, vx, vy}]}) as extra moving neighbours.
+
+    Velocity comes from the feed when it is non-zero, else from a smoothed finite difference of position (the gz crowd
+    mover publishes zeros). Only people within `radius` of the robot are returned; stale ones (> `max_age` s) drop out.
+    ROS-free so the unit tests call exactly this."""
+
+    def __init__(self, radius=5.0, max_age=1.0, alpha=0.5):
+        self.radius, self.max_age, self.alpha = radius, max_age, alpha
+        self.state = {}                               # id -> (x, y, vx, vy, t)
+
+    def update(self, msg_json, t):
+        try:
+            peds = json.loads(msg_json)['peds']
+        except (ValueError, KeyError, TypeError):
+            return 0
+        n = 0
+        for q in peds:
+            try:
+                pid, x, y = int(q['id']), float(q['x']), float(q['y'])
+                fv = (float(q.get('vx', 0.0)), float(q.get('vy', 0.0)))
+            except (KeyError, TypeError, ValueError):
+                continue
+            old = self.state.get(pid)
+            if math.hypot(*fv) > 1e-6:
+                v = fv
+            elif old is not None and t > old[4]:
+                dt = t - old[4]
+                raw = ((x - old[0]) / dt, (y - old[1]) / dt)
+                v = (self.alpha * raw[0] + (1 - self.alpha) * old[2], self.alpha * raw[1] + (1 - self.alpha) * old[3])
+                if math.hypot(*v) > 2.5:                     # teleport / first jump: not a real speed
+                    v = (old[2], old[3])
+            else:
+                v = (0.0, 0.0)
+            self.state[pid] = (x, y, v[0], v[1], t)
+            n += 1
+        return n
+
+    def near(self, me_xy, t):
+        """[(id, (x, y), (vx, vy))] of fresh people within `radius` of me_xy."""
+        out = []
+        for pid, (x, y, vx, vy, ts) in self.state.items():
+            if t - ts <= self.max_age and math.hypot(x - me_xy[0], y - me_xy[1]) <= self.radius:
+                out.append((pid, (x, y), (vx, vy)))
+        return out
+
+
 def main():
     import rclpy
     import tf2_ros
@@ -326,6 +440,7 @@ def main():
     from rclpy.node import Node
     from rclpy.qos import qos_profile_sensor_data
     from sensor_msgs.msg import LaserScan
+    from std_msgs.msg import String
 
     def yaw_of(q):
         return math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
@@ -334,7 +449,7 @@ def main():
         def __init__(self):
             super().__init__('decentral_nav')
             P = self.declare_parameter
-            P('ctrl', 'vo')                       # vo | mppi_prior
+            P('ctrl', 'vo')                       # vo | mppi_prior | orca
             P('neighbors', [''])                  # other robot namespaces, e.g. ['robot2', 'robot3']
             P('base_frame', '{ns}/base_link')
             P('cmd_vel_topic', 'cmd_vel_nav')
@@ -351,10 +466,12 @@ def main():
             P('plan_timeout', 15.0)               # s without a fresh plan -> zero (0 disables)
             P('pose_timeout', 1.0)
             P('seed', 0)
+            P('people_topic', '/social_peds/gt')   # '' disables; people become moving neighbours
+            P('people_radius', 5.0)
             g = lambda n: self.get_parameter(n).value  # noqa: E731
             self.ctrl = str(g('ctrl')).lower()
-            if self.ctrl not in ('vo', 'mppi_prior'):
-                raise ValueError(f"ctrl must be vo or mppi_prior, got {self.ctrl!r}")
+            if self.ctrl not in CTRLS:
+                raise ValueError(f"ctrl must be one of {'/'.join(CTRLS)}, got {self.ctrl!r}")
             self.ns = self.get_namespace().strip('/') or 'robot1'
             self.neigh = [n for n in g('neighbors') if n and n != self.ns]
             self.base = str(g('base_frame'))
@@ -379,6 +496,9 @@ def main():
             self.last_why = ''
             self.neigh_goal = {}                  # name -> last point of that robot's own plan
             self.last_info = None
+            self.people = PeopleTracker(radius=float(g('people_radius')))
+            if g('people_topic'):
+                self.create_subscription(String, g('people_topic'), self.on_people, 10)
             self.create_subscription(Path, g('plan_topic'), self.on_plan, 1)
             self.create_subscription(Odometry, g('odom_topic'), lambda m: self.on_odom(self.ns, m), 10)
             for n in self.neigh:
@@ -395,6 +515,9 @@ def main():
                 f'[decentral_nav] {self.ns}: ctrl={self.ctrl} neighbors={self.neigh} v_max={self.vmax} '
                 f'w_max={self.wmax} use_scan={self.use_scan} plan_timeout={self.plan_timeout}s -> '
                 f'{g("cmd_vel_topic")} (resolved /{self.ns}/{g("cmd_vel_topic")})')
+
+        def on_people(self, msg):
+            self.people.update(msg.data, self.now())
 
         def now(self):
             return self.get_clock().now().nanoseconds * 1e-9
@@ -494,8 +617,17 @@ def main():
                 g = self.neigh_goal.get(n)
                 if g is not None and math.hypot(*vel[k]) < 0.05 and math.hypot(pos[k][0] - g[0], pos[k][1] - g[1]) < 0.5:
                     arrived.append(k)
+            # walking people: extra moving neighbours after the robots (never "arrived"), lowest priority ids
+            ppl = self.people.near(pos[0], self.now())
+            for pid, pxy, pv in ppl:
+                names.append(f'person{pid}')
+                pos.append(list(pxy))
+                vel.append(list(pv))
+            # priority for the stall breaker: the node is always row 0, so rank by robot name (same on every robot)
+            rank = sorted({nm for nm in names if not nm.startswith('person')}, key=lambda s: (len(s), s))
+            ids = [rank.index(nm) if nm in rank else -1 for nm in names]
             vx, vy, info = compute_velocity(self.ctrl, 0, np.array(pos), np.array(vel), self.plan,
-                                            self.scan_points(), self.rng, self.vmax, self.lookahead, arrived)
+                                            self.scan_points(), self.rng, self.vmax, self.lookahead, arrived, ids=ids)
             vx, vy, hwhy = self.hyst.update(vx, vy)
             why = hwhy or info['why']
             if why.split(':')[0] != self.last_why.split(':')[0] or (hwhy and why != self.last_why):
