@@ -1184,13 +1184,16 @@ def _build_runtime_actions(context, pkg_share: str):
                 launch_arguments={'topic': '/points', 'base_frame': 'base_link', 'publish_odom_tf': 'false',
                                   'visualize': 'false', 'use_sim_time': 'true'}.items())])
     elif lidar_odom == 'rko_lio':
+        # rko_lio's launch file only reads param:=value from the command line (context.argv), so an
+        # IncludeLaunchDescription silently drops every argument ("missing required parameter(s)"): run it as a process.
+        # imu_frame/lidar_frame are left unset on purpose: rko_lio then reads the real frames (imu_link, laser_frame) from the
+        # message headers + TF, so the true IMU/lidar extrinsics are used (forcing base_link ignored the mount offsets).
+        rko_args = {'imu_topic': '/imu', 'lidar_topic': '/points', 'base_frame': 'base_link', 'odom_frame': 'rko_odom', 'autodetect': 'false', 'deskew': 'false',
+                    'use_sim_time': 'true'}
         lidar_odom_group = GroupAction(actions=[
             LogInfo(msg='[slam_nav] lidar_odom=rko_lio -> /rko_lio/odom (own odom frame rko_odom, deskew off: sim cloud has no per-point time)'),
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(os.path.join(get_package_share_directory('rko_lio'), 'launch', 'odometry.launch.py')),
-                launch_arguments={'imu_topic': '/imu', 'lidar_topic': '/points', 'base_frame': 'base_link',
-                                  'odom_frame': 'rko_odom', 'autodetect': 'false', 'deskew': 'false',
-                                  'use_sim_time': 'true'}.items())])
+            ExecuteProcess(cmd=['ros2', 'launch', 'rko_lio', 'odometry.launch.py'] + [f'{k}:={v}' for k, v in rko_args.items()],
+                           output='screen')])
     else:
         lidar_odom_group = LogInfo(msg='[slam_nav] lidar_odom disabled.')
 

@@ -1387,3 +1387,89 @@ def parse_param_overrides(raw: str) -> dict:
     if not isinstance(data, dict):
         raise ValueError(f'explorer_params must be a JSON object, got {type(data).__name__}')
     return data
+
+
+# ── RViz config for N robots ─────────────────────────────────────────────────
+_FLEET_COLORS = ['255; 85; 0', '0; 170; 255', '85; 255; 0', '255; 0; 200', '255; 220; 0',
+                 '0; 255; 200', '170; 85; 255', '255; 255; 255']
+
+
+def _find_display(displays, name):
+    """First display called `name`, searching nested rviz_common/Group displays too."""
+    for d in displays:
+        if d.get('Name') == name:
+            return d, displays
+        if 'Displays' in d:
+            hit = _find_display(d['Displays'], name)
+            if hit:
+                return hit
+    return None
+
+
+def occupancy_cloud_node(map_topic='/map'):
+    """Converter that feeds fleet_rviz_config(map_display='cloud'): /map -> /map_viz/{occupied,free} clouds."""
+    return Node(package='rosnav_bot', executable='occupancy_cloud.py', name='occupancy_cloud',
+                output='screen', parameters=[{'use_sim_time': True, 'map_topic': map_topic}])
+
+
+def _cloud_display(name, topic, color, alpha, size):
+    return {'Class': 'rviz_default_plugins/PointCloud2', 'Name': name, 'Enabled': True,
+            'Topic': {'Value': topic, 'Depth': 1, 'Durability Policy': 'Transient Local',
+                      'Reliability Policy': 'Reliable', 'History Policy': 'Keep Last', 'Filter size': 10},
+            'Color Transformer': 'FlatColor', 'Position Transformer': 'XYZ', 'Color': color,
+            'Style': 'Flat Squares', 'Size (m)': size, 'Alpha': alpha, 'Decay Time': 0.0,
+            'Use Fixed Frame': True, 'Selectable': False, 'Value': True}
+
+
+def fleet_rviz_config(names, base_path, view_scale=38.0, map_display='cloud', map_resolution=0.05):
+    """RViz config dict for any number of robots: starts from multi_robot.rviz (map, TF, grid),
+    clones the Robot1 model per name and adds a coloured /<name>/plan Path + /<name>/scan each.
+
+    map_display (RViz shader workaround, 2026-11-20): RViz2 Humble's Map display draws all three Color
+    Schemes (map/costmap/raw) via the same GLSL program rviz/glsl120/indexed_8bit_image, which fails to
+    link on some Mesa drivers. 'cloud' (default) swaps the primary "Map" display for two PointCloud2
+    displays fed by scripts/occupancy_cloud.py (/map_viz/occupied + /map_viz/free) -- the launch must run
+    `occupancy_cloud_node()`. 'map' keeps the original Map display unchanged (no converter needed).
+    Costmap displays are left as Map displays either way."""
+    import copy
+    import yaml
+    if map_display not in ('cloud', 'map'):
+        raise ValueError(f"map_display must be 'cloud' or 'map', got {map_display!r}")
+    import copy
+    import yaml
+    with open(base_path) as f:
+        cfg = yaml.safe_load(f)
+    disp = cfg['Visualization Manager']['Displays']
+    group = next(d for d in disp if d.get('Name') == 'Robot & TF')
+    model = next(d for d in group['Displays'] if d.get('Name') == 'Robot1 Model')
+    group['Displays'] = [d for d in group['Displays'] if not str(d.get('Name', '')).endswith(' Model')]
+    disp[:] = [d for d in disp if d.get('Name') != 'Sensors']  # per-robot scans added below
+    for i, ns in enumerate(names):
+        col = _FLEET_COLORS[i % len(_FLEET_COLORS)]
+        m = copy.deepcopy(model)
+        m['Name'] = f'{ns} Model'
+        m['TF Prefix'] = ns
+        m['Description Topic']['Value'] = f'/{ns}/robot_description'
+        group['Displays'].append(m)
+        disp.append({'Class': 'rviz_default_plugins/Path', 'Name': f'{ns} plan', 'Enabled': True,
+                     'Topic': {'Value': f'/{ns}/plan', 'Depth': 5, 'Reliability Policy': 'Reliable'},
+                     'Color': col, 'Line Style': 'Lines', 'Line Width': 0.04, 'Alpha': 0.9})
+        disp.append({'Class': 'rviz_default_plugins/LaserScan', 'Name': f'{ns} scan', 'Enabled': True,
+                     'Topic': {'Value': f'/{ns}/scan', 'Depth': 5, 'Reliability Policy': 'Best Effort'},
+                     'Color Transformer': 'FlatColor', 'Color': col, 'Size (m)': 0.03,
+                     'Style': 'Points', 'Alpha': 0.6})
+    if map_display == 'cloud':
+        hit = _find_display(disp, 'Map')
+        if hit and hit[0].get('Class') == 'rviz_default_plugins/Map':
+            siblings = hit[1]
+            idx = siblings.index(hit[0])
+            siblings[idx:idx + 1] = [
+                _cloud_display('Map free', '/map_viz/free', '225; 225; 225', 0.7, map_resolution),
+                _cloud_display('Map occupied', '/map_viz/occupied', '20; 20; 20', 1.0, map_resolution)]
+    views = cfg['Visualization Manager'].get('Views', {})
+    views['Current'] = {'Class': 'rviz_default_plugins/TopDownOrtho', 'Name': 'Current View',
+                        'Scale': view_scale, 'X': 0.0, 'Y': 0.0, 'Angle': 0.0,
+                        'Near Clip Distance': 0.01, 'Far Clip Distance': 100.0, 'Invert Z Axis': False,
+                        'Value': 'TopDownOrtho (rviz_default_plugins)'}
+    cfg['Visualization Manager']['Views'] = views
+    return cfg

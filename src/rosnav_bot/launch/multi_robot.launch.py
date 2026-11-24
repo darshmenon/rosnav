@@ -1134,6 +1134,13 @@ def _build_all(context, pkg_share: str):
                     'use_sim_time': True,
                     'autostart': True,
                     'node_names': ['docking_server'],
+                    # Nav2 Humble quirk: opennav_docking's Navigator::on_configure()
+                    # declares 'navigator_bt_xml' unconditionally and cleanup never
+                    # undeclares it, so a 2nd configure (after a bond-timeout reset
+                    # under CPU starvation) throws 'already been declared' and the
+                    # node is dead. Disable the bond (0.0) so a missed heartbeat can
+                    # never trigger that reset; docking is non-critical for navigation.
+                    'bond_timeout': 0.0,
                 }])
             docking_actions = [docking_node, docking_lc]
 
@@ -1529,14 +1536,38 @@ def _build_all(context, pkg_share: str):
     # ── RViz ─────────────────────────────────────────────────────────────────
     if not headless:
         rviz_config = LaunchConfiguration('rviz_config').perform(context).strip()
-        if not rviz_config:
-            rviz_config = 'multi_robot_merged.rviz' if slam_mode == 'multi' else 'multi_robot.rviz'
+        rviz_path = os.path.join(pkg_share, 'rviz', rviz_config) if rviz_config else ''
+        if not rviz_config and slam_mode != 'multi':
+            # no explicit config: generate one for exactly this fleet (any robot_count/names)
+            try:
+                # RViz Map-display shader workaround: see _common.fleet_rviz_config(map_display=...)
+                map_display = LaunchConfiguration('rviz_map_display').perform(context).strip() or 'cloud'
+                cfg = _common.fleet_rviz_config(
+                    [r['name'] for r in robots], os.path.join(pkg_share, 'rviz', 'multi_robot.rviz'),
+                    map_display=map_display)
+                if map_display == 'cloud':
+                    actions.append(_common.occupancy_cloud_node('/map'))
+                    actions.append(LogInfo(msg='[multi_robot] RViz map drawn as PointCloud2 via occupancy_cloud '
+                                               '(rviz_map_display:=map restores the stock Map display)'))
+                rviz_path = os.path.join(tempfile.mkdtemp(prefix='rosnav_rviz_'), 'fleet.rviz')
+                with open(rviz_path, 'w') as f:
+                    yaml.safe_dump(cfg, f, sort_keys=False)
+                actions.append(LogInfo(msg=f'[multi_robot] generated RViz config for {len(robots)} '
+                                           f'robot(s): {rviz_path}'))
+            except Exception as exc:  # fall back to the static 2-robot config
+                rviz_path = ''
+                actions.append(LogInfo(msg=f'[multi_robot] fleet RViz generation failed ({exc}); '
+                                           f'using static multi_robot.rviz'))
+        if not rviz_path:
+            rviz_path = os.path.join(
+                pkg_share, 'rviz',
+                rviz_config or ('multi_robot_merged.rviz' if slam_mode == 'multi' else 'multi_robot.rviz'))
         actions.append(GroupAction(
             condition=IfCondition(LaunchConfiguration('rviz')),
             actions=[Node(
                 package='rviz2',
                 executable='rviz2',
-                arguments=['-d', os.path.join(pkg_share, 'rviz', rviz_config)],
+                arguments=['-d', rviz_path],
                 output='screen')]))
 
     return actions
@@ -1560,6 +1591,10 @@ def generate_launch_description():
             'rviz_config', default_value='',
             description='RViz config filename under rviz/. Default auto-picks '
                         'multi_robot_merged.rviz (slam_mode:=multi) or multi_robot.rviz (slam_mode:=single).'),
+        DeclareLaunchArgument(
+            'rviz_map_display', default_value='cloud',
+            description='Generated fleet RViz config only. cloud = draw /map as PointCloud2 (avoids RViz Map '
+                        'display GLSL indexed_8bit_image link failure on some Mesa); map = stock Map display'),
         DeclareLaunchArgument(
             'explore', default_value='true',
             description='true = SLAM + frontier exploration (default). '
@@ -1628,8 +1663,8 @@ def generate_launch_description():
                         'uses its hand-tuned MPPI template) and drive_type:=ackermann (always MPPI).'),
         DeclareLaunchArgument(
             'decentral_ctrl', default_value='vo',
-            description='controller:=decentral only: "vo" (sampled velocity obstacle) or "mppi_prior" '
-                        '(scripts/decentral_nav_node.py). Experimental, unverified live.'),
+            description='controller:=decentral only: "vo" (sampled velocity obstacle), "mppi_prior" '
+                        'or "orca" (true ORCA half-planes + LP) (scripts/decentral_nav_node.py).'),
         DeclareLaunchArgument(
             'robot_count', default_value='2',
             description='Number of generated robots when robots_json is empty'),
