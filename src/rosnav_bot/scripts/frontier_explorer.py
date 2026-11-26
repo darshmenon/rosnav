@@ -1865,7 +1865,11 @@ def main(args=None):
     rclpy.init(args=args)
     node = FrontierExplorer()
     try:
-        rclpy.spin(node)
+        try:
+            rclpy.spin(node)
+        except Exception:  # noqa: BLE001 - a signal can invalidate the context mid-spin
+            if rclpy.ok():
+                raise
     except SystemExit:
         pass
     except KeyboardInterrupt:
@@ -1873,7 +1877,7 @@ def main(args=None):
     finally:
         node.destroy_node()
         if rclpy.ok():   # SIGINT already shut the context down: a second shutdown raised and exited 1
-            rclpy.shutdown()
+            rclpy.try_shutdown()
 
 
 if __name__ == '__main__':

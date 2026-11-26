@@ -225,6 +225,9 @@ def main(args=None):
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
+    except Exception:  # noqa: BLE001 - a signal can invalidate the context mid-spin
+        if rclpy.ok():
+            raise
     finally:
         node.destroy_node()
         if rclpy.ok():

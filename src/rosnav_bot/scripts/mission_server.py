@@ -53,6 +53,7 @@ from typing import Optional
 
 import rclpy
 from rclpy.action import ActionClient
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.utilities import remove_ros_args
 from action_msgs.msg import GoalStatus
@@ -471,8 +472,11 @@ def main():
         node = MissionServer()
         try:
             rclpy.spin(node)
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, ExternalShutdownException):
             pass
+        except Exception:  # noqa: BLE001 - a signal can invalidate the context mid-spin
+            if rclpy.ok():
+                raise
         finally:
             node.destroy_node()
             try:

@@ -234,12 +234,16 @@ def main():
     rclpy.init()
     node = SlamStallWatchdog()
     try:
-        rclpy.spin(node)
+        try:
+            rclpy.spin(node)
+        except Exception:  # noqa: BLE001 - a signal can invalidate the context mid-spin
+            if rclpy.ok():
+                raise
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     node.destroy_node()
     if rclpy.ok():
-        rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == '__main__':
