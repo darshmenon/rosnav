@@ -82,6 +82,8 @@ class CameraTerrainSpeedMask(Node):
         self.declare_parameter('rough_variance', 0.0015)
         self.declare_parameter('min_points_per_cell', 4)
         self.declare_parameter('publish_period', 1.0)
+        # speed fraction on the roughest ground; DWB can't turn in place below min_speed_theta/max_vel_theta (0.75)
+        self.declare_parameter('min_speed', 0.8)
 
         self._bridge = CvBridge()
         self._tf_buffer = Buffer()
@@ -193,7 +195,8 @@ class CameraTerrainSpeedMask(Node):
             smooth_var = float(self.get_parameter('smooth_variance').value)
             rough_var = float(self.get_parameter('rough_variance').value)
             frac = np.clip((var - smooth_var) / (rough_var - smooth_var), 0.0, 1.0)
-            value[valid_cells] = frac[valid_cells] * 100.0
+            slowest = (1.0 - float(self.get_parameter('min_speed').value)) * 100.0
+            value[valid_cells] = frac[valid_cells] * slowest
 
         # base_link-frame grid origin (behind/left corner) -> map frame.
         r_bm = quaternion_to_matrix(
@@ -224,12 +227,16 @@ def main():
     rclpy.init()
     node = CameraTerrainSpeedMask()
     try:
-        rclpy.spin(node)
+        try:
+            rclpy.spin(node)
+        except Exception:  # noqa: BLE001 - a signal can invalidate the context mid-spin
+            if rclpy.ok():
+                raise
     except KeyboardInterrupt:
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == '__main__':

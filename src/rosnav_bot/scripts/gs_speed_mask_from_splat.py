@@ -8,7 +8,7 @@ free split gs_mask_from_splat.py's KeepoutFilter mask uses (see concepts.md
 slow down through sparse/hazy splat regions (low confidence, or real open-air
 haze — see gs_mask_from_splat.py's docstring on why presence-only
 rasterization overmarks) instead of just refusing to enter, while still
-forcing a near-stop through the densest (most likely solid) regions.
+slowing most through the densest (most likely solid) regions (floor: --min-speed).
 
 Same density-count-per-cell approach as gs_mask_from_splat.py (binned grid,
 per-cell Gaussian COUNT, not mere presence), but instead of thresholding to
@@ -50,8 +50,11 @@ def main():
     ap.add_argument('--z-max', type=float, default=2.0, help='obstacle band ceiling (matches nav2_params.yaml VoxelLayer max_obstacle_height)')
     ap.add_argument('--dense-percentile', type=float, default=90.0,
                      help='Gaussian count at/above this percentile of nonzero cells maps to full '
-                          'restriction (mask value 100); count 0 always maps to 0 (unrestricted). '
+                          'restriction (--min-speed); count 0 always maps to 0 (unrestricted). '
                           'Same "densest cells are real surfaces" logic as gs_mask_from_splat.py.')
+    ap.add_argument('--min-speed', type=float, default=0.8,
+                    help='speed fraction in the densest cells. DWB scales max but not min speeds, so below '
+                         'min_speed_theta/max_vel_theta (0.75 here) the robot cannot turn in place, and near 0 it stalls')
     ap.add_argument('--align-to', default='', help='existing map yaml to inherit resolution/origin/size from, for pixel-exact overlay')
     ap.add_argument('--xy-crop', type=float, nargs=4, default=None, metavar=('XMIN', 'YMIN', 'XMAX', 'YMAX'),
                      help='drop points outside this XY box before rasterizing (see gs_mask_from_splat.py '
@@ -106,13 +109,15 @@ def main():
         raise SystemExit('No cells received any Gaussians — nothing to rasterize')
     dense_ref = max(np.percentile(nonzero, args.dense_percentile), 1.0)
     print(f'Gaussian count per cell: median(nonzero)={np.median(nonzero):.1f}, '
-          f'p{args.dense_percentile:g}={dense_ref:.1f} (-> mask value 100), max={nonzero.max():.0f}', flush=True)
+          f'p{args.dense_percentile:g}={dense_ref:.1f} (-> slowest), max={nonzero.max():.0f}', flush=True)
 
     # 0 (empty) -> 0, dense_ref and above -> 100, linear in between.
     value = np.clip(count / dense_ref * 100.0, 0.0, 100.0)
-    img = np.round(value).astype(np.uint8)
+    # scale to the speed floor; map_server 'scale' mode reads black=100, white=0, so invert (100 = 'no limit', cap 95)
+    limit = np.clip(value * (1.0 - args.min_speed), 0, 95)
+    img = np.round(255 * (1 - limit / 100.0)).astype(np.uint8)
     print(f'Mask value stats: mean={value.mean():.1f}, '
-          f'{(value >= 100).sum()}/{value.size} cells fully restricted ({100*(value>=100).sum()/value.size:.1f}%)', flush=True)
+          f'{(value >= 100).sum()}/{value.size} cells at the speed floor ({100*(value>=100).sum()/value.size:.1f}%)', flush=True)
 
     out_yaml = args.out
     out_pgm = os.path.splitext(out_yaml)[0] + '.pgm'
@@ -124,8 +129,8 @@ def main():
             'resolution': resolution,
             'origin': list(origin),
             'negate': 0,
-            'occupied_thresh': 0.65,
-            'free_thresh': 0.25,
+            'occupied_thresh': 1.0,
+            'free_thresh': 0.0,
         }, f, default_flow_style=None, sort_keys=False)
     print(f'Wrote {out_pgm} and {out_yaml}', flush=True)
 

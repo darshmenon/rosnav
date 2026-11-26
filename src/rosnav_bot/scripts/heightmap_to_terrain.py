@@ -52,7 +52,7 @@ def main():
     ap.add_argument('--res', type=float, default=0.25, help='output grid cell (m)')
     ap.add_argument('--max-deg', type=float, default=20.0, help='slope mapped to near-stop speed')
     ap.add_argument('--block-deg', type=float, default=25.0, help='slope above which keepout is set')
-    ap.add_argument('--min-speed', type=float, default=0.2, help='speed fraction at --max-deg')
+    ap.add_argument('--min-speed', type=float, default=0.8, help='speed fraction at --max-deg')
     a = ap.parse_args()
 
     im = np.asarray(Image.open(a.heightmap).convert('L'), dtype=np.float64) / 255.0
@@ -86,7 +86,8 @@ def main():
     ox, oy = xs[0] - a.res / 2, ys[0] - a.res / 2
     # SpeedFilter (scale mode): value = 100 * (1 - speed fraction); 0 = full speed
     frac = 1.0 - (1.0 - a.min_speed) * np.clip(slope / a.max_deg, 0, 1)
-    speed = np.round((1.0 - frac) * 255).astype(np.uint8)   # 0 .. (1-min_speed)*255
+    # map_server 'scale' mode reads black=100, white=0, so the pixel is the speed fraction itself
+    speed = np.round(frac * 255).astype(np.uint8)
     write_mask(a.out + '_speed', speed[::-1], a.res, ox, oy, 'scale')
     keep = np.where(slope > a.block_deg, 0, 254).astype(np.uint8)
     write_mask(a.out + '_keepout', keep[::-1], a.res, ox, oy, 'trinary')

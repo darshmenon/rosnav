@@ -2277,6 +2277,8 @@ Real bug, found by eyeballing the splat next to the robot model in `rviz/gs_over
 
 ## 30. GS Speed Costmap Filter (`gs_speed_mask_from_splat.py`)
 
+> **Correction (2026-11-26):** the speed mask this section describes was written inverted, so its slow-down strengths were wrong, and the earlier verification only showed that Nav2 received the mask. See §48.
+
 Density-graded sibling of §28's binary `KeepoutFilter`: `gs_speed_mask_from_splat.py` rasterizes the same per-cell Gaussian COUNT grid `gs_mask_from_splat.py` uses, but instead of thresholding to occupied/free, linearly maps count → a 0-100 mask value (0 = empty cell, 100 = at/above `--dense-percentile`) written with `mode: scale` (not `trinary`). A `nav2_costmap_2d::SpeedFilter` (`type: 1`) plugin reads it and slows the robot through sparse/hazy splat regions instead of refusing to enter them outright, while still forcing a near-stop through the densest (most likely solid) cells — useful when a `KeepoutFilter`'s all-or-nothing cutoff is too blunt (e.g. splat noise near a real doorway shouldn't hard-block it).
 
 **Wiring:** `config/gs_speed_filter.yaml` configures two nodes — `gs_speed_filter_mask_server` (serves the mask on `/gs/speed_filter_mask`) and `gs_speed_costmap_filter_info_server` (publishes `/gs/speed_filter_info`, `type: 1`, `base: 100.0`/`multiplier: -1.0` so mask value 0→100% speed and 100→0% speed). Deliberately distinct node names from §28's `filter_mask_server`/`costmap_filter_info_server` so both filters can run simultaneously without a name collision. `nav2_params*.yaml` (all 8 variants: humble/jazzy × default/mecanum/ackermann/mppi × single/multirobot) list a `speed_filter` plugin alongside `keepout_filter` on both costmaps, pointed at `/gs/speed_filter_info` — inert until that topic is actually published, same safe-by-default pattern as §28. `slam_nav.launch.py gs_speed_mask:=<mask.yaml>` starts the two filter nodes + a dedicated `lifecycle_manager_gs_speed`.
@@ -2467,6 +2469,8 @@ Three real bugs surfaced building this:
 ---
 
 ## 36. Terrain-Friction Speed Costmap (`multi_terrain_robot_diff`)
+
+> **Correction (2026-11-26):** the speed mask this section describes was written inverted, so its slow-down strengths were wrong, and the earlier verification only showed that Nav2 received the mask. See §48. The friction mask also placed zones in world coordinates although the map is spawn-relative; regenerate it with `--spawn -9.2 0`.
 
 The robot's only obstacle sensor is a 2D lidar — range only, no terrain semantics — so
 "multi-terrain navigation" has to get its cost signal from somewhere else. This section
@@ -3175,3 +3179,14 @@ Sources: [DRA-MPPI](https://arxiv.org/html/2506.21205v2), [C2U-MPPI](https://arx
 - **Multi-robot / CSLAM.** Swarm-SLAM merges pose graphs and loop closures, not occupancy grids, so comparing it with our merged 2D grids needs a poses-to-grid bridge first.
 - **Mecanum / Ackermann.** Nav2 MPPI has `Omni` and `Ackermann` motion models (Ackermann has `min_turning_r`); Smac 2D suits only circular diff-drive/omni robots, so Ackermann needs Smac Hybrid-A*. No mecanum-specific tuning guidance found.
 - **Social navigation.** 2026 work pairs online conformal calibration with runtime-certified planning (CoCoNav), conformalizes whole distance fields (FCP-MPC), or calibrates on how pedestrians react to the plan (interaction-aware CP); ETH/UCY is the shared benchmark. Fits our existing online gate.
+
+## 48. Layered terrain costmap, borrowed from mesh_navigation (2026-11-25, updated 2026-11-26)
+`scripts/ply_to_layered_costmap.py` takes a terrain `.ply` and writes graded Nav2 masks, instead of a single blocked/free test. The idea of combining terrain cost layers comes from naturerobots/mesh_navigation. No code or dependency was taken: the layers are computed on a 2D height grid, so plain Nav2 can use them.
+- **Layers:** steepness, roughness, step, ridge, border, clearance (low overhangs block, high canopy is ignored) and uncertainty (few points in a cell; a count-based stand-in inspired by ProTrav, arXiv 2610.30839, not a probabilistic model). Each is scaled to 0..1; the result is the weighted max plus an inflation halo.
+- **Outputs:** `<out>_speed.yaml` (SpeedFilter), `<out>_keepout.yaml` (cells at or above `--lethal`), a PNG per layer, `_cost.png`, and `_why.png` (which layer dominated each cell).
+- **Use:** `slam_nav.launch.py terrain_cost:=<ply>` builds the masks and fills any empty `gs_speed_mask` / `gs_keepout_mask`. The PLY must be in the spawn-relative map frame. In a headless `rough_terrain` launch the masks were built and Nav2 loaded them; driving with them has not been measured.
+- **Per drive type:** `--drive-type diff|mecanum|ackermann` picks preset limits (untuned guesses); explicit `--max-*` flags override.
+- **Mask encoding:** `map_server` in `scale` mode reads black as 100 and white as 0 (checked with a test PGM). `gs_speed_mask_from_splat.py`, `gen_terrain_speed_mask.py`, `heightmap_to_terrain.py` and the first version of this script wrote it inverted. All are fixed and cap below 100, because Nav2 treats a 0% limit as no limit.
+- **Speed floor:** Humble DWB scales max speeds with a speed limit but not `min_speed_xy` / `min_speed_theta`, and rejects a sample under both. With max 0.15 / 0.4 and min 0.08 / 0.3, turning in place is lost below 75% and a 5% limit rejects every sample. The floor is now 80% in the terrain mask scripts (`gs_speed_mask_from_splat.py` still goes down to 5%). `nav2_doctor` reports this as `FILTER_BELOW_MIN_SPEED`.
+- **Sim status:** one run with a 5% tile limit on `multi_terrain_robot_diff` stalled. A control run without any mask also aborted 4 of 6 goals, so that world has a separate, unexplained navigation problem. A later run with the 80% floor and `planner:=smac2d` reported an 80% limit in the tile zone, but goals timed out, probably because they sat behind a separator wall. Machine load reached about 50, so no driving result is reliable.
+- **Offline results:** 16 unit tests pass (this script and `terrain_traversability`). `map_outdoor_rocks_3d.ply` comes out 30% lethal; it is a noisy scan, so treat that as noise.

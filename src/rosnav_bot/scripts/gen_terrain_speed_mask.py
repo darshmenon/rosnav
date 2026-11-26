@@ -17,9 +17,10 @@ robot down, never blocks it outright (that's gs_keepout_mask / KeepoutFilter).
 
 Not a ROS node — plain re/numpy/Pillow/PyYAML, run in the normal ROS env:
 
-  ros2 run rosnav_bot gen_terrain_speed_mask.py \\
+  # --spawn is this world's slam_nav spawn: masks must be in the spawn-relative map frame
+  ros2 run rosnav_bot gen_terrain_speed_mask.py \
+      --spawn -9.2 0.0 \\
       --world src/rosnav_bot/worlds/multi_terrain_robot_diff.world \\
-      --align-to src/rosnav_bot/maps/map_multi_terrain_robot_diff.yaml \\
       --out src/rosnav_bot/maps/terrain_speed_multi_terrain_robot_diff.yaml
 
 Nav2 wiring: reuses the *existing* gs_speed_mask:=<path> launch arg on
@@ -68,6 +69,12 @@ def main():
     ap.add_argument('--align-to', default='', help='existing map yaml to inherit resolution/origin/size from, for pixel-exact overlay')
     ap.add_argument('--full-speed-mu', type=float, default=1.2, help='friction at/above which mask value is 0 (100% speed)')
     ap.add_argument('--min-speed-mu', type=float, default=0.25, help='friction at/below which mask value is 100 (near-stop)')
+    ap.add_argument('--min-speed', type=float, default=0.8,
+                    help='speed fraction in the worst zone. DWB scales max but not min speeds: keep at or above '
+                         'min_speed_theta/max_vel_theta (0.3/0.4 here), or the robot cannot turn in place')
+    ap.add_argument('--spawn', type=float, nargs=2, default=[0.0, 0.0], metavar=('X', 'Y'),
+                    help='world position of the robot spawn (yaw 0): SLAM/saved maps are spawn-relative, '
+                         'so zones are shifted by -spawn into the map frame')
     args = ap.parse_args()
 
     if args.full_speed_mu <= args.min_speed_mu:
@@ -76,6 +83,10 @@ def main():
     zones = parse_terrain_zones(args.world)
     if not zones:
         raise SystemExit(f'No terrain_* models found in {args.world}')
+
+    for z in zones:
+        z['x'] -= args.spawn[0]
+        z['y'] -= args.spawn[1]
 
     if args.align_to:
         with open(args.align_to) as f:
@@ -110,7 +121,7 @@ def main():
     for z in zones:
         mu = min(max(z['mu'], args.min_speed_mu), args.full_speed_mu)
         speed_pct = (mu - args.min_speed_mu) / (args.full_speed_mu - args.min_speed_mu)
-        mask_value = (1.0 - speed_pct) * 100.0  # matches gs_speed_filter.yaml's base=100,multiplier=-1
+        mask_value = (1.0 - speed_pct) * (1.0 - args.min_speed) * 100.0  # matches gs_speed_filter.yaml's base=100,multiplier=-1
         dx = gx - z['x']
         dy = gy - z['y']
         cyaw, syaw = np.cos(-z['yaw']), np.sin(-z['yaw'])
@@ -119,13 +130,14 @@ def main():
         inside = (np.abs(lx) <= z['sx'] / 2) & (np.abs(ly) <= z['sy'] / 2)
         value[inside] = mask_value
         covered |= inside
-        print(f"{z['name']}: mu={z['mu']} -> mask value {mask_value:.1f} ({speed_pct*100:.0f}% speed), "
+        print(f"{z['name']}: mu={z['mu']} -> mask value {mask_value:.1f} ({100 - mask_value:.0f}% speed), "
               f"{int(inside.sum())} cells", flush=True)
 
     print(f'{int(covered.sum())}/{covered.size} cells inside a terrain zone '
           f'({100*covered.sum()/covered.size:.1f}%); rest left at 0 (full speed)', flush=True)
 
-    img = np.round(value).astype(np.uint8)
+    # map_server 'scale' mode reads black=100, white=0, so invert; 100 would mean 'no limit' -> cap at 95
+    img = np.round(255 * (1 - np.clip(value, 0, 95) / 100.0)).astype(np.uint8)
     out_yaml = args.out
     out_pgm = os.path.splitext(out_yaml)[0] + '.pgm'
     Image.fromarray(img, mode='L').save(out_pgm)
@@ -136,8 +148,8 @@ def main():
             'resolution': resolution,
             'origin': list(origin),
             'negate': 0,
-            'occupied_thresh': 0.65,
-            'free_thresh': 0.25,
+            'occupied_thresh': 1.0,
+            'free_thresh': 0.0,
         }, f, default_flow_style=None, sort_keys=False)
     print(f'Wrote {out_pgm} and {out_yaml}', flush=True)
 

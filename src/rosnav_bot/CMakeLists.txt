@@ -118,6 +118,7 @@ install(
     scripts/pointcloud_to_scan.py
     scripts/scan_quality_gate.py
     scripts/terrain_traversability.py
+    scripts/ply_to_layered_costmap.py
     scripts/localization_accuracy_bench.py
     scripts/scripted_drive.py
     scripts/pointcloud_filter.py

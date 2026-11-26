@@ -28,6 +28,8 @@ docker/orb_slam3/README.md for why it can't run in-process here):
 
 import os
 import sys
+import tempfile
+import subprocess
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -175,6 +177,32 @@ def _resolve_spawn(world_name: str, x_arg: str, y_arg: str, z_arg: str, yaw_arg:
     )
 
 
+def _apply_terrain_cost(context, pkg_share: str, drive_type: str) -> str:
+    """terrain_cost:=<ply> -> build layered speed/keepout masks and fill the gs_*_mask args left empty."""
+    ply = LaunchConfiguration('terrain_cost').perform(context).strip()
+    if not ply:
+        return '[slam_nav] terrain_cost disabled (not set).'
+    if not os.path.isfile(ply):
+        raise RuntimeError(f'[slam_nav] terrain_cost: no such file: {ply}')
+    # next to this launch file's package: installed in lib/<pkg>, or scripts/ in a source tree
+    script = os.path.join(pkg_share, '..', '..', 'lib', 'rosnav_bot', 'ply_to_layered_costmap.py')
+    if not os.path.isfile(script):
+        script = os.path.join(pkg_share, 'scripts', 'ply_to_layered_costmap.py')
+    out = os.path.join(tempfile.mkdtemp(prefix='terrain_cost_'), 'terrain')
+    result = subprocess.run(
+        [sys.executable, script, '--ply', ply, '--out', out, '--drive-type', drive_type],
+        capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f'[slam_nav] terrain_cost failed:\n{result.stderr[-2000:]}')
+    used = []
+    for arg, suffix in (('gs_speed_mask', '_speed.yaml'), ('gs_keepout_mask', '_keepout.yaml')):
+        if not LaunchConfiguration(arg).perform(context).strip():
+            context.launch_configurations[arg] = out + suffix
+            used.append(arg)
+    return (f'[slam_nav] terrain_cost: {ply} -> {out}_*; set {used or "nothing (masks given explicitly)"} '
+            f'(PLY must be in the map frame). {result.stdout.strip()}')
+
+
 def _build_runtime_actions(context, pkg_share: str):
     world_name_arg = LaunchConfiguration('world_name').perform(context)
     world_arg = LaunchConfiguration('world').perform(context)
@@ -186,6 +214,7 @@ def _build_runtime_actions(context, pkg_share: str):
     robot_name = LaunchConfiguration('robot_name')
     controller = LaunchConfiguration('controller').perform(context).strip().lower()
     drive_type = LaunchConfiguration('drive_type').perform(context).strip().lower()
+    terrain_log = _apply_terrain_cost(context, pkg_share, drive_type)
     robot_model = LaunchConfiguration('robot_model').perform(context).strip().lower()
     lidar_type = LaunchConfiguration('lidar_type').perform(context).strip().lower()
     if lidar_type == '3d' and drive_type != 'diff':
@@ -1511,6 +1540,7 @@ def _build_runtime_actions(context, pkg_share: str):
         nav2_bringup_watchdog,
         gs_keepout_group,
         gs_binary_group,
+        LogInfo(msg=terrain_log),
         gs_speed_group,
         rviz2,
         collision_monitor,
@@ -1925,6 +1955,11 @@ def generate_launch_description():
                         'scripts/gs_speed_mask_from_splat.py (Gaussian-Splat density-graded '
                         'slow zones, distinct from the binary gs_keepout_mask). Empty '
                         '(default) = disabled. See concepts.md §30.'),
+        DeclareLaunchArgument(
+            'terrain_cost', default_value='',
+            description='Terrain .ply (map frame): build layered cost masks with '
+                        'scripts/ply_to_layered_costmap.py and use them as gs_speed_mask / '
+                        'gs_keepout_mask. Empty (default) = disabled. See concepts.md §48.'),
         DeclareLaunchArgument(
             'gs_privacy_mask', default_value='',
             description='Path to a Nav2 costmap-filter-mask yaml produced by '
