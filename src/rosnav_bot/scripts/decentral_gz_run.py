@@ -48,6 +48,8 @@ class Runner(Node):
         self.declare_parameter('collide_dist', 0.35)
         self.declare_parameter('label', 'vo')
         self.declare_parameter('out_dir', 'runs/decentral_gz')
+        self.declare_parameter('swarm_form', 'wedge')
+        self.declare_parameter('swarm_spacing', 1.5)
         kind = self.get_parameter('scenario').value
         n = int(self.get_parameter('n').value)
         self.s = sc.build(kind, n)
@@ -154,6 +156,29 @@ class Runner(Node):
         if not r['ok']:
             self.retry_at[nm] = time.monotonic() + float(self.get_parameter('retry_s').value)
 
+    def _swarm_metrics(self):
+        """Final formation quality from TF: centroid-to-goal distance and mean slot error of the best-fit slots."""
+        import numpy as np
+        import decentral_nav_node as nd
+        pts = [self._pos(nm) for nm in self.names]
+        pts = [p for p in pts if p]
+        if len(pts) < 2:
+            return dict(swarm_ok=False)
+        goal = np.array(self.s['goals'][0], float)
+        cen = np.mean(pts, axis=0)
+        h = math.atan2(goal[1] - self.s['robots'][0]['y'], goal[0] - self.s['robots'][0]['x'])
+        form = self.get_parameter('swarm_form').value
+        slots = nd.swarm_slots(tuple(cen), h, nd.swarm_offsets(form, len(pts), float(self.get_parameter('swarm_spacing').value)))
+        asg = nd.assign_slots(pts, slots)
+        err = [math.hypot(pts[i][0] - slots[asg[i]][0], pts[i][1] - slots[asg[i]][1]) for i in range(len(pts))]
+        m = dict(swarm_form=form, centroid_goal_m=round(float(np.linalg.norm(cen - goal)), 2),
+                 slot_err_mean_m=round(float(np.mean(err)), 2), slot_err_max_m=round(float(np.max(err)), 2),
+                 final_xy=[[round(p[0], 2), round(p[1], 2)] for p in pts])
+        m['swarm_ok'] = m['centroid_goal_m'] < 1.5 and self.min_pair > 0.35
+        self.get_logger().info(f"SWARM {form}: centroid {m['centroid_goal_m']} m from goal, slot err mean/max "
+                               f"{m['slot_err_mean_m']}/{m['slot_err_max_m']} m, min pair {round(self.min_pair, 2)} m, ok={m['swarm_ok']}")
+        return m
+
     def _report(self):
         ok = sum(v['ok'] for v in self.res.values())
         n = len(self.names)
@@ -163,6 +188,8 @@ class Runner(Node):
                    collision_pairs=len(self.coll_pairs), robots=self.res,
                    min_person_m=None if self.min_person == float('inf') else round(self.min_person, 2),
                    person_collisions=len(self.person_hits))
+        if self.s['kind'] == 'swarm':
+            out.update(self._swarm_metrics())
         d = self.get_parameter('out_dir').value
         os.makedirs(d, exist_ok=True)
         path = os.path.join(d, f"{out['scenario']}_{n}_{out['ctrl']}.json")

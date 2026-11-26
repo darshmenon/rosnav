@@ -432,6 +432,202 @@ class PeopleTracker:
         return out
 
 
+SWARM_FORMS = ('line', 'wedge', 'diamond', 'column', 'circle')
+
+
+def swarm_offsets(name, n, s):
+    """Leaderless slot layout: n (forward, left) offsets in metres in the group frame, centred on the
+    group centroid (mean of the offsets is 0), `s` = base spacing. forward = group travel direction."""
+    out = []
+    for k in range(n):
+        r = (k + 1) // 2
+        side = 1 if k % 2 else -1
+        if name == 'line':                    # abreast
+            out.append((0.0, (k - (n - 1) / 2.0) * s))
+        elif name == 'column':                # single file
+            out.append((((n - 1) / 2.0 - k) * s, 0.0))
+        elif name == 'wedge':                 # V: 0 is the tip, pairs trail behind it
+            out.append((-r * s * 0.9, side * r * s * 0.8) if k else (0.0, 0.0))
+        elif name == 'diamond':
+            out.append([(0.0, 0.0), (-s, s), (-s, -s), (-2 * s, 0.0)][k] if k < 4 else (-r * s, side * s * 0.5))
+        elif name == 'circle':
+            a = 2.0 * math.pi * k / max(n, 1)
+            out.append((math.cos(a) * s * max(1.0, n / 4.0), math.sin(a) * s * max(1.0, n / 4.0)))
+        else:
+            raise ValueError(f'unknown swarm formation {name!r}')
+    fx = sum(o[0] for o in out) / max(n, 1)
+    fy = sum(o[1] for o in out) / max(n, 1)
+    return [(o[0] - fx, o[1] - fy) for o in out]
+
+
+def swarm_slots(centroid, heading, offsets):
+    """World positions of the formation slots around `centroid`, group frame rotated by `heading`."""
+    c, sn = math.cos(heading), math.sin(heading)
+    return [(centroid[0] + f * c - l * sn, centroid[1] + f * sn + l * c) for f, l in offsets]
+
+
+def assign_slots(positions, slots, prev=None, hysteresis=0.5):
+    """Leaderless slot assignment: every robot runs this on the same data and gets the same answer.
+    Minimises total travel distance (Hungarian); `prev` (robot idx -> slot idx)
+    is kept unless the new assignment is shorter by more than `hysteresis` m, so slots don't flip-flop."""
+    from scipy.optimize import linear_sum_assignment
+    n = len(positions)
+    d = np.linalg.norm(np.asarray(positions, float)[:, None, :] - np.asarray(slots, float)[None, :, :], axis=2)
+    _, cols = linear_sum_assignment(d)                  # optimal for any n (was greedy above 7 robots -> crossing paths)
+    best = [int(c) for c in cols]
+    if prev is not None and len(prev) == n and sorted(prev) == list(range(n)):
+        if sum(d[i][prev[i]] for i in range(n)) - sum(d[i][best[i]] for i in range(n)) <= hysteresis:
+            return list(prev)
+    return list(best)
+
+
+def shift_plan(plan_xy, offset, ramp=6.0, start=(0.0, 0.0)):
+    """Re-aim a plan at a formation slot: the translation goes from `start` at the robot (= slot - robot, so the
+    path begins AT the slot and the robot rejoins it) to `offset` (slot offset from the group goal) `ramp` m
+    along the path, so the robot ends at goal + offset with the whole group translating as one rigid shape."""
+    plan_xy = np.asarray(plan_xy, float)
+    seg = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(plan_xy, axis=0), axis=1))]
+    ramp = seg[-1] if ramp <= 0 else min(ramp, seg[-1])   # ramp <= 0: blend over the WHOLE plan; a short plan still gets the FULL offset
+    f = np.clip(seg / max(ramp, 1e-6), 0.0, 1.0)[:, None]
+    st = np.asarray(start, float)[None, :]
+    return plan_xy + st + f * (np.asarray(offset, float)[None, :] - st)
+
+
+def drop_known_bodies(pts, centres, r=0.55):
+    """Remove scan points that are just other robots/people we already track (within r of a known centre).
+    Without this the swarm treats its own neighbours as walls: squeeze + fold shrink the formation onto the goal
+    (seen live in Gazebo 2026-11-26: 4 robots piled up 0.12 m apart)."""
+    pts = np.asarray(pts, float)
+    if len(pts) == 0 or len(centres) == 0:
+        return pts
+    d, _ = cKDTree(np.asarray(centres, float)).query(pts)
+    return pts[d > r]
+
+
+def shift_plan_clear(plan_xy, offset, ramp, start, pts, r=0.55, horizon=6.0, steps=6):
+    """shift_plan, but shrink the slot offset (and start) until the shifted path keeps `r` m from every obstacle
+    point in the first `horizon` m. Slot offsets are a soft goal: a wall always wins, the formation folds up
+    toward the plan (scale 0 = the unshifted plan). Returns (shifted plan, scale used)."""
+    plan_xy = np.asarray(plan_xy, float)
+    if pts is None or len(pts) == 0:
+        return shift_plan(plan_xy, offset, ramp, start), 1.0
+    tree = cKDTree(np.asarray(pts, float))
+    seg = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(plan_xy, axis=0), axis=1))]
+    near = seg <= horizon
+    best = None
+    for k in np.linspace(1.0, 0.0, steps + 1):
+        cand = shift_plan(plan_xy, np.asarray(offset, float) * k, ramp, np.asarray(start, float) * k)
+        best = (cand, float(k))
+        d, _ = tree.query(cand[near])
+        if np.min(d) >= r:
+            break
+    return best
+
+
+def cohesion_scale(along_err, tol=0.3, span=1.0, floor=0.25):
+    """Speed factor in [floor, 1]: a robot AHEAD of its slot (along_err > tol m along the travel direction)
+    slows, smoothly (smoothstep, no kink at tol) so the group stays together; behind or on the slot -> 1."""
+    if along_err <= tol:
+        return 1.0
+    x = min(1.0, (along_err - tol) / span)
+    return 1.0 - (1.0 - floor) * x * x * (3.0 - 2.0 * x)
+
+
+def elect_leader(names, xy, goal, current=None, hyst=1.0):
+    """Dynamic leader from shared data only: the robot closest to the group goal. Same answer on every robot,
+    no messages. The incumbent keeps the role unless another robot is `hyst` m closer, and a robot that vanished
+    from the visible set (died / lost TF) is replaced immediately by the next closest."""
+    d = [math.hypot(p[0] - goal[0], p[1] - goal[1]) for p in xy]
+    best = min(range(len(names)), key=lambda k: (d[k], names[k]))
+    if current in names:
+        ci = names.index(current)
+        if d[ci] - d[best] <= hyst:
+            return current
+    return names[best]
+
+
+class SwarmState:
+    """ROS-free leaderless formation state for ONE robot (unit-testable, shared by the node and the sim harness).
+    Smoothness: the slot offset and the group heading are low-passed, so a changed robot count or slot swap
+    glides instead of jumping. Cohesion: robots cruise at `cruise` x v_max (headroom for laggards to catch up),
+    slow smoothly when ahead of their slot, and ALSO slow with the group when the worst slot error among all
+    robots is large (everyone computes it, since the slots are shared knowledge)."""
+
+    def __init__(self, form, spacing=1.5, ramp=0.0, cruise=1.0, alpha=0.2, group_tol=1.5, group_span=2.0,
+                 squeeze_min=0.5, clear_full=2.5, group_q=1.0, leader=False, leader_hyst=1.0, freeze_d=4.0):
+        self.group_q = group_q
+        self.freeze_d = freeze_d
+        self.use_leader, self.leader_hyst, self.leader = leader, leader_hyst, None   # dynamic leader (name) or None
+        self.squeeze_min, self.clear_full, self.sq = squeeze_min, clear_full, 1.0
+        self.form, self.s, self.ramp, self.cruise = form, spacing, ramp, cruise
+        self.alpha, self.group_tol, self.group_span = alpha, group_tol, group_span
+        self.heading = None
+        self.prev, self.prev_names = None, None
+        self.off = None                        # low-passed slot offset (dx, dy)
+        self.err = 0.0                         # own slot error (m)
+        self.fold = 1.0                        # 1 = full slot offset, 0 = folded onto the plan by a wall
+        self.slot = None                       # own (smoothed) slot position in the plan frame, for plots/logs
+        self.worst = 0.0                       # worst slot error in the group (m)
+
+    def plan(self, me, names, pos, plan_xy, vmax, clearance=None, obstacles=None):
+        """names/pos: all visible robots INCLUDING `me`. Returns (plan_xy shifted onto my slot, speed limit)."""
+        order = sorted(range(len(names)), key=lambda k: (len(names[k]), names[k]))   # same order on every robot
+        rn = [names[k] for k in order]
+        xy = [tuple(pos[k]) for k in order]
+        n = len(xy)
+        cen = (sum(p[0] for p in xy) / n, sum(p[1] for p in xy) / n)
+        goal = plan_xy[-1]
+        if math.hypot(goal[0] - cen[0], goal[1] - cen[1]) > self.freeze_d:   # freeze heading on approach: near the
+            # goal the centroid->goal angle swings with the formation's own asymmetry and rotates the whole shape
+            h = math.atan2(goal[1] - cen[1], goal[0] - cen[0])
+            self.heading = h if self.heading is None else self.heading + self.alpha * wrap(h - self.heading)
+        if self.heading is None:
+            return plan_xy, vmax
+        # squeeze: tight spaces (nearest obstacle < clear_full m) shrink the formation toward squeeze_min x spacing
+        if clearance is not None:
+            tgt = max(self.squeeze_min, min(1.0, clearance / self.clear_full))
+            self.sq += (0.3 if tgt < self.sq else 0.05) * (tgt - self.sq)    # tighten fast, relax slowly
+        offs = swarm_offsets(self.form, n, self.s * self.sq)
+        anchor = cen
+        if self.use_leader:
+            self.leader = elect_leader(rn, xy, goal, self.leader, self.leader_hyst)
+            lp = xy[rn.index(self.leader)]
+            tip = offs[0]                                 # slot 0 is the leader's: re-centre the layout on it
+            offs = [(o[0] - tip[0], o[1] - tip[1]) for o in offs]
+            anchor = lp
+        slots = swarm_slots(anchor, self.heading, offs)
+        prev = self.prev if self.prev_names == rn else None
+        asg = assign_slots(xy, slots, prev)
+        if self.use_leader:                               # leader always takes slot 0 (its own spot)
+            li = rn.index(self.leader)
+            j = asg.index(0)
+            asg[j], asg[li] = asg[li], 0
+        self.prev, self.prev_names = asg, rn
+        mi = rn.index(me)
+        c, sn = math.cos(self.heading), math.sin(self.heading)
+        errs, alongs = [], []
+        for k in range(n):
+            sl = slots[asg[k]]
+            dx, dy = xy[k][0] - sl[0], xy[k][1] - sl[1]
+            errs.append(math.hypot(dx, dy))
+            alongs.append(dx * c + dy * sn)
+        sl = slots[asg[mi]]
+        want = (sl[0] - anchor[0], sl[1] - anchor[1])
+        self.off = want if self.off is None else (self.off[0] + self.alpha * (want[0] - self.off[0]),
+                                                  self.off[1] + self.alpha * (want[1] - self.off[1]))
+        self.err, self.worst = errs[mi], float(np.quantile(errs, self.group_q))
+        scale = cohesion_scale(alongs[mi]) * cohesion_scale(self.worst, tol=self.group_tol, span=self.group_span,
+                                                            floor=0.5)
+        self.slot = (anchor[0] + self.off[0], anchor[1] + self.off[1])
+        start = (0.0, 0.0)      # path starts AT the robot and ends at goal + offset (adding start=slot-robot made humps for far robots)
+        self.fold = 1.0
+        if obstacles is not None and len(obstacles):
+            shifted, self.fold = shift_plan_clear(plan_xy, self.off, self.ramp, start, obstacles)
+        else:
+            shifted = shift_plan(plan_xy, self.off, self.ramp, start)
+        return shifted, vmax * self.cruise * scale
+
+
 def main():
     import rclpy
     import tf2_ros
@@ -468,6 +664,9 @@ def main():
             P('seed', 0)
             P('people_topic', '/social_peds/gt')   # '' disables; people become moving neighbours
             P('people_radius', 5.0)
+            P('swarm', '')                        # '' off | line | wedge | diamond | column | circle: leaderless formation
+            P('swarm_spacing', 1.5)               # m between slots
+            P('swarm_ramp', 0.0)                  # m along the plan over which the slot offset blends in (0 = the whole plan)
             g = lambda n: self.get_parameter(n).value  # noqa: E731
             self.ctrl = str(g('ctrl')).lower()
             if self.ctrl not in CTRLS:
@@ -496,6 +695,17 @@ def main():
             self.last_why = ''
             self.neigh_goal = {}                  # name -> last point of that robot's own plan
             self.last_info = None
+            self.swarm = str(g('swarm')).lower()
+            if self.swarm and self.swarm not in SWARM_FORMS:
+                raise ValueError(f"swarm must be one of {'/'.join(SWARM_FORMS)} or '', got {self.swarm!r}")
+            self.swarm_s, self.swarm_ramp = float(g('swarm_spacing')), float(g('swarm_ramp'))
+            P2 = self.declare_parameter
+            P2('swarm_cruise', 1.0)               # x v_max while in formation (headroom so laggards catch up)
+            P2('swarm_leader', False)             # True: dynamic leader (closest to the goal, re-elected on loss/lag), slots anchored on it
+            P2('swarm_smooth', 0.2)               # low-pass gain on heading / slot offset (1 = no smoothing)
+            self.swarm_st = SwarmState(self.swarm or 'line', self.swarm_s, self.swarm_ramp,
+                                       float(g('swarm_cruise')), float(g('swarm_smooth')),
+                                       leader=bool(g('swarm_leader')))
             self.people = PeopleTracker(radius=float(g('people_radius')))
             if g('people_topic'):
                 self.create_subscription(String, g('people_topic'), self.on_people, 10)
@@ -513,7 +723,7 @@ def main():
             self.create_timer(2.0, self.status)
             self.get_logger().info(
                 f'[decentral_nav] {self.ns}: ctrl={self.ctrl} neighbors={self.neigh} v_max={self.vmax} '
-                f'w_max={self.wmax} use_scan={self.use_scan} plan_timeout={self.plan_timeout}s -> '
+                f'swarm={self.swarm or "off"}{"+leader" if self.swarm and bool(g("swarm_leader")) else ""} w_max={self.wmax} use_scan={self.use_scan} plan_timeout={self.plan_timeout}s -> '
                 f'{g("cmd_vel_topic")} (resolved /{self.ns}/{g("cmd_vel_topic")})')
 
         def on_people(self, msg):
@@ -581,6 +791,19 @@ def main():
             return np.stack([t.transform.translation.x + c * lx - sn * ly,
                              t.transform.translation.y + sn * lx + c * ly], axis=1)
 
+        def swarm_plan(self, names, pos):
+            robots = [(nm, p) for nm, p in zip(names, pos) if not nm.startswith('person')]
+            sp = self.scan_points()
+            if sp is not None and len(sp):
+                sp = drop_known_bodies(sp, [r[1] for r in robots if r[0] != self.ns] +
+                                       [p for nm, p in zip(names, pos) if nm.startswith('person')])
+            clear = None
+            if sp is not None and len(sp):
+                me = next(r[1] for r in robots if r[0] == self.ns)
+                clear = float(np.min(np.linalg.norm(sp - np.asarray(me)[None, :], axis=1)))
+            return self.swarm_st.plan(self.ns, [r[0] for r in robots], [r[1] for r in robots], self.plan, self.vmax,
+                                      clearance=clear, obstacles=sp)
+
         def stop(self, reason):
             if reason != self.last_reason:
                 self.get_logger().warn(f'[decentral_nav] {self.ns}: zero output ({reason})')
@@ -626,8 +849,11 @@ def main():
             # priority for the stall breaker: the node is always row 0, so rank by robot name (same on every robot)
             rank = sorted({nm for nm in names if not nm.startswith('person')}, key=lambda s: (len(s), s))
             ids = [rank.index(nm) if nm in rank else -1 for nm in names]
-            vx, vy, info = compute_velocity(self.ctrl, 0, np.array(pos), np.array(vel), self.plan,
-                                            self.scan_points(), self.rng, self.vmax, self.lookahead, arrived, ids=ids)
+            plan, vmax = self.plan, self.vmax
+            if self.swarm:
+                plan, vmax = self.swarm_plan(names, pos)
+            vx, vy, info = compute_velocity(self.ctrl, 0, np.array(pos), np.array(vel), plan,
+                                            self.scan_points(), self.rng, vmax, self.lookahead, arrived, ids=ids)
             vx, vy, hwhy = self.hyst.update(vx, vy)
             why = hwhy or info['why']
             if why.split(':')[0] != self.last_why.split(':')[0] or (hwhy and why != self.last_why):
@@ -662,12 +888,18 @@ def main():
             self.get_logger().info(
                 f'[decentral_nav] {self.ns}: cmd v={self.v:.2f} w={self.w:.2f} desired=({self.last_vd[0]:.2f},'
                 f'{self.last_vd[1]:.2f}) goal_d={self.last_goal_d:.2f} neighbours_seen={g["n_neigh"]}/{len(self.neigh)} people_seen={g.get("n_people", 0)} '
-                f'blocked_cells={g["blocked_cells"]} state={g["reason"]} zero_ticks={self.n_zero}/{self.n_ticks}')
+                f'blocked_cells={g["blocked_cells"]} state={g["reason"]} zero_ticks={self.n_zero}/{self.n_ticks}'
+                + (f' swarm={self.swarm} slot_err={self.swarm_st.err:.2f} worst={self.swarm_st.worst:.2f}'
+                   + (f' leader={self.swarm_st.leader}' if self.swarm_st.use_leader else '') if self.swarm else ''))
 
     rclpy.init()
     node = DecentralNav()
     try:
-        rclpy.spin(node)
+        try:
+            rclpy.spin(node)
+        except Exception:  # noqa: BLE001 - a signal can invalidate the context mid-spin
+            if rclpy.ok():
+                raise
     except KeyboardInterrupt:
         pass
     finally:
@@ -677,7 +909,7 @@ def main():
             pass
         node.destroy_node()
         if rclpy.ok():
-            rclpy.shutdown()
+            rclpy.try_shutdown()
 
 
 if __name__ == '__main__':

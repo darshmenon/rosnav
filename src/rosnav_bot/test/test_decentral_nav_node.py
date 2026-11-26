@@ -321,3 +321,122 @@ def test_people_tracker_uses_feed_velocity_and_survives_bad_json():
     assert pt.update('not json', 0.0) == 0
     pt.update(json.dumps({'peds': [{'id': 7, 'x': 1.0, 'y': 1.0, 'vx': 0.3, 'vy': -0.1}]}), 0.0)
     assert pt.near((1.0, 1.0), 0.0)[0][2] == (0.3, -0.1)
+
+
+def test_swarm_offsets_centred_and_distinct():
+    for form in n.SWARM_FORMS:
+        for k in (2, 3, 4, 5):
+            o = n.swarm_offsets(form, k, 1.5)
+            assert len(o) == k
+            assert abs(sum(a for a, _ in o)) < 1e-9 and abs(sum(b for _, b in o)) < 1e-9
+            assert all(math.dist(o[i], o[j]) > 0.5 for i in range(k) for j in range(i))
+
+
+def test_swarm_assignment_agrees_and_is_stable():
+    slots = n.swarm_slots((0, 0), 0.0, n.swarm_offsets('line', 3, 2.0))   # y = -2, 0, 2
+    pos = [(0, 2.1), (0, -1.9), (0.1, 0.0)]
+    a = n.assign_slots(pos, slots)
+    assert [slots[j][1] for j in a] == [2.0, -2.0, 0.0]                   # nearest slots, no crossing
+    # same answer from any robot's view, and tiny jitter does not flip a previous assignment
+    assert n.assign_slots(pos, slots, prev=a) == a
+    assert n.assign_slots([(0, 1.9), (0, -2.1), (0, 0.1)], slots, prev=a) == a
+
+
+def test_shift_plan_starts_at_slot_ends_at_goal_offset():
+    sp = n.shift_plan(PLAN, (0.0, 1.5), ramp=2.0, start=(0.0, -0.5))
+    assert np.allclose(sp[0], PLAN[0] + [0, -0.5]) and np.allclose(sp[-1], PLAN[-1] + [0, 1.5])
+    assert np.all(np.diff(sp[:, 1]) >= -1e-9)
+
+
+def test_cohesion_scale():
+    assert n.cohesion_scale(0.0) == 1.0 and n.cohesion_scale(-2.0) == 1.0
+    assert n.cohesion_scale(0.8) < 1.0 and n.cohesion_scale(9.0) == 0.25
+
+
+def _swarm_view(form, k, names, pos, st):
+    me = names[k]
+    order = [k] + [j for j in range(len(names)) if j != k]
+    pl = np.stack([np.linspace(pos[k][0], 14, 57), np.linspace(pos[k][1], 0, 57)], 1)
+    return st.plan(me, [names[j] for j in order], [pos[j] for j in order], pl, 0.5)
+
+
+def test_swarm_state_consistent_across_robots_and_ends_at_slot():
+    names = [f'robot{i + 1}' for i in range(6)]
+    pos = [(0.0, (i - 2.5) * 1.5) for i in range(6)]                      # already a 'line' formation
+    ends = []
+    for k in range(6):
+        st = n.SwarmState('line', 1.5)
+        pl, vm = _swarm_view('line', k, names, pos, st)
+        ends.append(pl[-1])
+        assert 0.0 < vm <= 0.5 + 1e-9 and st.err < 1e-6          # in slot -> full cruise speed
+    ys = sorted(e[1] for e in ends)
+    assert np.allclose(np.diff(ys), 1.5, atol=1e-6)                      # distinct slots, same spacing for all views
+
+
+def test_swarm_state_slows_group_when_one_robot_lags():
+    names = [f'robot{i + 1}' for i in range(5)]
+    pos = [(0.0, (i - 2) * 1.5) for i in range(5)]
+    pos[0] = (-6.0, pos[0][1])                                            # one far behind
+    st = n.SwarmState('line', 1.5)
+    _, vm = _swarm_view('line', 3, names, pos, st)
+    assert vm < 0.5 - 1e-6 and st.worst > 1.0
+
+
+def test_swarm_squeeze_tightens_in_clutter():
+    names = ['robot1', 'robot2', 'robot3']
+    pos = [(0.0, -1.5), (0.0, 0.0), (0.0, 1.5)]
+    st = n.SwarmState('line', 1.5)
+    for _ in range(30):
+        pl, _ = _swarm_view('line', 1, names, pos, st) if False else st.plan(
+            'robot2', names, pos, np.stack([np.linspace(0, 14, 57), np.zeros(57)], 1), 0.5, clearance=0.8)
+    assert 0.5 <= st.sq < 0.6
+
+
+def test_shift_plan_clear_folds_formation_at_a_wall():
+    wall = np.array([[5.0, y] for y in np.arange(0.9, 4.0, 0.1)])       # wall above the path with a gap near y=0
+    sp, k = n.shift_plan_clear(PLAN, (0.0, 1.5), 2.0, (0.0, 0.0), wall, r=0.55)
+    assert k < 1.0                                                      # full +1.5 m offset would hit the wall
+    assert np.min(np.linalg.norm(sp[:, None, :] - wall[None], axis=2)) >= 0.55 - 1e-6
+    sp2, k2 = n.shift_plan_clear(PLAN, (0.0, -1.5), 2.0, (0.0, 0.0), wall, r=0.55)
+    assert k2 == 1.0                                                    # offset away from the wall is untouched
+    assert n.shift_plan_clear(PLAN, (0.0, 1.5), 2.0, (0.0, 0.0), None)[1] == 1.0
+
+
+def test_drop_known_bodies_removes_neighbour_points_only():
+    wall = np.array([[5.0, 2.0], [5.0, 2.2]])
+    nb = np.array([[1.0, 0.0], [1.3, 0.1], [0.8, -0.2]])                 # lidar hits on a neighbour at (1, 0)
+    out = n.drop_known_bodies(np.vstack([wall, nb]), [(1.0, 0.0)], r=0.55)
+    assert len(out) == 2 and np.allclose(out, wall)
+    assert len(n.drop_known_bodies(wall, [], 0.55)) == 2
+
+
+def test_elect_leader_closest_hysteresis_and_loss():
+    names = ['robot1', 'robot2', 'robot3']
+    xy = [(0, 0), (3, 0), (1, 0)]
+    g = (10, 0)
+    assert n.elect_leader(names, xy, g) == 'robot2'                      # closest to the goal
+    assert n.elect_leader(names, [(0, 0), (3, 0), (3.5, 0)], g, current='robot2', hyst=1.0) == 'robot2'   # within hyst
+    assert n.elect_leader(names, [(0, 0), (3, 0), (5, 0)], g, current='robot2', hyst=1.0) == 'robot3'     # clearly ahead
+    assert n.elect_leader(['robot1', 'robot3'], [(0, 0), (1, 0)], g, current='robot2') == 'robot3'        # leader vanished
+
+
+def test_swarm_leader_mode_anchors_on_leader_and_agrees():
+    names = [f'robot{i + 1}' for i in range(5)]
+    pos = [(0.0 + (2.0 if i == 3 else 0.0), (i - 2) * 1.5) for i in range(5)]    # robot4 is furthest ahead
+    seen = []
+    for k in range(5):
+        st = n.SwarmState('wedge', 1.5, leader=True)
+        order = [k] + [j for j in range(5) if j != k]
+        pl = np.stack([np.linspace(pos[k][0], 14, 57), np.linspace(pos[k][1], 0, 57)], 1)
+        sh, vm = st.plan(names[k], [names[j] for j in order], [pos[j] for j in order], pl, 0.5)
+        assert st.leader == 'robot4'
+        seen.append((names[k], sh[-1]))
+    lead_end = dict(seen)['robot4']
+    assert np.allclose(lead_end, [14.0, 0.0], atol=1e-6)                 # leader's plan ends exactly at the goal
+    assert len({tuple(np.round(e, 3)) for _, e in seen}) == 5            # five distinct slots
+
+
+def test_shift_plan_short_plan_still_gets_full_offset():
+    short = np.stack([np.linspace(0, 1.0, 5), np.zeros(5)], axis=1)       # 1 m plan, ramp 6 m
+    sp = n.shift_plan(short, (0.5, 1.5), ramp=6.0, start=(0.0, 0.0))
+    assert np.allclose(sp[-1], short[-1] + [0.5, 1.5])                     # was only 1/6 of the offset: formation collapsed

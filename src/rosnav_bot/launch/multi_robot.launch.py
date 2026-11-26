@@ -756,6 +756,8 @@ def _build_all(context, pkg_share: str):
     robot_model = LaunchConfiguration('robot_model').perform(context).strip().lower()
     controller = LaunchConfiguration('controller').perform(context).strip().lower()
     decentral_ctrl = LaunchConfiguration('decentral_ctrl').perform(context).strip().lower()
+    decentral_swarm = LaunchConfiguration('decentral_swarm').perform(context).strip().lower()
+    decentral_swarm_leader = LaunchConfiguration('decentral_swarm_leader').perform(context).strip().lower() in ('1', 'true', 'yes')
     lidar_type = LaunchConfiguration('lidar_type').perform(context).strip().lower()
     if lidar_type == '3d' and drive_type != 'diff':
         print(f'[multi_robot] lidar_type=3d only supported for drive_type:=diff '
@@ -1160,10 +1162,11 @@ def _build_all(context, pkg_share: str):
             others = [r['name'] for r in robots if r['name'] != ns]
             docking_actions = list(docking_actions) + [
                 LogInfo(msg=f'[multi_robot] {ns}: controller:=decentral -> decentral_nav_node '
-                            f'(ctrl={decentral_ctrl}, neighbors={others})'),
+                            f'(ctrl={decentral_ctrl}, swarm={decentral_swarm or "off"}, neighbors={others})'),
                 Node(package='rosnav_bot', executable='decentral_nav_node.py', name='decentral_nav',
                      namespace=ns, output='screen',
-                     parameters=[{'use_sim_time': True, 'ctrl': decentral_ctrl, 'neighbors': others}],
+                     parameters=[{'use_sim_time': True, 'ctrl': decentral_ctrl, 'neighbors': others,
+                                   'swarm': decentral_swarm, 'swarm_leader': decentral_swarm_leader}],
                      remappings=[('tf', '/tf'), ('tf_static', '/tf_static')])]
         nav2 = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
@@ -1665,6 +1668,14 @@ def generate_launch_description():
             'decentral_ctrl', default_value='vo',
             description='controller:=decentral only: "vo" (sampled velocity obstacle), "mppi_prior" '
                         'or "orca" (true ORCA half-planes + LP) (scripts/decentral_nav_node.py).'),
+        DeclareLaunchArgument(
+            'decentral_swarm_leader', default_value='false',
+            description='decentral_swarm only: true = dynamic leader (the robot closest to the goal, re-elected '
+                        'when it dies or another is >1 m closer); slots anchor on it instead of the centroid.'),
+        DeclareLaunchArgument(
+            'decentral_swarm', default_value='',
+            description='controller:=decentral only: leaderless formation "" (off) | line | wedge | diamond | '
+                        'column | circle. No leader: each robot derives the slots from the visible robots.'),
         DeclareLaunchArgument(
             'robot_count', default_value='2',
             description='Number of generated robots when robots_json is empty'),

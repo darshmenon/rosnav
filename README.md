@@ -544,6 +544,18 @@ ros2 param set /leader_follower formation wedge   # column | line | wedge | diam
 
 <sub>`rviz/convoy.rviz` · gap held at 1.06 m ±0.07 in column mode · gap speed-adaptive · next robot takes over if the leader dies · details → [`concepts.md` §43](concepts.md)</sub>
 
+| Gazebo, 5 robots | Simulation, 5 robots | Robot 1 dies at 25 s |
+|---|---|---|
+| ![Five robots forming a wedge leaderless in Gazebo](images/decentral_gz/swarm_5_wedge.gif) | ![Leaderless wedge of 5 robots in a matplotlib sim](images/swarm_formation/anim_run.gif) | ![Leaderless vs leader-based when robot 1 dies at 25 s](images/swarm_formation/leader_vs_leaderless.png) |
+
+| | |
+|---|---|
+| Launch | `controller:=decentral decentral_swarm:=wedge` (also `line`, `diamond`, `column`, `circle`) |
+| Idea | No leader: every robot derives its own slot from the others |
+| Gazebo, 5 robots | Closest pair 0.94 m, no collisions, slot error 0.59 m (machine under load; clean re-record pending) |
+| Simulation, 3-12 robots | All settle, final slot error about 0.01-0.02 m |
+| Details | [`concepts.md` §49](concepts.md) |
+
 ---
 
 ## 7. MAPF · CBF

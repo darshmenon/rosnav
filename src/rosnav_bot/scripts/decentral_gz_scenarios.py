@@ -69,6 +69,13 @@ def corridor(n: int, rw=6.0, length=10.0, hh=3.0):
     return np.vstack([a, b]), np.vstack([ga, gb])
 
 
+def swarm(n: int, gap=1.3, x0=-5.0, goal=(4.0, 0.0)):
+    """Leaderless-formation scenario: n robots in a line on the left, ALL sent to the SAME group goal; with
+    decentral_swarm:=<form> each robot ends at its own slot around it (so Nav2 never reports 'reached')."""
+    ys = (np.arange(n) - (n - 1) / 2.0) * gap
+    return np.stack([np.full(n, x0), ys], 1), np.tile(np.array(goal, float), (n, 1))
+
+
 def _load_free(map_yaml):
     """(free bool grid with row0 = max y, resolution, origin) from a map yaml (trinary PGM; free = 254)."""
     import yaml
@@ -105,6 +112,7 @@ def crowd(n: int, w=18.0, h=12.0, seed=0):
 
 SCEN = {
     'swap': dict(world='decentral_swap', map='map_decentral_swap.yaml', fn=swap),
+    'swarm': dict(world='decentral_swap', map='map_decentral_swap.yaml', fn=swarm),
     'corridor': dict(world='decentral_corridor', map='map_decentral_corridor.yaml', fn=corridor),
     'crowd': dict(world='crowd', map='map_crowd.yaml', fn=crowd),
 }
@@ -186,8 +194,10 @@ def gen():
 def cmd(kind, n, ctrl='vo'):
     sc = build(kind, n)
     rj = json.dumps(sc['robots'], separators=(',', ':'))
+    swarm_arg = (f"decentral_swarm:={os.environ.get('SWARM_FORM', 'wedge')} "
+                 f"decentral_swarm_leader:={os.environ.get('SWARM_LEADER', 'false')} ") if kind == 'swarm' else ''
     print(f"ros2 launch rosnav_bot multi_robot.launch.py world:={sc['world']} explore:=false prebuilt_localization:=static controller:=decentral "
-          f"decentral_ctrl:={ctrl} headless:=true rviz:=false robots_json:='{rj}'")
+          f"decentral_ctrl:={ctrl} {swarm_arg}headless:=true rviz:=false robots_json:='{rj}'")
     if kind == 'crowd':
         print('python3 src/rosnav_bot/scripts/moving_obstacles_gz.py --world crowd --speed 0.7   # same GZ_PARTITION')
     print(f"ros2 run rosnav_bot decentral_gz_run.py --ros-args -p scenario:={kind} -p n:={n}")
