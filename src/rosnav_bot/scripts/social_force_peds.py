@@ -59,7 +59,7 @@ def _leg(name, y):
  </link>
  <joint name="hip_{name}" type="revolute">
   <parent>link</parent><child>{name}</child>
-  <pose>0 {y} 0.78 0 0 0</pose>
+  <pose relative_to="__model__">0 {y} 0.78 0 0 0</pose>
   <axis><xyz>0 1 0</xyz><limit><lower>-0.9</lower><upper>0.9</upper></limit></axis>
  </joint>
  <plugin filename="libgz-sim-joint-position-controller-system.so" name="gz::sim::systems::JointPositionController">
