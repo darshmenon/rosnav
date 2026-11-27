@@ -1,0 +1,23 @@
+# ROS-side params for the VIO trial (scripts/vio_trial.sh). Both nodes publish
+# /robot_pose_slam only: publish_tf false so nothing fights the EKF for odom->base_link.
+# robot_* = base_link -> camera_link (urdf/rgbd_camera.xacro camera_joint).
+"/**":
+  ros__parameters:
+    robot_base_frame: base_link
+    global_frame: map
+    odom_frame: odom
+    rgb_image_topic_name: /camera/image_raw
+    depth_image_topic_name: /camera/depth/image_raw
+    imu_topic_name: /imu
+    robot_x: 0.45
+    robot_y: 0.0
+    robot_z: 0.15
+    robot_qx: 0.0
+    robot_qy: 0.043636
+    robot_qz: 0.0
+    robot_qw: 0.999047
+    visualization: false
+    odometry_mode: false
+    publish_tf: false
+    map_data_publish_frequency: 1000
+    do_loop_closing: false

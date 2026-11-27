@@ -116,6 +116,8 @@ Or let the robot explore alone: add `explore:=true` to the launch above.
 
 **Frontier exploration:** with `explore:=true` the robot drives to the edge between mapped and unknown space (a *frontier*), maps what it finds, and repeats until none are left. Three worlds mapped, 30 s per frame:
 
+**Multi-robot allocation (offline, synthetic):** with the coordinator's own `utility` scorer on random scenarios, `allocation:=hungarian` cut assigned travel distance by 3.8% to 36.8% against greedy for about the same frontier size, with no duplicate goals. Not a robot run ([details](concepts.md#hungarian-vs-greedy-offline-benchmark-2026-11-23)).
+
 `ros2 launch rosnav_bot slam_nav.launch.py world_name:=hospital explore:=true controller:=rpp explorer:=frontier`
 
 | Hospital | House | Simple rooms |
@@ -177,7 +179,7 @@ ros2 run rosnav_bot fleet_manager.py goto robot1 room_a  # named location
 
 Goal accepted but no motion? Keep `safety:=true` (Nav2 `/cmd_vel` → Gazebo `/cmd_vel_safe`).
 
-Multi-SLAM (`slam_mode:=multi`): save `/map_merged` with `-t /map_merged` or `fleet_manager.py savemap`.
+Multi-robot explore runs also autosave to `~/.ros/rosnav_maps/`. Multi-SLAM (`slam_mode:=multi`): save `/map_merged` with `-t /map_merged` or `fleet_manager.py savemap`.
 
 <p align="center">
   <img src="images/nav2_hospital_prebuilt_map.gif" alt="Nav2 autonomous navigation on the prebuilt hospital map" width="720"/>

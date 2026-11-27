@@ -1,0 +1,7 @@
+N=500 scenarios (seeds 0..499), dist=base, mode=hungarian, assign_radius=1.0, score = value + 12 - 0.5*dist (synthetic)
+total score: greedy 30290.3  hungarian 32354.2  gain +6.81% (sum-weighted)
+per-scenario gain: mean +7.57%  median +1.76%  min -0.53%  max +120.66%
+hungarian strictly better 342 (68.4%)  equal 156 (31.2%)  worse 2 (0.4%)
+conflicting goal pairs (within assign_radius): greedy 0  hungarian 88; scenarios with >=1 hungarian conflict: 74
+robots assigned: greedy 1871  hungarian 1942  (of 1980)
+mean gain by robot count: 2: +0.84%, 3: +2.23%, 4: +7.84%, 5: +9.68%, 6: +18.15%

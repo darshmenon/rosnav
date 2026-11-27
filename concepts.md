@@ -380,6 +380,44 @@ to frontiers by optimal joint assignment (scipy `linear_sum_assignment`) instead
 per-robot order; conflicts within `assign_radius` are dropped and fall back to greedy.
 Unit-tested in `test/test_frontier_coordinator_allocation.py`.
 
+### Hungarian vs greedy, offline benchmark (2026-11-23)
+
+`scripts/bench_frontier_allocation.py` (tested by `test/test_bench_frontier_allocation.py`) compares the two allocators on
+random scenarios, no robot and no ROS graph. **The score model is synthetic** (`value + 12 - 0.5 * distance`, value uniform
+in [1, 10]), not the production scorer, so these are allocator numbers, not exploration results. 500 scenarios per row,
+seeds 0 to 499, `assign_radius` 1 m. Raw outputs are in `docs/frontier_allocation/`. Commands:
+`python3 bench_frontier_allocation.py 500 hungarian_reserved --dist <base|large|eight|fewer|clustered>`.
+
+| distribution | gain (sum) | better / equal / worse | per-scenario min | conflicts |
+|---|---|---|---|---|
+| base: 15x15 m, 2-6 robots, 3-12 frontiers | +3.16% | 67.2% / 31.2% / 1.6% | -3.61% | 0 |
+| large: 40x40 m, 2-6 robots, 5-30 frontiers | +1.84% | 38.8% / 61.0% / 0.2% | -2.49% | 0 |
+| eight: 8 robots, 8-16 frontiers | +3.72% | 97.2% / 1.2% / 1.6% | -0.98% | 0 |
+| fewer: 3-8 robots, fewer frontiers than robots | +10.28% | 87.2% / 12.4% / 0.4% | -3.21% | 0 |
+| clustered: 6-14 frontiers in 2-3 tight clusters | +1.98% | 67.6% / 26.4% / 6.0% | -3.99% | 0 |
+
+The gain stays positive in all five, but it is small where robots have plenty of far-apart frontiers (large map: median
+per-scenario gain 0.00%, most scenarios tie) and Hungarian is occasionally worse in a single scenario (up to -4%), most often
+with clustered frontiers (6.0% of scenarios). Caveats: offline and synthetic, not a robot run. The first figure we saw, +6.81%
+on `base`, was **inflated by duplicate goals** (the pre-fix code let a fallback robot take a goal also planned for another robot:
+88 conflicting pairs in 74 of 500 scenarios; `hungarian` mode in the script imitates that). The reservation fix
+(`_assign_idle`, commit 10779e4) removed them and the honest figure is +3.16%.
+
+**With the coordinator's own scorer** (`--scorer utility|weighted`, `FrontierCoordinator._score_frontier` at node defaults;
+frontier attributes still random, straight-line distance, `_pick` filters not applied). Current code vs greedy, 500 scenarios
+each, 0 conflicting goals everywhere. Scores can be negative, so the table shows what changed physically:
+
+| distribution | travel distance, utility | travel distance, weighted | Hungarian worse (utility / weighted) |
+|---|---|---|---|
+| base | -8.94% | -16.96% | 1.2% / 0.6% |
+| large | -4.85% | -6.94% | 0.6% / 0.2% |
+| eight | -11.81% | -23.48% | 4.4% / 3.0% |
+| fewer | -36.84% | -41.44% | 0.2% / 0.2% |
+| clustered | -3.83% | -10.41% | 9.8% / 6.0% |
+
+Total frontier size assigned changes by less than 1% in every cell. So under these scorers the joint assignment mostly saves
+travel for the same frontiers. "Worse" counts scenarios with a lower total score than greedy.
+
 Caveat: `benchmark.py mode:=slam` coverage is relative to the *current* map grid, which grows
 with SLAM, so `time_to_converge_sec` can read tiny (a few seconds) even though the world is
 mostly unexplored — compare coverage across arms, not absolute percentages.
@@ -1031,10 +1069,24 @@ The reactive path is not globally optimal; the centralized MAPF path is conflict
 
   Honest read: sampled VO is the best controller here (fastest, no deadlocks); `mppi_prior` removes plain MPPI's collisions but is slower and no more reliable. A learned prior (`decentral_nav_learned_prior.py`, imitation + DAgger) beat its first version but not the heuristic prior (`images/decentral_nav/learned_prior.md`). Versus centralized PP/ECBS on random grids, decentralized failed 12-25% of runs (stalls) while PP/ECBS solved all (`images/decentral_nav/vs_cbs.md`). Sim blocks robot overlap, so collision counts for decentralized runs are lower bounds on risk. Small samples: read as trends.
 
+- True ORCA (2026-11-20): `orca_velocity` in `decentral_nav_sim.py` is real ORCA (van den Berg 2011): one half-plane per neighbour (tau 3 s, share 0.5; parked/pedestrian neighbours share 1.0), one per nearby wall point (tau 1 s, full share), 2-D LP closest to the preferred velocity, 3-D LP fallback when infeasible; the old `vo` is a sampled VO, not ORCA. 8 robots, 8 seeds, 90 s (`images/decentral_nav/bench_orca.md`), success % / makespan s / collision pairs:
+
+  | scenario | vo | mppi_prior | orca |
+  |---|---|---|---|
+  | swap | 100 / 12.5 / 0 | 100 / 16.5 / 0 | 100 / 12.2 / 0 |
+  | maze | 100 / 44.8 / 0 | 88 / 49.8 / 0 | 100 / 44.6 / 0 |
+  | convoy | 100 / 50.9 / 0.25 | 88 / 59.3 / 0 | 75 / 42.6 / 0.12 |
+  | corridor | 75 / 28.6 / 0.25 | 100 / 38.1 / 0.12 | 100 / 28.9 / 0 |
+  | crowd | 100 / 30.3 / 0 | 100 / 34.4 / 0.12 | 100 / 25.9 / 0 |
+
+  Honest read: ORCA ties or beats `vo` on swap, maze, corridor and crowd (no robot collisions, fastest crowd; 0.38 ped contacts/run vs 0 for `vo`, since pedestrians only get a 3 s half-plane, no personal-space cost) but is worse on convoy (75%: followers chase a moving leader slot and jam). Exactly symmetric 4/8-robot circle swaps can deadlock in the centre (no tie-break; 5 cm start jitter fixes it; the sim's seeded swap scenario is unaffected). 8 seeds: trends, not proof.
+
 **Decentralized sim -> Nav2/ROS 2 (`controller:=decentral`, experimental):** `scripts/decentral_nav_node.py` runs the sim's `vo` / `mppi_prior` math inside each robot's namespace. Inputs: its own Nav2 `/robotN/plan` (replaces the BFS gradient: `PlanWorld` subclasses the sim's `World`, `pref_dir` = a point 1 m ahead on the plan, `dist_field` = remaining plan length + distance to the plan), neighbours' poses (TF `<name>/base_link` in the plan frame) and twists (`/<name>/odom`, param `neighbors`), and optionally `/robotN/scan` (points >0.35 m from the plan become blocked 1 m cells). Output: `/robotN/cmd_vel_nav`, via a unicycle tracker (turn to the desired heading, forward speed x cos(error), slew-limited; vx,vy from the holonomic sim -> v,w). Watchdog: no plan / plan older than `plan_timeout` (15 s) / no TF -> zero Twist. The core is ROS-free (`compute_velocity`, `track_unicycle`; `test/test_decentral_nav_node.py`). Launch: `multi_robot.launch.py controller:=decentral decentral_ctrl:=vo|mppi_prior` starts one node per robot and sends each `controller_server`'s velocity to an unused topic (same trick as `controller:=mpc`); Nav2 still does planning, BT and goal handling.
 - Verified (2026-11-19, headless Gazebo + Nav2, `vo`, scenarios from `scripts/decentral_gz_scenarios.py`, runner `decentral_gz_run.py`): corridor 1.5 m x 10 m with 2 robots swapping rooms 2/2 reached in 47.5 s, 0 collisions (min pair distance 0.71 m); swap on a 5 m circle with 4 robots 4/4 in 25.4 s, 0 collisions (0.70 m). Unit tests: 7 in `test_decentral_nav_node.py`.
 - What had to be fixed to get there (each was a silent 0/2): (1) the sim's 1 m blocked cells made a 1.5 m corridor ~1 m wide, so VO saw no admissible velocity - collision tests now use the exact scan points (`PlanWorld.ok`); (2) AMCL diverged in the featureless box map and put robots inside walls - scenario commands use `prebuilt_localization:=static`; (3) with `controller:=decentral` the neighbour is already handled by the node, but it also inflated to lethal in the GLOBAL costmap over the robot's own cell and NavFn failed to plan - the global costmap's obstacle sources are cleared for decentral robots; (4) Nav2's goal checker also needs `yaw_goal_tolerance`, and the node never rotated to the goal heading, so every goal stopped ~0.16 m short and the controller aborted on progress - the node now rotates in place near the goal.
 - Near-goal dither fix (2026-11-20, **offline only: unit tests + replay, live head-on swap still pending**). Evidence: `local/dgz/corridor_2_mppi_prior.launch.log` robots hover at goal_d 0.31-0.38 m with `desired~(0,0)` and `blocked_cells=9-11`; the swap log shows 5-6 blocked cells at ~0.9 m out. Causes found: (a) 1 m blocked cells centred within ~0.5 m of the plan and around the goal made the mppi_prior cost field inf / `clear<1` (+30) on the last metre, VO/MPPI then output ~0; (b) `mppi_prior`'s id-priority yield fired against a neighbour parked at its own goal (both speeds <0.15), sending the higher-id robot sideways/backwards forever; (c) no heading memory, so a noisy argmin flipped the desired heading and the tracker spun. Changes in `decentral_nav_node.py`: coarse cells only if their centre is >0.8 m from the plan and >1.5 m from the goal (exact scan points still do collision checks; the sim's grid is fixed at 1 m, so true 0.2-0.3 m cells would need a sim change); neighbours parked (<0.05 m/s) within 0.5 m of the end of their own `/<n>/plan` are static obstacles (velocity zeroed, no yield); within 1 m of the goal the robot drives the plan straight in at `max(0.2, 0.8*d)` m/s unless a neighbour sits on that stretch (then VO as before); `HeadingHysteresis` (hold heading for <0.12 rad changes, a >=1.2 rad flip must persist 5 ticks, meanwhile half speed) plus a 0.05 rad deadband in `track_unicycle`; every decision change logs `why -> handoff|avoid|follow|creep|hysteresis ...`. Prior art used: Nav2 RPP/regulated approach slow-down near goal (handoff), deadband+persistence smoothing as in ORCA/VO oscillation remedies (hysteresis). Tests: 27 pass (`test_decentral_nav_node.py` + sim), incl. replay of a noisy 400-tick approach through a 1.4 m corridor. Pending: live head-on swap/corridor in Gazebo to confirm robot1 now arrives and robot2's goal no longer aborts.
+- ORCA live in Gazebo + Nav2 (2026-11-20, `controller:=decentral decentral_ctrl:=orca`, headless, domain 171, one run each, `scripts/decentral_gz_run.py`): **swap_4 4/4 reached, makespan 34.4 s, 0 collision pairs, min pair 0.61 m** (vo, 2026-11-19: 25.4 s, 0.70 m; mppi_prior numbers not re-checked here). **corridor_4 0/4** (head-on deadlock in the 1.5 m corridor: all robots stop at 8-12 m from goal, 0 collisions, min pair 0.64 m; offline sim corridor is 100% so this is a live/Nav2-wrapper gap, not fixed). Plain ORCA first deadlocked the symmetric swap at the centre (0/4 twice, all velocities ~0, a stopped neighbour is a static wall). Node-side fixes in `decentral_nav_node._orca_command`: preferred velocity rotated 10 deg CCW while a moving neighbour is within 3 m (all pass on the same side) plus the `mppi_prior`-style id-priority sidestep for two mutually stopped robots; 3rd run then succeeded (single run: noisy, not proof). `orca` added to `CTRLS`, launch arg docs, 8 new unit tests. Video: `images/decentral_gz/swap4_orca.mp4` / `.gif` (sim top-down camera sensor bridged to ROS, sim-time stamped, real speed in mp4, gif 1.5x; sim image only, no desktop/RViz). Runner scripts in `local/dgz/orca/`.
+- ORCA corridor deadlock, offline root cause + fix (2026-11-20, **live corridor_4 still unverified**): reproduced in a 4-instance head-on harness (`test_decentral_nav_node.py::_run_corridor_swap`, 1.5 m walls as scan returns, 10 Hz, hysteresis + unicycle tracker): two robots park nose to nose at the centre. Cause: `sim.orca_velocity` takes wall points from the PlanWorld's 1 m cost-field cells, so 0.75 m walls became walls at +-0.5 m and the +-0.15 m lane left no sidestep (ORCA output ~0). Fix: `_ExactWalls` feeds ORCA the exact scan returns (voxel-thinned, within 1.4 m, neighbour bodies removed so they stay reciprocal neighbours). Second bug: the id-priority stall breaker compared row indices, but the node is always row 0, so it never fired live; `compute_velocity(..., ids=)` now passes global robot ranks and the breaker logs `why -> stall-break`. Harness result: 4/4 in ~41 s, min pair 0.65 m (before: 0/4). vo/mppi_prior untouched. Not yet re-run in Gazebo; the scan-side behaviour (neighbour bodies, noise, Nav2 replans) may still differ from the harness.
 - NOT verified: `mppi_prior` live, 8 robots live (the stack did not finish booting at load ~40), crowd with walking people live, any run longer than ~2 min. `vo` can still stall head-on if both robots start exactly mirrored; `mppi_prior` has a yield rule for that.
 
 ### Behavior Trees in Multi-Robot Mode
@@ -1686,6 +1738,10 @@ Map selection behavior:
 **RViz map plane vs wheels:** the map is drawn at `base_link` height (`odom -> base_link` is z = 0), i.e. through the wheel centres, so a map drawn in front of the robot cuts the wheels in half. All shipped `.rviz` configs set `Draw Behind: true` on the map displays. The Husky skin (`.glb`) does load in RViz (verified 2026-11-11: with the URDF colour changed to yellow the hull still rendered in the mesh's own material), but it renders as a plain box-like hull at the 0.55x scale, so it looks much less distinct than in Gazebo; MiR100 (`.stl`) is clearer. A converted `meshes/husky/visual_dae/` copy was tried and gave no visible difference.
 
 **Explorer cold-start guard:** `frontier_explorer.py` keeps treating "no usable frontier" as a cold start until a goal has genuinely been reached (`_goals_reached`), not only until the first goal is sent. A fresh SLAM map (ORB-SLAM3 `map->odom` jump) used to cancel the first goal and end the run as "exploration complete" at 6%.
+
+### RViz Map display GLSL link error (`indexed_8bit_image`)
+`Vertex Program:rviz/glsl120/indexed_8bit_image.vert ... active samplers with a different type refer to the same texture image unit` is RViz's own shader (sampler2D + sampler1D palette on one unit), also under `LIBGL_ALWAYS_SOFTWARE=1`. All three Color Schemes (map/costmap/raw) only swap the palette and use that same program, so changing the scheme cannot avoid it.
+Workaround (UNVERIFIED, written offline): the generated fleet config (`fleet_rviz_config(map_display='cloud')`, default; launch arg `rviz_map_display`) draws `/map` as two PointCloud2 displays fed by `scripts/occupancy_cloud.py`; `rviz_map_display:=map` restores the stock Map display. Costmap displays and the static `rviz/*.rviz` files still use the Map shader. If the map is blank with the error, use `cloud`; if it is shown despite the error, the log line is harmless.
 
 ## RViz Checklist — What to Verify
 
@@ -2468,6 +2524,45 @@ Three real bugs surfaced building this:
 
 ---
 
+**Offline policy benchmark (2026-11-20)** — `scripts/bench_frontier_policies.py` (policies in
+`rosnav_bot/rl/frontier_policies.py`, tests in `test/test_frontier_policies.py`) runs 9 selection
+policies + the trained `ppo_frontier_v2` scorer on `FrontierSelectEnv`, 12 paired episodes
+(same spawn seeds) per map, 150-step cap, 95% bootstrap CIs. Full tables/CIs/paired diffs:
+`images/frontier_bench/results.md` (sensor 3.5 m), `results_sensor1.5.md` (1.5 m), charts alongside.
+Means (sensor 3.5 m; steps-to-90% / path-to-90% m; all policies end at >=0.995 coverage):
+
+| policy | cafe | hospital | maze | obstacles |
+|---|---|---|---|---|
+| nearest | 6.8 / 24 | 26.8 / 99 | 15.8 / 57 | 1.8 / 6 |
+| live (utility, hyst, suspicious, cooldown) | 6.8 / 23 | 26.8 / 96 | 15.9 / 59 | 1.8 / 6 |
+| max_gain | 5.2 / 19 | 22.2 / 88 | 12.7 / 48 | 1.4 / 5 |
+| gain/dist | 5.2 / 18 | 22.4 / 87 | 12.8 / 49 | 1.4 / 5 |
+| cost_aware (gain / (1 + d + 1.5*turn + 3*backtrack)) | 5.4 / 20 | 21.5 / 78 | 12.4 / 44 | 1.4 / 5 |
+| learned (ppo_frontier_v2) | 5.5 / 21 | 21.8 / 81 | 13.4 / 49 | 1.5 / 5 |
+| random | 7.1 / 28 | 26.7 / 101 | 16.1 / 62 | 1.7 / 6 |
+
+Verdict. (1) The live heuristic is statistically indistinguishable from `nearest` and `random`
+in steps-to-90% on every map: with `potential_scale=3`, `-3*d` swamps `gain_scale*size_m`, so it
+behaves as nearest-first; hysteresis, the suspicious penalty and the cooldown changed nothing
+(`live-no-hyst` is bit-identical to `live`; the env has no wall leaks or failed goals to
+trigger them, so this is "untested here", not "proven useless"). (2) Every gain-aware policy
+(`max_gain`, `gain/dist` at any weight 0.5-2, `cost_aware`, `learned`) beats live on steps by
+20-25% on cafe/hospital/maze (all CIs exclude 0); the weight sweep is within noise of each
+other. (3) `cost_aware` is the only one that also wins on path-to-90% in the large maps
+(hospital -18 m, maze -15 m vs live, CIs exclude 0), and it ties or slightly beats the learned
+scorer, so the learned net adds nothing over the hand-written turn-cost rule. In cafe its
+path win is within noise. (4) Obstacles is a ceiling case (done in 1-2 hops): within noise.
+(5) With a short 1.5 m sensor, gain-aware policies still win on steps (-11 to -19 on
+hospital/maze, hospital also +4-5 points final coverage inside 150 steps) but path-to-90% is
+within noise of live on every map, and live has the shortest total path (it never backtracks to
+chase far gain). Caveats: env hop distance is straight-line, there is no Nav2 time/goal overhead
+and no real failure/stall behaviour; "steps" are goal hops, so the steps win is only worth
+as much as one Nav2 goal costs in sim. Adoption (not applied; `frontier_explorer.py`
+untouched): the closest existing config is `frontier_scorer:=weighted` with a lower distance weight
+(e.g. `explorer_params:='{"distance_weight":0.5,"info_gain_weight":3.0}'`), but that is a
+linear `gain - d` score, not the ratio `gain/(1+d)` benchmarked here, so it is untested; the turn/backtrack term of `cost_aware` has no existing param and
+would need a new one. Validate in sim before changing the default.
+
 ## 36. Terrain-Friction Speed Costmap (`multi_terrain_robot_diff`)
 
 > **Correction (2026-11-26):** the speed mask this section describes was written inverted, so its slow-down strengths were wrong, and the earlier verification only showed that Nav2 received the mask. See §48. The friction mask also placed zones in world coordinates although the map is spawn-relative; regenerate it with `--spawn -9.2 0`.
@@ -2918,6 +3013,27 @@ Benchmark (`scripts/benchmark_kiss_icp.sh cafe`, 120 s slow circle, ~11-13 m of 
 
 Runs differ because the machine is shared and loaded (the robot's path varies between runs); read the ranking, not the third decimal. KISS-ICP is best and most consistent; LIO-SAM is second but has the worst yaw (the IMU orientation is noisy and the cloud is only ~7 Hz under load); RKO-LIO is third without deskew. The slow flat circle does not exercise the IMU much, so a faster run with sharp turns (or a rougher world) is the fair test for the LIO methods. FAST-LIO2: `Ericsii/FAST_LIO_ROS2` needs a stub `livox_ros_driver2` message package and the same ring/time cloud; not benchmarked (the official repo could not be downloaded reliably on this network).
 
+**Update 2026-11-20 (weave test, LIO retune).** Faster fair test: 0.5 m/s, +-0.8 rad/s alternating every 4 s, cafe, 158 s, bag from the sensor-fusion session. Slow circle (earlier): KISS-ICP 0.052 m APE, RKO-LIO 0.061, LIO-SAM 0.113. Weave: KISS-ICP **0.027 m** (0.40 % drift), RKO-LIO 0.045 (0.33 %), LIO-SAM **diverged (468 m APE)**: `Large velocity, reset IMU-preintegration!` repeatedly, only ~2.6 Hz output under load ~18; wheel odom 5.3 m. IMU/GT clock offset is +0.015 s (fine); the lidar is stamped at sweep end and the adapter shift of -0.1 s is applied once.
+- **RKO-LIO frames (bug).** `slam_nav.launch.py` forced `imu_frame`/`lidar_frame` = `base_link`, ignoring the real mounts (imu_link +0.05 m up, laser_frame 0.1 m forward / 0.25 m up). The overrides are dropped; rko_lio now takes the frames from the message headers + TF (the benchmark script already did, 0.061 vs the forced-frame path not scored). Launch description loads (86 entities); not re-benchmarked live.
+- **LIO-SAM retune** (`config/lio_sam_sim.yaml`): IMU noise derived from the gz IMU in `urdf/imu.xacro` (gyro 0.0002 rad/s, accel 0.017 m/s^2 per sample at 100 Hz, no bias model) -> continuous-time density = stddev/sqrt(rate): `imuGyrNoise` 2.0e-5 (was 1.56e-3, ~78x too noisy), `imuAccNoise` 1.7e-3, tiny bias walks, `imuGravity` 9.8, `extrinsicTrans` [0.1, 0, 0.2] (laser_frame in imu_link). Offline replay of the weave bag (own domain, no sim, `nice`, rate 0.3, scored with evo vs ground truth): live old config 468 m APE; noise+extrinsic retune 171 m (26 `Large velocity` resets) - still diverging offline, so the cause was the filter inputs, not CPU load.
+- **Root cause: IMU orientation yaw offset.** The gz IMU orientation differs from the ground-truth heading by a constant -89.96 deg yaw (roll/pitch match; acc/gyro healthy). LIO-SAM takes its initial guess and deskew attitude from that orientation. `scripts/imu_yaw_relay.py` (launched by `lio_sam_sim.launch.py`, `yaw_deg` 90) republishes `/imu` as `/imu_rot` with only the orientation rotated about z; `imuTopic` is `/imu_rot`. Variants (weave bag, rate 0.3): relay +90 deg **APE 19.2 m, 0 resets** (RPE 1 m 2.9 m; 455 poses); `extrinsicRPY` as a 90 deg yaw instead (also rotates acc/gyro, wrong physically) **264 m, 19 resets** - rejected. Retune alone 171 m, 26 resets. Repeat with the real repo launch (same config, load ~16, scratch-free): **91 m, 2 resets, 259 poses** - the outcome depends on how many scans the loaded machine drops, so read this as 26 resets -> 0-2 resets and APE 171 m -> 19-91 m, not as a stable number. Resets are nearly gone but 19-91 m is still far from KISS-ICP's 0.027 m: scans are still dropped (~455 poses vs ~960 for the other methods), so LIO-SAM stays experimental. The offset is a property of the world/spawn heading of the bag; check `yaw_deg` when the spawn pose changes. The recorded IMU is ~100 Hz mean (15845 msgs / 158 s here, median step ~12 ms in the fusion check); LIO-SAM has no imuRate parameter, it integrates by timestamp, so nothing rate-dependent needed changing (noise densities were computed for 100 Hz; 83 Hz changes them by <10 %).
+- **Detection (`tools/lio_doctor`).** `IMU_YAW_OFFSET` (ERROR if the circular mean of IMU yaw minus `--ref-odom` yaw exceeds 5 deg, `IMU_YAW_NOISY` if its std does) catches this offset automatically, and `--preflight` marks LIO-SAM DEGRADED while KISS-ICP stays READY; fix is `scripts/imu_yaw_relay.py` (`yaw_deg`), not `extrinsicRPY`.
+- **Recommendation.** KISS-ICP is the best/default candidate (lowest error, most robust, no IMU needed); RKO-LIO is a sound second; LIO-SAM stays experimental. No launch default changed.
+- **VIO decision.** Not worth it here: the robot has a 16-ring lidar and KISS-ICP already reaches ~3 cm; revisit VIO for camera-only robots.
+
+### 44b. VIO trial (2026-11-20)
+
+Tried visual-inertial odometry on the cafe weave (0.5 m/s, +-0.8 rad/s every 4 s, 150 s, live, headless): ORB-SLAM3 RGB-D-inertial, ORB-SLAM3 RGB-D without IMU, and RTAB-Map `rgbd_odometry` (camera only). Run: `scripts/vio_trial.sh 150` (needs the bare-metal `~/orb_slam3_ws` build, `LD_LIBRARY_PATH=$HOME/.local/lib`; configs `docker/orb_slam3/params/rosnav_rgbd_imu.yaml` with Tbc from the URDF, `rosnav_vio_trial_ros_params.yaml`).
+
+| estimator | APE RMSE vs /gt_odom | note |
+|---|---|---|
+| KISS-ICP / RKO-LIO (ref) | 0.027 / 0.045 m | same weave type |
+| ORB-SLAM3 RGB-D-inertial | 1.22 m | crashed ~17 s in (Sophus NaN in IMU integration) |
+| ORB-SLAM3 RGB-D (no IMU) | 1.72 m | crashed ~43 s in (heap corruption) |
+| RTAB-Map rgbd_odometry | 0.93-3.08 m (2 runs) | tracking lost during turns (quality 0) |
+
+Verdict: no VIO produced a usable trajectory here, so it does not help this robot. Likely causes (not isolated): 6-10 Hz camera under heavy machine load, fast yaw weaving, a flat textureless cafe, untuned IMU noise. Lidar odometry is 20-100x better and already present; VIO would only matter for camera-only robots, and ORB-SLAM3/OpenVINS/VINS-Fusion are GPLv3 (sidecar only). Not tried: OpenVINS, VINS-Fusion, RTAB-Map with IMU-assisted odometry, a slower weave. Data: `~/fusion_tools/shared/rosnav/vio/`.
+
 ### 44c. LIO live check, relay auto-calibration, adapter speed, map guard (2026-11-20)
 Live headless cafe run (domain 93), `lidar_type:=3d` + `lio_sam_sim.launch.py`, checked with `lio_doctor`, `nav2_doctor`, `localization_accuracy_bench.py`.
 - **The IMU yaw offset is not a constant of the sim.** The relay's fixed +90 deg (from the -90 deg weave bag) was wrong live: raw `/imu` yaw matched `/odom` yaw (86.9 vs 87.2 deg) and `lio_doctor` flagged `/imu_rot` +89.4 deg off. `scripts/imu_yaw_relay.py` now **measures** it: `auto_cal` pairs each IMU sample with the odom sample nearest in *time* (the latest-received odom lags seconds when the machine is loaded, which gave a bogus -48 deg once), takes the circular mean over `cal_samples` (100), accepts it only if the std is under `cal_max_std_deg` (5), else keeps `yaw_deg` (default 0 = pass-through). Fresh start: +0.0 deg.
@@ -3170,6 +3286,8 @@ Sources: [DRA-MPPI](https://arxiv.org/html/2506.21205v2), [C2U-MPPI](https://arx
 
 ---
 
+**Conformal risk budget: why it lost, and the clipped version (2026-11-20).** Dumping the learned radii after full episodes confirmed the hypothesis: in crossing/crowd runs the 0.4 s radius collapses to the 0.05 m floor (nominal 0.4) while the 3.2 s radius grows to 2.6-7.6 m (nominal 1.7), because pedestrians bounce off arena walls, which a constant-velocity predictor cannot foresee. Fix in `social_nav_adversary.py`: the published radius is the learned radius floored at the fixed sigma schedule (conformal only inflates), capped at 1.5x it, and EMA-smoothed (0.1/cycle); the raw learned radii stay available as `raw_radii`. 15-seed benchmark (collision / intrusion s / jerk / success; random6 = 30 runs, adversarial6 = 30): crowd8 risk 0.00/0.1/1.39/0.73, old 0.13/0.8/2.08/0.47, clipped 0.00/0.2/1.85/0.40; adversarial6 risk 0.03/0.6/1.36/0.77, old 0.07/0.8/2.83/0.53, clipped 0.03/0.5/1.90/0.53. The clipped version removes the collision and intrusion regressions and cuts jerk by 10-30% versus the old one, but it still does NOT beat the fixed-sigma RiskPlanner: jerk is higher and success lower on most scenarios. Negative result: online conformal widening is not worth it on this simulator; the fixed schedule stays the recommended planner.
+
 ## Research notes (2026-11-18, web search; most sources are preprints, course projects or self-reported)
 
 - **Stuck recovery.** KAIST mode-switching frontier search watches its own trajectory and, when progress stops, switches to a recovery mode that picks a target from a global database of remembered frontiers. Our forgive/relax steps are a simpler version; a real recovery mode that jumps to the best remembered frontier is the upgrade. An ASU ROS 2 course project uses a 3 m target lock (stops goal flip-flopping), a failure blacklist and a ~6 s stuck-in-turn abort.
@@ -3181,7 +3299,7 @@ Sources: [DRA-MPPI](https://arxiv.org/html/2506.21205v2), [C2U-MPPI](https://arx
 - **Social navigation.** 2026 work pairs online conformal calibration with runtime-certified planning (CoCoNav), conformalizes whole distance fields (FCP-MPC), or calibrates on how pedestrians react to the plan (interaction-aware CP); ETH/UCY is the shared benchmark. Fits our existing online gate.
 
 ## 48. Layered terrain costmap, borrowed from mesh_navigation (2026-11-25, updated 2026-11-26)
-`scripts/ply_to_layered_costmap.py` takes a terrain `.ply` and writes graded Nav2 masks, instead of a single blocked/free test. The idea of combining terrain cost layers comes from naturerobots/mesh_navigation. No code or dependency was taken: the layers are computed on a 2D height grid, so plain Nav2 can use them.
+`scripts/ply_to_layered_costmap.py` takes a terrain `.ply` and writes graded Nav2 masks, instead of the single blocked/free test in `ply_to_traversability.py`. The idea of combining terrain cost layers comes from naturerobots/mesh_navigation. No code or dependency was taken: the layers are computed on a 2D height grid, so plain Nav2 can use them.
 - **Layers:** steepness, roughness, step, ridge, border, clearance (low overhangs block, high canopy is ignored) and uncertainty (few points in a cell; a count-based stand-in inspired by ProTrav, arXiv 2610.30839, not a probabilistic model). Each is scaled to 0..1; the result is the weighted max plus an inflation halo.
 - **Outputs:** `<out>_speed.yaml` (SpeedFilter), `<out>_keepout.yaml` (cells at or above `--lethal`), a PNG per layer, `_cost.png`, and `_why.png` (which layer dominated each cell).
 - **Use:** `slam_nav.launch.py terrain_cost:=<ply>` builds the masks and fills any empty `gs_speed_mask` / `gs_keepout_mask`. The PLY must be in the spawn-relative map frame. In a headless `rough_terrain` launch the masks were built and Nav2 loaded them; driving with them has not been measured.

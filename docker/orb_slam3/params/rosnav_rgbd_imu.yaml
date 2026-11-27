@@ -1,0 +1,59 @@
+%YAML:1.0
+# ORB-SLAM3 RGB-D-INERTIAL settings for rosnav_bot (VIO trial, concepts.md sec 44b).
+# Camera block = rosnav_rgbd.yaml (urdf/rgbd_camera.xacro: 640x480, 90 deg hfov, 10 Hz).
+Camera.type: "PinHole"
+Camera.fx: 320.0
+Camera.fy: 320.0
+Camera.cx: 320.0
+Camera.cy: 240.0
+Camera.k1: 0.0
+Camera.k2: 0.0
+Camera.p1: 0.0
+Camera.p2: 0.0
+Camera.k3: 0.0
+Camera.width: 640
+Camera.height: 480
+Camera.fps: 10.0
+Camera.bf: 40.0
+Camera.RGB: 0
+ThDepth: 40.0
+DepthMapFactor: 1.0
+
+# Tbc = pose of the CAMERA (optical frame, x right / y down / z fwd) in the IMU/body frame.
+# imu_link is at (-0.1,0,0.05)+... = base_link + (-0.1,0,0.05) (chassis_joint -0.1, imu_joint z 0.05);
+# camera_link is at base_link + (0.45,0,0.15) pitched 0.0873 rad; optical rpy(-pi/2,0,-pi/2).
+# => t = (0.55, 0, 0.10), R = Ry(0.0873) * Rz(-pi/2) * Rx(-pi/2).  (computed, see concepts.md)
+Tbc: !!opencv-matrix
+  rows: 4
+  cols: 4
+  dt: f
+  data: [ 0.0,      -0.08719,  0.99619, 0.55,
+         -1.0,       0.0,      0.0,     0.0,
+          0.0,      -0.99619, -0.08719, 0.10,
+          0.0,       0.0,      0.0,     1.0]
+
+IMU.InsertKFsWhenLost: 0
+# Continuous-time densities from the sim IMU (imu.xacro): per-sample sigma at 100 Hz
+# gyro 2e-4 rad/s, acc 0.017 m/s^2  ->  sigma*sqrt(dt)
+IMU.NoiseGyro: 2.0e-5
+IMU.NoiseAcc: 1.7e-3
+IMU.GyroWalk: 1.0e-6
+IMU.AccWalk: 1.0e-5
+IMU.Frequency: 100
+
+ORBextractor.nFeatures: 1200
+ORBextractor.scaleFactor: 1.2
+ORBextractor.nLevels: 8
+ORBextractor.iniThFAST: 20
+ORBextractor.minThFAST: 7
+
+Viewer.KeyFrameSize: 0.05
+Viewer.KeyFrameLineWidth: 1
+Viewer.GraphLineWidth: 0.9
+Viewer.PointSize: 2
+Viewer.CameraSize: 0.08
+Viewer.CameraLineWidth: 3
+Viewer.ViewpointX: 0
+Viewer.ViewpointY: -0.7
+Viewer.ViewpointZ: -1.8
+Viewer.ViewpointF: 500

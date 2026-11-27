@@ -38,6 +38,7 @@ install(
 install(
   PROGRAMS
     scripts/navigation.py
+    scripts/occupancy_cloud.py
     scripts/orb_pose_to_amcl.py
     scripts/kidnap_eval.py
     scripts/leader_follower.py
@@ -150,10 +151,10 @@ install(
     scripts/mapf_gazebo.py
     scripts/cbf_safety_filter.py
     scripts/lidar_ring_time_adapter.py
-    scripts/resource_bench.py
     scripts/imu_yaw_relay.py
     scripts/world_to_map.py
     scripts/drive_pattern.py
+    scripts/resource_bench.py
     scripts/mapf_compare.py
   DESTINATION lib/${PROJECT_NAME}
 )

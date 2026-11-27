@@ -1,0 +1,6 @@
+N=500 scenarios (seeds 0..499), dist=fewer, scorer=weighted (FrontierCoordinator._score_frontier), random frontier attributes, straight-line distance
+total score: greedy 50.8  hungarian 3838.3  difference +2.829 per assigned robot
+total straight-line distance: greedy 9148.0 m  hungarian 5357.4 m  (-41.44%)
+total frontier size assigned: greedy 4327.6 m  hungarian 4325.8 m  (-0.04%)
+hungarian better 444 (88.8%)  equal 55 (11.0%)  worse 1 (0.2%)
+robots assigned: greedy 1339  hungarian 1339; conflicting pairs: greedy 0  hungarian 0
