@@ -125,7 +125,11 @@ class KidnapEval(Node):
 def main():
     rclpy.init()
     try:
-        rclpy.spin(KidnapEval())
+        try:
+            rclpy.spin(KidnapEval())
+        except Exception:  # noqa: BLE001 - a signal can invalidate the context mid-spin
+            if rclpy.ok():
+                raise
     except SystemExit:
         pass
 

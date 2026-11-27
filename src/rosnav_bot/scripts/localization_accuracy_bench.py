@@ -144,12 +144,16 @@ def main():
     rclpy.init()
     n = Bench()
     try:
-        rclpy.spin(n)
+        try:
+            rclpy.spin(n)
+        except Exception:  # noqa: BLE001 - a signal can invalidate the context mid-spin
+            if rclpy.ok():
+                raise
     except (SystemExit, KeyboardInterrupt):
         pass
     n.destroy_node()
     if rclpy.ok():
-        rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == '__main__':

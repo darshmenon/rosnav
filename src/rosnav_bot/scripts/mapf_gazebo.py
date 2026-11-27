@@ -289,7 +289,11 @@ def cmd_follow(a):
     rclpy.init()
     node = Follower()
     try:
-        rclpy.spin(node)
+        try:
+            rclpy.spin(node)
+        except Exception:  # noqa: BLE001 - a signal can invalidate the context mid-spin
+            if rclpy.ok():
+                raise
     except KeyboardInterrupt:
         pass
     finally:
@@ -297,7 +301,7 @@ def cmd_follow(a):
             pub.publish(Twist())
         node.destroy_node()
         if rclpy.ok():
-            rclpy.shutdown()
+            rclpy.try_shutdown()
     return 0
 
 
@@ -339,13 +343,17 @@ def cmd_tf(a):
     rclpy.init()
     node = GtTf()
     try:
-        rclpy.spin(node)
+        try:
+            rclpy.spin(node)
+        except Exception:  # noqa: BLE001 - a signal can invalidate the context mid-spin
+            if rclpy.ok():
+                raise
     except KeyboardInterrupt:
         pass
     finally:
         node.destroy_node()
         if rclpy.ok():
-            rclpy.shutdown()
+            rclpy.try_shutdown()
     return 0
 
 

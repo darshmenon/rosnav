@@ -186,7 +186,7 @@ class WaypointNavigator(Node):
         handle = future.result()
         if not handle.accepted:
             self.get_logger().error('Goal rejected.')
-            rclpy.shutdown()
+            rclpy.try_shutdown()
             return
         self.get_logger().info('Goal accepted.')
         handle.get_result_async().add_done_callback(self._result_cb)
@@ -220,13 +220,19 @@ class WaypointNavigator(Node):
                 self._send_waypoints()
                 return
 
-        rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = WaypointNavigator()
-    rclpy.spin(node)
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    except Exception:  # noqa: BLE001 - a signal can invalidate the context mid-spin
+        if rclpy.ok():
+            raise
 
 
 if __name__ == '__main__':

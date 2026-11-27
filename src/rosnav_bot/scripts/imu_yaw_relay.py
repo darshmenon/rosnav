@@ -108,7 +108,13 @@ class ImuYawRelay(Node):
 
 def main():
     rclpy.init()
-    rclpy.spin(ImuYawRelay())
+    try:
+        rclpy.spin(ImuYawRelay())
+    except KeyboardInterrupt:
+        pass
+    except Exception:  # noqa: BLE001 - a signal can invalidate the context mid-spin
+        if rclpy.ok():
+            raise
 
 
 if __name__ == '__main__':

@@ -271,19 +271,23 @@ class CoveragePlanner(Node):
                 self.get_logger().info('Coverage complete — all waypoints reached.')
         else:
             self.get_logger().error(f'Coverage failed. Status: {result.status}')
-        rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = CoveragePlanner()
     try:
-        rclpy.spin(node)
+        try:
+            rclpy.spin(node)
+        except Exception:  # noqa: BLE001 - a signal can invalidate the context mid-spin
+            if rclpy.ok():
+                raise
     except KeyboardInterrupt:
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == '__main__':

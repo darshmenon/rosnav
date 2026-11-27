@@ -110,7 +110,13 @@ class OrbPoseToAmcl(Node):
 
 def main():
     rclpy.init()
-    rclpy.spin(OrbPoseToAmcl())
+    try:
+        rclpy.spin(OrbPoseToAmcl())
+    except KeyboardInterrupt:
+        pass
+    except Exception:  # noqa: BLE001 - a signal can invalidate the context mid-spin
+        if rclpy.ok():
+            raise
 
 
 if __name__ == '__main__':

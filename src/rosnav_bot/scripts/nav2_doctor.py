@@ -549,7 +549,11 @@ def main(argv=None):
     node.get_logger().info(f'watching {ns or "/"} - Ctrl+C to stop')
     from rclpy.executors import ExternalShutdownException
     try:
-        rclpy.spin(node)
+        try:
+            rclpy.spin(node)
+        except Exception:  # noqa: BLE001 - a signal can invalidate the context mid-spin
+            if rclpy.ok():
+                raise
     except (KeyboardInterrupt, SystemExit, ExternalShutdownException):
         pass
     node.destroy_node()

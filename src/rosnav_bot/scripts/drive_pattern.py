@@ -88,7 +88,11 @@ class Driver(Node):
 def main():
     rclpy.init()
     try:
-        rclpy.spin(Driver())
+        try:
+            rclpy.spin(Driver())
+        except Exception:  # noqa: BLE001 - a signal can invalidate the context mid-spin
+            if rclpy.ok():
+                raise
     except (SystemExit, KeyboardInterrupt):
         pass
 

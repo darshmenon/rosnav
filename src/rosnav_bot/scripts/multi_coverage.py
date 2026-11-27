@@ -263,7 +263,7 @@ class MultiCoverage(Node):
         if remaining <= 0:
             self.get_logger().error(
                 'Timed out waiting for map (30 s). Shutting down.')
-            rclpy.shutdown()
+            rclpy.try_shutdown()
         elif int(remaining) % 5 == 0:
             self.get_logger().info(f'Still waiting for map … ({remaining:.0f}s left)')
 
@@ -393,7 +393,7 @@ class MultiCoverage(Node):
     def _check_done(self):
         if not self._pending:
             self.get_logger().info('All robots finished. Shutting down.')
-            rclpy.shutdown()
+            rclpy.try_shutdown()
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -402,12 +402,16 @@ def main(args=None):
     rclpy.init(args=args)
     node = MultiCoverage()
     try:
-        rclpy.spin(node)
+        try:
+            rclpy.spin(node)
+        except Exception:  # noqa: BLE001 - a signal can invalidate the context mid-spin
+            if rclpy.ok():
+                raise
     except KeyboardInterrupt:
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == '__main__':

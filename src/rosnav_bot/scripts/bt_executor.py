@@ -154,7 +154,7 @@ def cmd_goto(args):
     node.get_logger().info(f'Waiting for {action_name} ...')
     if not client.wait_for_server(timeout_sec=10.0):
         node.get_logger().error('Action server not available after 10 s')
-        rclpy.shutdown()
+        rclpy.try_shutdown()
         return 1
 
     goal_msg = NavigateToPose.Goal()
@@ -189,16 +189,16 @@ def cmd_goto(args):
     res = result_holder.get('result')
     if res is None:
         node.get_logger().error('Goal was rejected or timed out.')
-        rclpy.shutdown()
+        rclpy.try_shutdown()
         return 1
 
     if res.status == GoalStatus.STATUS_SUCCEEDED:
         node.get_logger().info('Goal reached successfully.')
-        rclpy.shutdown()
+        rclpy.try_shutdown()
         return 0
     else:
         node.get_logger().error(f'Navigation failed. Status: {res.status}')
-        rclpy.shutdown()
+        rclpy.try_shutdown()
         return 1
 
 # ---------------------------------------------------------------------------
@@ -245,7 +245,7 @@ def cmd_patrol(args):
     node.get_logger().info(f'Waiting for {action_name} ...')
     if not client.wait_for_server(timeout_sec=10.0):
         node.get_logger().error('Action server not available after 10 s')
-        rclpy.shutdown()
+        rclpy.try_shutdown()
         return 1
 
     total_laps = 0
@@ -300,7 +300,7 @@ def cmd_patrol(args):
     while rclpy.ok() and not done_flag['done']:
         rclpy.spin_once(node, timeout_sec=0.1)
 
-    rclpy.shutdown()
+    rclpy.try_shutdown()
     return done_flag['rc']
 
 # ---------------------------------------------------------------------------
@@ -392,12 +392,16 @@ def cmd_no_go(args):
         f'Publishing /no_go_mask ({width}x{height} @ {map_res} m/cell) — Ctrl-C to stop.')
 
     try:
-        rclpy.spin(node)
+        try:
+            rclpy.spin(node)
+        except Exception:  # noqa: BLE001 - a signal can invalidate the context mid-spin
+            if rclpy.ok():
+                raise
     except KeyboardInterrupt:
         pass
 
     timer.cancel()
-    rclpy.shutdown()
+    rclpy.try_shutdown()
     return 0
 
 # ---------------------------------------------------------------------------

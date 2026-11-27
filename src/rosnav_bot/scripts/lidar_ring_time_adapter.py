@@ -128,7 +128,13 @@ def main():
             self.proc_s = self.t_read = self.t_pub = 0.0
 
     rclpy.init()
-    rclpy.spin(Adapter())
+    try:
+        rclpy.spin(Adapter())
+    except KeyboardInterrupt:
+        pass
+    except Exception:  # noqa: BLE001 - a signal can invalidate the context mid-spin
+        if rclpy.ok():
+            raise
 
 
 if __name__ == '__main__':
