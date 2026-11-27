@@ -90,3 +90,26 @@ def test_online_gate_trusts_better_model_and_drops_worse_one():
 
 def test_online_gate_prior_is_learned_until_enough_data():
     assert oc.OnlineGate().g == 1.0
+    assert oc.OnlineGate().min_n == 12
+
+
+def test_ledger_coverage_recovers_when_the_crowd_gets_noisier():
+    """A recorded track, not a bag of scalars: the first half walks a straight line the predictor
+    matches, the second half jitters. The radius must grow and coverage must come back near 90%."""
+    rng = np.random.default_rng(2)
+    c = oc.OnlineConformal([0.3] * 4, alpha=0.1, eta=0.08)
+    led = oc.PredictionLedger(c, dt=0.4, tol=0.25)
+    t = 0.0
+    for phase, noise, steps in ((0, 0.05, 30), (1, 0.9, 200)):
+        for _ in range(steps):
+            path = np.stack([t + np.arange(1, 5) * 0.4, np.zeros(4)], 1)
+            led.add(1, t, path)
+            for step in range(4):
+                tt = t + (step + 1) * 0.4
+                truth = (tt + float(rng.normal(0, noise)), float(rng.normal(0, noise)))
+                led.observe(1, tt, truth)
+            t += 0.4
+        if phase == 0:
+            calm = c.radii.copy()
+    assert np.mean(c.radii) > np.mean(calm)
+    assert np.all((c.cov > 0.75) & (c.cov < 0.98))

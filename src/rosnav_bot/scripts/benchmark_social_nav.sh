@@ -46,7 +46,12 @@ for C in $CONFIGS; do
   fi
   setsid ros2 launch rosnav_bot slam_nav.launch.py world_name:=$WORLD slam:=false headless:=$HL rviz:=False \
       dynobs_pipeline:=$PIPE max_speed:=${SPEED:-0.5} > "$OUT/$C.launch.log" 2>&1 < /dev/null &
-  sleep 80
+  # wait until Nav2 is really up (not a fixed sleep: under load the stack took >80 s and runs recorded nothing)
+  up=0; for i in $(seq 1 60); do
+    if grep -q "Nav2 active" "$OUT/$C.launch.log" 2>/dev/null; then up=1; break; fi
+    sleep 5; done
+  [ $up = 1 ] && log "nav2 active after ~$((i*5)) s" || { log "nav2 NOT active after 300 s -> skipping $C"; kill_domain; continue; }
+  sleep 10
   setsid ros2 run rosnav_bot social_force_peds.py --ros-args -p use_sim_time:=false -p world:=$WORLD \
       -p map:=$SHARE/maps/map_$WORLD.yaml -p n:=$PEDS -p seed:=$SEED \
       -p offset_x:=${SPAWN_X:-1.5} -p offset_y:=${SPAWN_Y:-1.0} > "$OUT/$C.peds.log" 2>&1 < /dev/null &

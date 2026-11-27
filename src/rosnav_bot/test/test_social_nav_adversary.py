@@ -9,7 +9,7 @@ import social_nav_core as snc  # noqa: E402
 
 
 def test_budget_tracks_error_quantile():
-    b = A.ConformalRiskBudget(alpha=0.1, eta=0.05, every=1)
+    b = A.ConformalRiskBudget(alpha=0.1, eta=0.05, every=1, upward_only=False, cap_mult=None, ema=1.0)
     rng = np.random.default_rng(0)
     # peds with constant velocity but an unmodelled lateral drift -> CV error grows with lag
     pos = np.zeros((2, 2))
@@ -21,6 +21,24 @@ def test_budget_tracks_error_quantile():
     assert b.n_updates > 1000
     assert np.all(np.diff(r[:5]) > -0.05) and r[4] > r[0]
     assert np.all(r >= 0.05) and np.all(np.isfinite(r))
+
+
+def test_fixed_budget_floored_capped_smoothed():
+    b = A.ConformalRiskBudget(every=1)
+    nom = A.nominal_radii()
+    rng = np.random.default_rng(0)
+    pos, vel = np.zeros((2, 2)), np.array([[1.0, 0.0], [0.0, 1.0]])
+    prev = b.radii
+    for t in range(600):
+        pos = pos + vel * A.DT + rng.normal(0, 0.3, pos.shape)   # noisy -> raw radii blow up late
+        vel = vel + rng.normal(0, 0.5, vel.shape)
+        b.observe(pos, vel)
+        r = b.radii
+        assert np.all(r >= nom - 1e-9) and np.all(r <= 1.5 * nom + 1e-9)
+        assert np.max(np.abs(r - prev)) <= 0.1 * 1.5 * nom.max() + 1e-9   # EMA bounds the step
+        prev = r
+    assert np.any(b.raw_radii > 1.5 * nom)                      # the cap actually bit
+    assert np.allclose(b.radii[-1], 1.5 * nom[-1], rtol=0.02)
 
 
 def test_decode_bounds():

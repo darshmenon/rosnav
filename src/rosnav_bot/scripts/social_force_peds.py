@@ -29,7 +29,7 @@ import numpy as np
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import Float64, String
 from tf2_msgs.msg import TFMessage
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -48,6 +48,27 @@ def _person_mesh_uri():
     return 'file://' + dae if os.path.isfile(dae) else ''
 
 
+def _leg(name, y):
+    """A leg link plus a hip joint. The swing is what the lidar sees moving."""
+    return f'''
+ <link name="{name}"><gravity>false</gravity><pose>0 {y} 0.40 0 0 0</pose>
+  <inertial><mass>8</mass><inertia><ixx>0.4</ixx><iyy>0.4</iyy><izz>0.05</izz></inertia></inertial>
+  <collision name="c"><pose>0 0 0 0 0 0</pose><geometry><cylinder><radius>0.07</radius><length>0.75</length></cylinder></geometry></collision>
+  <visual name="v"><pose>0 0 0 0 0 0</pose><geometry><cylinder><radius>0.07</radius><length>0.75</length></cylinder></geometry>
+   <material><ambient>0.15 0.16 0.22 1</ambient><diffuse>0.15 0.16 0.22 1</diffuse></material></visual>
+ </link>
+ <joint name="hip_{name}" type="revolute">
+  <parent>link</parent><child>{name}</child>
+  <pose>0 {y} 0.78 0 0 0</pose>
+  <axis><xyz>0 1 0</xyz><limit><lower>-0.9</lower><upper>0.9</upper></limit></axis>
+ </joint>
+ <plugin filename="libgz-sim-joint-position-controller-system.so" name="gz::sim::systems::JointPositionController">
+  <joint_name>hip_{name}</joint_name>
+  <topic>/model/hip_{name}/cmd_pos</topic>
+  <p_gain>8</p_gain><i_gain>0</i_gain><d_gain>0.2</d_gain>
+ </plugin>'''
+
+
 def human_sdf(name, rng):
     h = rng.uniform(1.55, 1.85)
     s = h / 1.7
@@ -59,17 +80,22 @@ def human_sdf(name, rng):
         )
     else:
         visual = (
-            f'<visual name="body"><pose>0 0 {0.9 * s:.3f} 0 0 0</pose><geometry>'
-            f'<cylinder><radius>0.22</radius><length>{1.7 * s:.3f}</length></cylinder></geometry></visual>'
+            f'<visual name="body"><pose>0 0 {1.15 * s:.3f} 0 0 0</pose><geometry>'
+            f'<box><size>0.28 {0.20 * s:.3f} {0.55 * s:.3f}</size></box></geometry></visual>'
         )
+    # The topic string is filled with the model name below. The helper uses a
+    # placeholder so each person gets their own hip command.
+    legs = (_leg('legL', 0.09 * s) + _leg('legR', -0.09 * s)).replace(
+        '/model/hip_', f'/model/{name}/hip_')
     return f'''<?xml version="1.0"?>
 <sdf version="1.8"><model name="{name}">
  <link name="link"><gravity>false</gravity>
-  <inertial><mass>60</mass><inertia><ixx>10</ixx><iyy>10</iyy><izz>2</izz></inertia></inertial>
-  <collision name="col"><pose>0 0 {0.9 * s:.3f} 0 0 0</pose><geometry>
-    <cylinder><radius>0.22</radius><length>{1.7 * s:.3f}</length></cylinder></geometry></collision>
+  <inertial><mass>50</mass><inertia><ixx>8</ixx><iyy>8</iyy><izz>1.5</izz></inertia></inertial>
+  <collision name="col"><pose>0 0 {1.15 * s:.3f} 0 0 0</pose><geometry>
+    <cylinder><radius>0.18</radius><length>{0.7 * s:.3f}</length></cylinder></geometry></collision>
   {visual}
  </link>
+ {legs}
  <plugin filename="libignition-gazebo-velocity-control-system" name="ignition::gazebo::systems::VelocityControl">
   <link_name>link</link_name></plugin>
 </model></sdf>'''
@@ -98,6 +124,10 @@ class Peds(Node):
         self.truth = {}          # name -> (x, y, yaw) from pose/info
         self.robot = None
         self.pubs = [self.create_publisher(Twist, f'/model/{nm}/cmd_vel', 10) for nm in self.names]
+        self.hips = [(self.create_publisher(Float64, f'/model/{nm}/hip_legL/cmd_pos', 10),
+                      self.create_publisher(Float64, f'/model/{nm}/hip_legR/cmd_pos', 10))
+                     for nm in self.names]
+        self.phase = [0.0] * self.n
         self.gt = self.create_publisher(String, '/social_peds/gt', 10)
         self.marks = self.create_publisher(MarkerArray, '/social_peds/markers', 10)
         self.create_subscription(TFMessage, f'/world/{self.world_name}/pose/info', self._on_pose, 10)
@@ -117,6 +147,9 @@ class Peds(Node):
     # -- setup
     def _start_bridge(self):
         args = [f'/model/{nm}/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist' for nm in self.names]
+        for nm in self.names:
+            args.append(f'/model/{nm}/hip_legL/cmd_pos@std_msgs/msg/Float64]gz.msgs.Double')
+            args.append(f'/model/{nm}/hip_legR/cmd_pos@std_msgs/msg/Float64]gz.msgs.Double')
         args.append(f'/world/{self.world_name}/pose/info@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V')
         self.procs.append(subprocess.Popen(['ros2', 'run', 'ros_gz_bridge', 'parameter_bridge'] + args,
                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
@@ -156,22 +189,44 @@ class Peds(Node):
         dt = min(0.3, now - self.last)
         self.last = now
         for i, nm in enumerate(self.names):                  # sync the model with the real pose
-            if nm in self.truth:
-                self.crowd.pos[i] = self.truth[nm][:2]
+            if nm not in self.truth:
+                continue
+            x, y, _yaw = self.truth[nm]
+            # A pose outside the room (or a NaN) is what blew the ODE hash
+            # (aabbBound left the integer range). Keep the last good point.
+            if math.isfinite(x) and math.isfinite(y) and abs(x) < 25 and abs(y) < 25:
+                self.crowd.pos[i] = (x, y)
         self.robot = self._robot_xy()
         vel = self.crowd.step(dt, self.robot)
         out = []
+        cap = 1.6
         for i, nm in enumerate(self.names):
+            vx, vy = float(vel[i][0]), float(vel[i][1])
+            if not (math.isfinite(vx) and math.isfinite(vy)):
+                vx, vy = 0.0, 0.0
+            sp = math.hypot(vx, vy)
+            if sp > cap:
+                vx, vy, sp = vx * cap / sp, vy * cap / sp, cap
             yaw = self.truth.get(nm, (0, 0, 0.0))[2]
+            if not math.isfinite(yaw):
+                yaw = 0.0
             c, s = math.cos(-yaw), math.sin(-yaw)
             m = Twist()
-            m.linear.x = float(c * vel[i][0] - s * vel[i][1])  # keep body-frame correct if pushed
-            m.linear.y = float(s * vel[i][0] + c * vel[i][1])
-            m.angular.z = float(-2.0 * yaw)                   # stay upright / facing +x
+            m.linear.x = float(c * vx - s * vy)
+            m.linear.y = float(s * vx + c * vy)
+            heading = math.atan2(vy, vx) if sp > 0.08 else yaw
+            err = math.atan2(math.sin(heading - yaw), math.cos(heading - yaw))
+            m.angular.z = float(max(-1.5, min(1.5, 2.0 * err)))
             self.pubs[i].publish(m)
+            self.phase[i] += sp * dt * 4.0
+            swing = 0.55 * math.sin(self.phase[i]) if sp > 0.08 else 0.0
+            left, right = Float64(), Float64()
+            left.data, right.data = float(swing), float(-swing)
+            self.hips[i][0].publish(left)
+            self.hips[i][1].publish(right)
             out.append(dict(id=i + 1, x=round(float(self.crowd.pos[i][0]), 3),
                             y=round(float(self.crowd.pos[i][1]), 3),
-                            vx=round(float(vel[i][0]), 3), vy=round(float(vel[i][1]), 3)))
+                            vx=round(vx, 3), vy=round(vy, 3)))
         self._publish_markers(out)
         gt = String()
         gt.data = json.dumps({'t': self.get_clock().now().nanoseconds / 1e9, 'peds': out})
@@ -216,14 +271,18 @@ def main():
     rclpy.init()
     n = Peds()
     try:
-        rclpy.spin(n)
+        try:
+            rclpy.spin(n)
+        except Exception:  # noqa: BLE001 - a signal can invalidate the context mid-spin
+            if rclpy.ok():
+                raise
     except KeyboardInterrupt:
         pass
     finally:
         n.shutdown()
         n.destroy_node()
         if rclpy.ok():
-            rclpy.shutdown()
+            rclpy.try_shutdown()
 
 
 if __name__ == '__main__':

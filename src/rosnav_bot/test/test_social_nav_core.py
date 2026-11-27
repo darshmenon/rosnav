@@ -35,3 +35,72 @@ def test_risk_planner_respects_walls():
     assert v[0] <= 0.35                      # never commits to a rollout that ends in the wall
     v2 = pl.plan(np.array([-0.2, 0.0]), np.array([5.0, 0.0]), [np.array([3.0, 3.0])], [np.zeros(2)])
     assert v2[0] <= 0.35
+
+
+def test_futures_replace_the_gaussian_samples():
+    """A person standing on the goal line must push the robot off +x when those futures are
+    passed in. The same person placed 5 m to the side must not."""
+    T = int(3.0 / s.DT)
+    on_path = np.zeros((4, 1, T, 2))
+    on_path[:, 0, :, 0] = 2.0
+    aside = on_path.copy()
+    aside[:, 0, :, 1] = 5.0
+    ped, vel = [np.array([2.0, 0.0])], [np.zeros(2)]
+    blocked = s.RiskPlanner(w_risk=40, w_goal=0.2, w_commit=0, samples=4).plan(
+        np.zeros(2), np.array([6.0, 0.0]), ped, vel, futures=on_path)
+    clear = s.RiskPlanner(w_risk=40, w_goal=0.2, w_commit=0, samples=4).plan(
+        np.zeros(2), np.array([6.0, 0.0]), ped, vel, futures=aside)
+    assert abs(blocked[1]) > abs(clear[1]) or blocked[0] < clear[0]
+
+
+def _on_path_futures(when):
+    """One person on the +x goal line at a single horizon step. `when` is 'early' or 'late'."""
+    T = int(3.0 / s.DT)
+    fut = np.zeros((4, 1, T, 2))
+    fut[:, :, :, 1] = 8.0
+    step = 0 if when == 'early' else T - 1
+    fut[:, 0, step, 0] = 0.4 if when == 'early' else 2.4
+    fut[:, 0, step, 1] = 0.0
+    return fut
+
+
+def test_horizon_discount_counts_a_late_hit_less_than_an_early_one():
+    ped, vel = [np.array([2.4, 0.0])], [np.zeros(2)]
+    goal = np.array([6.0, 0.0])
+    late = s.RiskPlanner(horizon_discount=0.0, samples=4, w_commit=0, seed=0)
+    early = s.RiskPlanner(horizon_discount=0.0, samples=4, w_commit=0, seed=0)
+    late.plan(np.zeros(2), goal, ped, vel, futures=_on_path_futures('late'))
+    early.plan(np.zeros(2), goal, ped, vel, futures=_on_path_futures('early'))
+    straight = int(np.argmax(late.cands[:, 0]))
+    assert early.last['risk'][straight] > late.last['risk'][straight]
+
+
+def test_plan_extra_stays_inside_the_fixed_disc_and_grows_when_closing():
+    cands = np.array([[0.8, 0.0], [-0.8, 0.0]])
+    extra = s._plan_extra(cands, np.zeros(2), [np.array([3.0, 0.0])], [np.zeros(2)])
+    assert extra.max() <= 0.15 + 1e-9
+    assert extra[0] > extra[1]
+
+
+def test_adaptive_risk_weight_matches_zero_risk_when_every_move_is_blocked():
+    ped, vel = [np.array([1.2, 0.0])], [np.zeros(2)]
+    goal = np.array([6.0, 0.0])
+    cut = s.RiskPlanner(w_risk=50, w_commit=0, samples=4, seed=1, adapt_when=0.0, adapt_scale=0.0)
+    free = s.RiskPlanner(w_risk=0, w_commit=0, samples=4, seed=1)
+    assert np.allclose(cut.plan(np.zeros(2), goal, ped, vel), free.plan(np.zeros(2), goal, ped, vel))
+
+
+def test_sigma_scale_scales_the_default_linear_sigma():
+    ped, vel = [np.array([2.0, 0.0])], [np.zeros(2)]
+    spread = {}
+    for scale in (0.0, 1.0):
+        pl = s.RiskPlanner(samples=64, sigma_scale=scale, seed=0)
+        seen = {}
+        orig = s._collision_risk
+        s._collision_risk = lambda tr, S, *a, _o=orig, _d=seen: (_d.setdefault('S', S), _o(tr, S, *a))[1]
+        try:
+            pl.plan(np.zeros(2), np.array([6.0, 0.0]), ped, vel)
+        finally:
+            s._collision_risk = orig
+        spread[scale] = float(seen['S'].std(axis=0).max())
+    assert spread[0.0] == 0.0 and spread[1.0] > 0.05

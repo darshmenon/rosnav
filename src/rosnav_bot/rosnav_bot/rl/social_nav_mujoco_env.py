@@ -211,7 +211,7 @@ class SocialNavMujocoEnv(gym.Env):
                 'min_clearance': float(self.min_clear), 'intrusion_s': float(self.intrusion_s)}
 
     def step(self, action):
-        a = np.asarray(action, np.float64).reshape(2)
+        a = np.nan_to_num(np.asarray(action, np.float64).reshape(2), nan=0.0, posinf=0.0, neginf=0.0)
         v = float(np.clip(a[0], 0.0, V_MAX))
         om = float(np.clip(a[1], -W_MAX, W_MAX))
         vl, vr = v - om * TRACK / 2, v + om * TRACK / 2           # wheel linear speeds

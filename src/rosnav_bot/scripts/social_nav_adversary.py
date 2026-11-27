@@ -40,13 +40,19 @@ def nominal_radii():
 class ConformalRiskBudget:
     """Online conformal quantile of CV prediction error, fed by watching the crowd."""
 
-    def __init__(self, alpha=0.1, eta=0.05, radii0=None, every=2):
-        self.alpha, self.every = alpha, every
-        self.conf = OnlineConformal(nominal_radii() if radii0 is None else radii0, alpha=alpha, eta=eta)
+    def __init__(self, alpha=0.1, eta=0.05, radii0=None, every=2, upward_only=True, cap_mult=1.5, ema=0.1):
+        # upward_only: published radius never below the fixed sigma schedule (conformal only INFLATES it).
+        # cap_mult: published radius never above cap_mult x the fixed schedule (None = uncapped).
+        # ema: per-cycle smoothing of the published radius (1.0 = no smoothing). Legacy/raw = (False, None, 1.0).
+        self.alpha, self.every, self.eta = alpha, every, eta
+        self.upward_only, self.cap_mult, self.ema = upward_only, cap_mult, ema
+        self.nom = nominal_radii() if radii0 is None else np.asarray(radii0, float)
         self.reset()
 
     def reset(self):
         self.hist, self.tick, self.n_updates = [], 0, 0
+        self.conf = OnlineConformal(self.nom, alpha=self.alpha, eta=self.eta)
+        self._pub = self.nom.copy()
 
     def observe(self, ped_pos, ped_vel):
         """Call once per control cycle with current pedestrian positions/velocities."""
@@ -68,21 +74,32 @@ class ConformalRiskBudget:
         self.hist.append((pos.copy(), vel.copy()))
         if len(self.hist) > LAG * N_STEPS + 1:
             self.hist.pop(0)
+        tgt = self.conf.radii
+        if self.upward_only:
+            tgt = np.maximum(tgt, self.nom)
+        if self.cap_mult is not None:
+            tgt = np.minimum(tgt, self.cap_mult * self.nom)
+        self._pub += self.ema * (tgt - self._pub)
 
     @property
-    def radii(self):
+    def raw_radii(self):
+        """Unclipped learned conformal radii (diagnostics)."""
         return self.conf.radii
 
     @property
+    def radii(self):
+        return self._pub.copy()
+
+    @property
     def sigma(self):
-        return self.conf.radii / Z90
+        return self.radii / Z90
 
 
 class ConformalRiskPlanner(snc.RiskPlanner):
     """RiskPlanner with an online conformal risk budget (same plan() interface)."""
 
-    def __init__(self, alpha=0.1, eta=0.05, name='conf-risk', **kw):
-        self.budget = ConformalRiskBudget(alpha=alpha, eta=eta)
+    def __init__(self, alpha=0.1, eta=0.05, name='conf-risk', upward_only=True, cap_mult=1.5, ema=0.1, **kw):
+        self.budget = ConformalRiskBudget(alpha=alpha, eta=eta, upward_only=upward_only, cap_mult=cap_mult, ema=ema)
         super().__init__(conformal_radii=self.budget.radii, name=name, **kw)
 
     # simulate() reassigns planner.rng at every episode start -> use it as the reset hook
@@ -96,7 +113,6 @@ class ConformalRiskPlanner(snc.RiskPlanner):
         b = getattr(self, 'budget', None)
         if b is not None:
             b.reset()
-            b.conf = OnlineConformal(nominal_radii(), alpha=b.alpha, eta=b.conf.eta)
             self.conf = b.radii / Z90
 
     def plan(self, pos, goal, ped_pos, ped_vel, preds=None, futures=None):
@@ -109,6 +125,14 @@ def make_planners(seed=0):
     kw = dict(samples=12, seed=seed)
     return [snc.ReactivePlanner(), snc.PredictivePlanner(),
             snc.RiskPlanner(name='risk', **kw), ConformalRiskPlanner(**kw)]
+
+
+def make_planners_with_old(seed=0):
+    """Adds the original (raw, unclipped, unsmoothed) conformal planner for the before/after comparison."""
+    kw = dict(samples=12, seed=seed)
+    ps = make_planners(seed)
+    ps.append(ConformalRiskPlanner(name='conf-risk-old', upward_only=False, cap_mult=None, ema=1.0, **kw))
+    return ps
 
 
 # ---------------------------------------------------------------- scenarios
@@ -313,7 +337,7 @@ def bench(quick=False, seeds=15, max_t=25.0):
         seeds, max_t = 3, 12.0
     counts = (4, 8, 16, 24)
     pop, iters = (6, 2) if quick else (12, 4)
-    planners = make_planners()
+    planners = make_planners_with_old()
     names = [p.name for p in planners]
     # adversarial pool: top-3 crowds found against each planner, plus equally many random ones
     pool = []

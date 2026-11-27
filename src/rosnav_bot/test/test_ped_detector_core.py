@@ -110,6 +110,17 @@ def test_lidar_cluster_fallback_finds_people_not_walls():
     assert dc.lidar_clusters(r, a0, da, T, static_fn=lambda x, y: True) == []
 
 
+def test_state_json_is_what_social_nav_reads():
+    """social_nav_node._on_state does json.loads(msg)['moving_obstacles'] and uses id, x, y."""
+    raw = json.loads(dc.to_state_json([
+        dict(id=3, x=1.25, y=-0.4, vx=0.5, vy=-0.2, hits=4)]))
+    person = raw['moving_obstacles'][0]
+    assert person['id'] == 3
+    assert person['x'] == 1.25 and person['y'] == -0.4
+    assert person['vx'] == 0.5 and person['vy'] == -0.2
+    assert set(person) >= {'id', 'x', 'y', 'vx', 'vy', 'speed'}
+
+
 YOLO = os.path.expanduser('~/rosnav/yolov8n.pt')
 
 

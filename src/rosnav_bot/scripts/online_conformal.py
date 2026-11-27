@@ -79,11 +79,13 @@ class ErrorTracker:
 class OnlineGate:
     """Causal blend weight g in [0,1] between a learned and a constant-velocity predictor, from REALISED errors.
 
-    paths = cv + g * (learned - cv). g = 1 until `min_n` matured samples exist (prior: trust the learned model);
+    paths = cv + g * (learned - cv). g = 1 until `min_n` matured samples exist (prior: trust the learned model).
+    `min_n` is 12, one prediction horizon, so a bad model is not trusted for the 40-sample warm-up that
+    hurt the small eth scene;
     afterwards g moves toward 0 when CV has been closer to the truth than the learned model (hotel-like scenes) and
     toward 1 when the learned model is better. `kappa` sets the sensitivity (relative error gap -> g).
     """
-    def __init__(self, n_steps=12, dt=0.4, kappa=4.0, min_n=40, decay=0.98):
+    def __init__(self, n_steps=12, dt=0.4, kappa=4.0, min_n=12, decay=0.98):
         self.tl, self.tc = ErrorTracker(n_steps, decay), ErrorTracker(n_steps, decay)
         self.ledger_l = PredictionLedger(self.tl, dt=dt)
         self.ledger_c = PredictionLedger(self.tc, dt=dt)
