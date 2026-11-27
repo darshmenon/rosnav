@@ -114,6 +114,7 @@ docking_server:
 
 controller_server:
   ros__parameters:
+    speed_limit_topic: "/gs/speed_limit"
     controller_frequency: 20.0
     costmap_update_timeout: 0.30
     min_x_velocity_threshold: 0.001
