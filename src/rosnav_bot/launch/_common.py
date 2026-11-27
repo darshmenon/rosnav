@@ -1473,3 +1473,11 @@ def fleet_rviz_config(names, base_path, view_scale=38.0, map_display='cloud', ma
                         'Value': 'TopDownOrtho (rviz_default_plugins)'}
     cfg['Visualization Manager']['Views'] = views
     return cfg
+
+
+def default_map_save_prefix(world_name: str) -> str:
+    """Where explore runs auto-save maps. Outside the package maps/ dir (symlinked into the repo by
+    --symlink-install) so a run can never overwrite a committed, ready-made map."""
+    out_dir = os.path.expanduser('~/.ros/rosnav_maps')
+    os.makedirs(out_dir, exist_ok=True)
+    return os.path.join(out_dir, f'map_{world_name}')

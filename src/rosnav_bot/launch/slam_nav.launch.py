@@ -70,10 +70,7 @@ def _resolve_world_path(world_name_arg: str, world_arg: str, pkg_share: str) -> 
 def _resolve_map_prefix(map_prefix_arg: str, world_name: str, pkg_share: str) -> str:
     if map_prefix_arg:
         return os.path.expanduser(map_prefix_arg)
-    # Default is OUTSIDE the package maps/ dir so an explore run can never overwrite a ready-made map.
-    out_dir = os.path.expanduser('~/.ros/rosnav_maps')
-    os.makedirs(out_dir, exist_ok=True)
-    return os.path.join(out_dir, f'map_{world_name}')
+    return _common.default_map_save_prefix(world_name)
 
 
 def _resolve_map_yaml(world_name: str, pkg_share: str) -> str:

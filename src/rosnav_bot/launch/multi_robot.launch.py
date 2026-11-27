@@ -830,7 +830,7 @@ def _build_all(context, pkg_share: str):
 
     world_stem   = os.path.splitext(os.path.basename(world_path))[0]
     gazebo_world_name = _resolve_gazebo_world_name(world_path)
-    map_prefix   = os.path.join(pkg_share, 'maps', f'map_{world_stem}')
+    map_prefix   = _common.default_map_save_prefix(world_stem)
     template_yaml = _multirobot_template_yaml(pkg_share, controller, drive_type)
     slam_template_yaml = os.path.join(
         pkg_share, 'config',
