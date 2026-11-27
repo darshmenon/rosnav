@@ -256,11 +256,11 @@ Route Server lanes (cafe): `route_graph:=auto`; make a graph for any map with `s
 
 ![social navigation demo](assets/social_nav/nav_showcase.gif)
 
-Own `RiskPlanner` (not Nav2's controller) with learned, conformal-uncertain pedestrian prediction. Offline, 10 seeds, 16 pedestrians: 10% collisions vs 100% for a reactive planner. In Nav2 the same predictions only shape the costmap (`dynobs_pipeline:=external`); `controller:=` still drives. Details: `concepts.md` §47.
+Own `RiskPlanner` (not Nav2's controller) with learned, conformal-uncertain pedestrian prediction. Offline, 10 seeds, 16 pedestrians (measured before the `sigma_scale` fix, not rerun): 10% collisions vs 100% for a reactive planner, both 70% success. In Nav2 the same predictions only shape the costmap (`dynobs_pipeline:=external`); `controller:=` still drives. Details: `concepts.md` §47.
 
 #### Benchmark and adversarial crowds
 
-Reactive vs predictive vs risk planners, 15 seeds, 4–24 pedestrians: the risk planner is safest. Run `python3 src/rosnav_bot/scripts/social_nav_adversary.py --bench` (tables in `images/social_nav_adversary/`, details in [concepts.md](concepts.md)).
+Reactive vs predictive vs risk planners, 15 seeds, 4–24 pedestrians: the risk planner collides least, but reaches no goal at 16 or 24 pedestrians within 25 s. Run `python3 src/rosnav_bot/scripts/social_nav_adversary.py --bench` (tables in `images/social_nav_adversary/`, details in [concepts.md](concepts.md)).
 
 ### Decentralized: every robot, its own goal
 
