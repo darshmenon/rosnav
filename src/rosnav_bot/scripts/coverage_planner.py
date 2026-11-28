@@ -9,7 +9,8 @@ action server.
 Algorithm
 ─────────
   1. Receive OccupancyGrid (from SLAM Toolbox or map_server).
-  2. Identify FREE cells (value 0) with clearance ≥ robot_radius from walls.
+  2. Identify FREE cells (value 0) connected to the robot (else the largest
+     free area) with clearance ≥ robot_radius from walls.
   3. Sweep the bounding box of free space with horizontal scan lines spaced
      sweep_spacing metres apart, alternating direction (boustrophedon).
   4. Keep only waypoints that land on free + cleared cells.
@@ -59,6 +60,7 @@ except ImportError:
 
 try:
     from scipy.ndimage import binary_erosion as _scipy_erosion
+    from scipy.ndimage import label as _scipy_label
     HAS_SCIPY = True
 except ImportError:
     HAS_SCIPY = False
@@ -87,6 +89,23 @@ def start_nearest(waypoints, x: float, y: float):
         options.append([p for line in rows for p in line])
         options.append([(px, py, math.pi - yaw) for line in rows for px, py, yaw in line[::-1]])
     return min(options, key=lambda o: (o[0][0] - x) ** 2 + (o[0][1] - y) ** 2)
+
+
+def reachable_free(free, cell=None):
+    """Keep one 4-connected free area: the one at (or nearest) cell (row, col), else the largest.
+
+    Free cells walled off from the robot, such as the outside of a building, cannot be driven to.
+    """
+    labels, count = _scipy_label(free)
+    if count <= 1:
+        return free
+    if cell is None:
+        keep = int(np.bincount(labels.ravel())[1:].argmax()) + 1
+    else:
+        cells = np.argwhere(free)
+        r, c = cells[((cells - cell) ** 2).sum(axis=1).argmin()]
+        keep = labels[r, c]
+    return labels == keep
 
 
 class CoveragePlanner(Node):
@@ -177,6 +196,13 @@ class CoveragePlanner(Node):
         grid  = np.array(msg.data, dtype=np.int8).reshape((h, w))
         free  = (grid == 0)
 
+        robot_x = robot_y = None
+        if HAS_TF:
+            robot_x, robot_y = self._get_robot_pose()
+        if HAS_SCIPY:
+            cell = None if robot_x is None else (int((robot_y - oy) // res), int((robot_x - ox) // res))
+            free = reachable_free(free, cell)
+
         # Erode free space by robot_radius to ensure clearance from walls
         r_cells = max(1, int(math.ceil(self._radius / res)))
         struct  = np.ones((2 * r_cells + 1, 2 * r_cells + 1), dtype=bool)
@@ -246,10 +272,8 @@ class CoveragePlanner(Node):
             return []
 
         # Optionally start at the sweep corner nearest the robot's current pose
-        if self._from_bot and HAS_TF:
-            robot_x, robot_y = self._get_robot_pose()
-            if robot_x is not None:
-                waypoints = start_nearest(waypoints, robot_x, robot_y)
+        if self._from_bot and robot_x is not None:
+            waypoints = start_nearest(waypoints, robot_x, robot_y)
 
         return waypoints
 

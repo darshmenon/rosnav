@@ -20,9 +20,9 @@ pytestmark = pytest.mark.skipif(cp is None, reason='ROS Nav2 messages not instal
 RES, SIZE = 0.1, 40          # 4 m x 4 m free room, origin (0, 0)
 
 
-def _plan(robot=None, from_robot=True):
+def _plan(robot=None, from_robot=True, data=None):
     origin = NS(position=NS(x=0.0, y=0.0))
-    stub = NS(_map=NS(info=NS(resolution=RES, width=SIZE, height=SIZE, origin=origin), data=[0] * SIZE * SIZE),
+    stub = NS(_map=NS(info=NS(resolution=RES, width=SIZE, height=SIZE, origin=origin), data=data or [0] * SIZE * SIZE),
               _radius=0.2, _spacing=0.5, _from_bot=from_robot,
               _rx_min=-1e9, _rx_max=1e9, _ry_min=-1e9, _ry_max=1e9,
               _get_robot_pose=lambda: robot or (None, None))
@@ -57,3 +57,33 @@ def test_yaw_faces_travel_direction(robot):
 
 def test_unknown_pose_keeps_sweep():
     assert _plan(robot=None) == _plan(from_robot=False)
+
+
+def _walled():
+    """Wall at column 30: a 3 m wide room on the left, a sealed 0.9 m strip on the right."""
+    return [100 if c == 30 else 0 for _r in range(SIZE) for c in range(SIZE)]
+
+
+@pytest.mark.parametrize('robot', [None, (1.5, 2.0)])
+def test_walled_off_area_is_not_swept(robot):
+    path = _plan(robot, data=_walled())
+    assert path and max(p[0] for p in path) < 3.0
+
+
+@pytest.mark.parametrize('from_robot', [True, False])
+def test_sweeps_the_area_the_robot_is_in(from_robot):
+    path = _plan((3.5, 2.0), from_robot=from_robot, data=_walled())
+    assert path and min(p[0] for p in path) > 3.0
+
+
+def test_robot_on_a_wall_cell_uses_the_nearest_free_area():
+    path = _plan((3.02, 2.0), data=_walled())
+    assert path and len({p[0] > 3.0 for p in path}) == 1
+
+
+def test_gap_in_wall_keeps_both_sides():
+    data = _walled()
+    for r in range(18, 22):          # a door too narrow for the clearance margin, but still a connection
+        data[r * SIZE + 30] = 0
+    path = _plan((1.5, 2.0), data=data)
+    assert max(p[0] for p in path) > 3.0 and min(p[0] for p in path) < 3.0
