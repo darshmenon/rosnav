@@ -23,6 +23,7 @@ Parameters
   robot_radius      cell-clearance radius in m (default: 0.25)
   map_topic         (default: /map)
   start_from_robot  if true, start at the sweep corner nearest the robot (default: true)
+  pose_timeout      seconds to wait for map->base_link before planning without it (default: 5.0)
   action_name       (default: follow_waypoints)
 
 Usage
@@ -34,6 +35,7 @@ Usage
 
 import itertools
 import math
+import time
 
 import numpy as np
 import rclpy
@@ -118,6 +120,7 @@ class CoveragePlanner(Node):
         self.declare_parameter('map_topic',        '/map')
         self.declare_parameter('start_from_robot', True)
         self.declare_parameter('action_name',      'follow_waypoints')
+        self.declare_parameter('pose_timeout',     5.0)
 
         self.declare_parameter('region_x_min', -1e9)
         self.declare_parameter('region_x_max',  1e9)
@@ -130,6 +133,7 @@ class CoveragePlanner(Node):
         map_topic      = self.get_parameter('map_topic').value
         self._from_bot = self.get_parameter('start_from_robot').value
         action_ns      = self.get_parameter('action_name').value
+        self._pose_timeout = self.get_parameter('pose_timeout').value
 
         self._rx_min   = self.get_parameter('region_x_min').value
         self._rx_max   = self.get_parameter('region_x_max').value
@@ -139,6 +143,7 @@ class CoveragePlanner(Node):
         pre = f'/{ns}' if ns else ''
 
         self._map: OccupancyGrid | None = None
+        self._waypoint = None           # last waypoint index logged from feedback
 
         self._tf_buf = tf2_ros.Buffer()          if HAS_TF else None
         self._tf_lis = tf2_ros.TransformListener(self._tf_buf, self) if HAS_TF else None
@@ -160,6 +165,18 @@ class CoveragePlanner(Node):
         self.get_logger().info(
             f'Map received: {msg.info.width}×{msg.info.height} '
             f'res={msg.info.resolution:.3f}m')
+        # TF cannot arrive while a callback is blocked, so wait for the robot pose on a timer.
+        self._pose_deadline = time.monotonic() + self._pose_timeout
+        self._pose_timer = self.create_timer(0.2, self._plan_when_located)
+
+    def _plan_when_located(self):
+        if HAS_TF and self._get_robot_pose()[0] is None:
+            if time.monotonic() < self._pose_deadline:
+                return
+            self.get_logger().warn(
+                f'No map->base_link transform after {self._pose_timeout:.1f}s: planning without the robot pose '
+                '(largest free area, default start corner).')
+        self._pose_timer.cancel()
         self._plan_and_send()
 
     # ── Planning ──────────────────────────────────────────────────────────────
@@ -279,9 +296,7 @@ class CoveragePlanner(Node):
 
     def _get_robot_pose(self):
         try:
-            tf = self._tf_buf.lookup_transform(
-                'map', 'base_link',
-                rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=1.0))
+            tf = self._tf_buf.lookup_transform('map', 'base_link', rclpy.time.Time())
             return tf.transform.translation.x, tf.transform.translation.y
         except Exception:
             return None, None
@@ -290,7 +305,9 @@ class CoveragePlanner(Node):
 
     def _feedback_cb(self, fb):
         idx = fb.feedback.current_waypoint
-        self.get_logger().info(f'Coverage: waypoint {idx + 1} reached.')
+        if idx != self._waypoint:       # feedback repeats many times per waypoint
+            self._waypoint = idx
+            self.get_logger().info(f'Coverage: heading to waypoint {idx + 1}.')
 
     def _goal_resp_cb(self, future):
         handle = future.result()

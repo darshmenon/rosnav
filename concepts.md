@@ -2057,7 +2057,7 @@ It is already **map-driven**: it subscribes to `/map` (`OccupancyGrid`), treats 
 4. Find bounding box of navigable region.
 5. Sweep horizontal scan lines separated by `sweep_spacing` metres, alternating direction each line.
 6. Emit one waypoint per `sweep_spacing` interval on each navigable line.
-7. Optionally sort waypoints to start from the robot's current TF position.
+7. Optionally start the sweep at the corner nearest the robot. The `map` → `base_link` transform is awaited on a timer (`pose_timeout`) before planning: it cannot arrive while the map callback is blocked. Without it the planner warns, takes the largest free area and the default corner.
 8. Send all waypoints to `FollowWaypoints` action server.
 
 **Pattern:**
@@ -2076,6 +2076,7 @@ It is already **map-driven**: it subscribes to `/map` (`OccupancyGrid`), treats 
 | `sweep_spacing` | 0.5 m | Distance between scan lines |
 | `robot_radius` | 0.25 m | Clearance from walls |
 | `start_from_robot` | true | Start nearest waypoint to robot pose |
+| `pose_timeout` | 5.0 s | Longest wait for the robot pose before planning without it |
 | `robot_ns` | `''` | Namespace (multi-robot) |
 
 ```bash
