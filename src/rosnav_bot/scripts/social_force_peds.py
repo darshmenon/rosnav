@@ -7,8 +7,9 @@ and drive them with the social-force crowd from social_force_core.py.
     (models/person_standing) so gpu_lidar hits a person, not a box. A cylinder
     collision stays for contact. gz <actor>s are invisible to this lidar;
   * driven through the model's VelocityControl plugin over a ros_gz_bridge Twist topic
-    (one bridge process for the whole crowd), world poses read back from
-    /world/<world>/pose/info (truth), so the social forces use real positions;
+    (one bridge process for the whole crowd), world poses read back from each model's
+    PosePublisher on /model/<name>/pose (truth), so the social forces use real positions.
+    /world/<world>/pose/info is not usable: it bridges with empty frame names;
   * people route over the map with A*, avoid each other, the walls and the robot
     (see social_force_core.py for behaviour: pauses, groups, hesitation, distracted walkers);
   * publishes ground truth on /social_peds/gt (JSON) for metrics (social_metrics.py).
@@ -27,14 +28,16 @@ import time
 
 import numpy as np
 import rclpy
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Pose, Twist
 from rclpy.node import Node
 from std_msgs.msg import Float64, String
-from tf2_msgs.msg import TFMessage
 from visualization_msgs.msg import Marker, MarkerArray
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import social_force_core as sf  # noqa: E402
+
+SPAWN_Z = 0.02  # model height above the floor, held by level_twist
+
 
 def _person_mesh_uri():
     """Standing MakeHuman mesh. gpu_lidar hits visuals, so this is what the scan sees."""
@@ -98,7 +101,31 @@ def human_sdf(name, rng):
  {legs}
  <plugin filename="libignition-gazebo-velocity-control-system" name="ignition::gazebo::systems::VelocityControl">
   <link_name>link</link_name></plugin>
+ <plugin filename="gz-sim-pose-publisher-system" name="gz::sim::systems::PosePublisher">
+  <publish_model_pose>true</publish_model_pose><publish_nested_model_pose>true</publish_nested_model_pose>
+  <publish_link_pose>false</publish_link_pose><publish_visual_pose>false</publish_visual_pose>
+  <publish_collision_pose>false</publish_collision_pose><update_frequency>20</update_frequency>
+ </plugin>
 </model></sdf>'''
+
+
+def level_twist(vx, vy, wz, z, q):
+    """World-frame walk command -> body-frame Twist that also pulls the model upright and to floor height.
+
+    VelocityControl takes body-frame velocities, so on a tilted model a plain forward command has a
+    vertical part, and nothing else restores a gravity-free body that a joint or contact has nudged.
+    """
+    x, y, qz, w = q.x, q.y, q.z, q.w
+    r = np.array([[1 - 2 * (y * y + qz * qz), 2 * (x * y - qz * w), 2 * (x * qz + y * w)],
+                  [2 * (x * y + qz * w), 1 - 2 * (x * x + qz * qz), 2 * (y * qz - x * w)],
+                  [2 * (x * qz - y * w), 2 * (y * qz + x * w), 1 - 2 * (x * x + y * y)]])
+    lin = r.T @ np.array([vx, vy, float(np.clip(2.0 * (SPAWN_Z - z), -0.5, 0.5))])
+    up = r[:, 2]
+    ang = r.T @ np.array([3.0 * up[1], -3.0 * up[0], wz])
+    m = Twist()
+    m.linear.x, m.linear.y, m.linear.z = (float(v) for v in lin)
+    m.angular.x, m.angular.y, m.angular.z = (float(v) for v in ang)
+    return m
 
 
 class Peds(Node):
@@ -121,7 +148,8 @@ class Peds(Node):
                               spawn_avoid=(g('spawn_avoid_x'), g('spawn_avoid_y')))
         self.names = [f'ped_{i + 1}' for i in range(self.n)]
         self.procs = []
-        self.truth = {}          # name -> (x, y, yaw) from pose/info
+        self.truth = {}          # name -> (x, y, yaw) from the model's pose topic
+        self.pose = {}           # name -> latest geometry_msgs/Pose (height and tilt)
         self.robot = None
         self.pubs = [self.create_publisher(Twist, f'/model/{nm}/cmd_vel', 10) for nm in self.names]
         self.hips = [(self.create_publisher(Float64, f'/model/{nm}/hip_legL/cmd_pos', 10),
@@ -130,7 +158,8 @@ class Peds(Node):
         self.phase = [0.0] * self.n
         self.gt = self.create_publisher(String, '/social_peds/gt', 10)
         self.marks = self.create_publisher(MarkerArray, '/social_peds/markers', 10)
-        self.create_subscription(TFMessage, f'/world/{self.world_name}/pose/info', self._on_pose, 10)
+        for nm in self.names:
+            self.create_subscription(Pose, f'/model/{nm}/pose', lambda p, nm=nm: self._on_pose(nm, p), 10)
         if g('spawn'):
             self._start_bridge()
             self._spawn_all()
@@ -150,7 +179,7 @@ class Peds(Node):
         for nm in self.names:
             args.append(f'/model/{nm}/hip_legL/cmd_pos@std_msgs/msg/Float64]gz.msgs.Double')
             args.append(f'/model/{nm}/hip_legR/cmd_pos@std_msgs/msg/Float64]gz.msgs.Double')
-        args.append(f'/world/{self.world_name}/pose/info@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V')
+        args += [f'/model/{nm}/pose@geometry_msgs/msg/Pose[gz.msgs.Pose' for nm in self.names]
         self.procs.append(subprocess.Popen(['ros2', 'run', 'ros_gz_bridge', 'parameter_bridge'] + args,
                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
         self.get_logger().info(f'ros_gz_bridge started for {self.n} pedestrians (pid {self.procs[-1].pid})')
@@ -163,19 +192,16 @@ class Peds(Node):
             open(f, 'w').write(human_sdf(nm, rng))
             gx, gy = x + self.off[0], y + self.off[1]
             r = subprocess.run(['ros2', 'run', 'ros_gz_sim', 'create', '-world', self.world_name, '-file', f,
-                                '-name', nm, '-x', f'{gx:.2f}', '-y', f'{gy:.2f}', '-z', '0.02'],
+                                '-name', nm, '-x', f'{gx:.2f}', '-y', f'{gy:.2f}', '-z', str(SPAWN_Z)],
                                capture_output=True, text=True, timeout=30)
             self.get_logger().info(f'spawned {nm} at ({x:.1f},{y:.1f}) rc={r.returncode}')
 
     # -- loop
-    def _on_pose(self, msg):
-        for t in msg.transforms:
-            nm = t.child_frame_id
-            if nm in self.names:
-                q = t.transform.rotation
-                yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
-                self.truth[nm] = (t.transform.translation.x - self.off[0],
-                                  t.transform.translation.y - self.off[1], yaw)
+    def _on_pose(self, nm, pose):
+        self.pose[nm] = pose
+        q = pose.orientation
+        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+        self.truth[nm] = (pose.position.x - self.off[0], pose.position.y - self.off[1], yaw)
 
     def _robot_xy(self):
         try:
@@ -210,13 +236,13 @@ class Peds(Node):
             yaw = self.truth.get(nm, (0, 0, 0.0))[2]
             if not math.isfinite(yaw):
                 yaw = 0.0
-            c, s = math.cos(-yaw), math.sin(-yaw)
-            m = Twist()
-            m.linear.x = float(c * vx - s * vy)
-            m.linear.y = float(s * vx + c * vy)
             heading = math.atan2(vy, vx) if sp > 0.08 else yaw
             err = math.atan2(math.sin(heading - yaw), math.cos(heading - yaw))
-            m.angular.z = float(max(-1.5, min(1.5, 2.0 * err)))
+            wz = float(max(-1.5, min(1.5, 2.0 * err)))
+            if nm in self.pose:
+                m = level_twist(vx, vy, wz, self.pose[nm].position.z, self.pose[nm].orientation)
+            else:
+                m = Twist()                                  # stand still until the first pose arrives
             self.pubs[i].publish(m)
             self.phase[i] += sp * dt * 4.0
             swing = 0.55 * math.sin(self.phase[i]) if sp > 0.08 else 0.0
