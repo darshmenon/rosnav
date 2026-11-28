@@ -47,7 +47,7 @@ def write_map(grid, ox, oy, res, stem):
         f.write(img[::-1].tobytes())
     with open(stem + '.yaml', 'w') as f:
         f.write(f'image: {os.path.basename(stem)}.pgm\nresolution: {res}\norigin: [{ox}, {oy}, 0]\n'
-                'negate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.25\n')
+                'negate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.196\n')
     return stem + '.yaml'
 
 

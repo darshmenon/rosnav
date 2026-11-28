@@ -166,7 +166,7 @@ def main():
             'origin': list(origin),
             'negate': 0,
             'occupied_thresh': 0.65,
-            'free_thresh': 0.25,
+            'free_thresh': 0.196,
         }, f, default_flow_style=None, sort_keys=False)
     print(f'Wrote {out_pgm} and {out_yaml}', flush=True)
 

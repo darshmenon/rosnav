@@ -1298,7 +1298,7 @@ class FrontierCoordinator(Node):
             f'Saving map → {self._save_path} (topic={self._map_topic})')
         try:
             subprocess.run(
-                ['ros2', 'run', 'nav2_map_server', 'map_saver_cli',
+                ['ros2', 'run', 'nav2_map_server', 'map_saver_cli', '--free', '0.196',
                  '-t', self._map_topic, '-f', self._save_path],
                 check=True)
             self._map_saved = True

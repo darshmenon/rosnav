@@ -544,7 +544,7 @@ class FleetGUI:
 
     def _do_save_map(self, path: str):
         r = subprocess.run(
-            ['ros2', 'run', 'nav2_map_server', 'map_saver_cli', '-f', path],
+            ['ros2', 'run', 'nav2_map_server', 'map_saver_cli', '--free', '0.196', '-f', path],
             capture_output=True, text=True)
         if r.returncode == 0:
             self.root.after(100, lambda:

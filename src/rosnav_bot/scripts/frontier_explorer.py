@@ -642,7 +642,7 @@ class FrontierExplorer(Node):
                     f'Progressively auto-saving map to {self._map_save_path} '
                     f'(topic={self._map_topic}) ...')
                 self._save_proc = subprocess.Popen(
-                    ['ros2', 'run', 'nav2_map_server', 'map_saver_cli',
+                    ['ros2', 'run', 'nav2_map_server', 'map_saver_cli', '--free', '0.196',
                      '-t', self._map_topic, '-f', self._map_save_path],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                 )
@@ -697,7 +697,7 @@ class FrontierExplorer(Node):
             self.get_logger().info(f'Final map save to {self._map_save_path} ...')
             try:
                 subprocess.run(
-                    ['ros2', 'run', 'nav2_map_server', 'map_saver_cli',
+                    ['ros2', 'run', 'nav2_map_server', 'map_saver_cli', '--free', '0.196',
                      '-t', self._map_topic, '-f', self._map_save_path],
                     check=True
                 )
@@ -1689,7 +1689,7 @@ class FrontierExplorer(Node):
             f'Auto-saving map to: {save_prefix} (topic={self._map_topic})')
         try:
             subprocess.run(
-                ['ros2', 'run', 'nav2_map_server', 'map_saver_cli',
+                ['ros2', 'run', 'nav2_map_server', 'map_saver_cli', '--free', '0.196',
                  '-t', self._map_topic, '-f', save_prefix],
                 check=True,
             )

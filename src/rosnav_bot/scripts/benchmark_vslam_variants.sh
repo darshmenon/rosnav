@@ -91,7 +91,7 @@ run_variant(){
   echo "$nudges" > "$OUT/$V.nudges"
   echo "$(timeout 8 ros2 topic echo /clock --once --field clock.sec 2>/dev/null | num)" > "$OUT/$V.simsec"   # sim seconds reached (RTF check)
   for try in 1 2 3; do   # one failed save ('Failed to spin map subscription') must not lose the run's map
-    ros2 run nav2_map_server map_saver_cli -f "$OUT/map_$V" --ros-args -p use_sim_time:=true -p save_map_timeout:=10.0 > "$OUT/$V.mapsave.log" 2>&1
+    ros2 run nav2_map_server map_saver_cli --free 0.196 -f "$OUT/map_$V" --ros-args -p use_sim_time:=true -p save_map_timeout:=10.0 > "$OUT/$V.mapsave.log" 2>&1
     [ -s "$OUT/map_$V.pgm" ] && break; log "  $V: map save attempt $try failed, retrying"; sleep 3
   done
   log "variant $V done (map: $(ls $OUT/map_$V.pgm 2>/dev/null || echo MISSING))"

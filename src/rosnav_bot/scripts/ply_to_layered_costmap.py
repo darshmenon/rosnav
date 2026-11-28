@@ -223,7 +223,7 @@ def main():
     keep[cost >= a.lethal] = 0
     cv2.imwrite(a.out + '_keepout.pgm', flip(keep))
     for suffix, mode, extra in (('speed', 'scale', 'occupied_thresh: 1.0\nfree_thresh: 0.0\n'),
-                                ('keepout', 'trinary', 'occupied_thresh: 0.65\nfree_thresh: 0.25\n')):
+                                ('keepout', 'trinary', 'occupied_thresh: 0.65\nfree_thresh: 0.196\n')):
         with open(f'{a.out}_{suffix}.yaml', 'w') as f:
             f.write(f'image: {base}_{suffix}.pgm\nmode: {mode}\nresolution: {a.cell}\n'
                     f'origin: [{x0:.3f}, {y0:.3f}, 0]\nnegate: 0\n{extra}')

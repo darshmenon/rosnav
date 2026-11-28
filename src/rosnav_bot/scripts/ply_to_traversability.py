@@ -88,7 +88,7 @@ def main():
     with open(a.out + '.yaml', 'w') as f:
         f.write(f'image: {base}.pgm\nmode: trinary\nresolution: {a.res}\n'
                 f'origin: [{x0:.3f}, {y0:.3f}, 0]\nnegate: 0\n'
-                'occupied_thresh: 0.65\nfree_thresh: 0.25\n')
+                'occupied_thresh: 0.65\nfree_thresh: 0.196\n')
     e = np.where(seen, ground, np.nanmin(ground))
     e = ((e - e.min()) / max(np.ptp(e), 1e-6) * 255).astype(np.uint8)[::-1]
     cv2.imwrite(a.out + '_elevation.png', cv2.resize(e, None, fx=4, fy=4, interpolation=cv2.INTER_NEAREST))

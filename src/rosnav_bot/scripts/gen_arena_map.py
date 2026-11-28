@@ -38,7 +38,7 @@ with open(os.path.join(out, 'map_arena_square.pgm'), 'wb') as f:
         f.write(bytes(row))
 open(os.path.join(out, 'map_arena_square.yaml'), 'w').write(
     f'image: map_arena_square.pgm\nmode: trinary\nresolution: {RES}\norigin: [{org:.2f}, {org:.2f}, 0]\n'
-    'negate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.25\n')
+    'negate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.196\n')
 try:
     subprocess.run(['convert', os.path.join(out, 'map_arena_square.pgm'), '-resize', '100%',
                     os.path.join(out, 'map_arena_square.png')], check=True)

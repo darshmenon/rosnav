@@ -596,7 +596,7 @@ class FleetNode(Node):
                     break
         print(f'Saving map from {topic} → {path} …')
         r = subprocess.run(
-            ['ros2', 'run', 'nav2_map_server', 'map_saver_cli',
+            ['ros2', 'run', 'nav2_map_server', 'map_saver_cli', '--free', '0.196',
              '-t', topic, '-f', path],
             capture_output=True, text=True)
         if r.returncode == 0:

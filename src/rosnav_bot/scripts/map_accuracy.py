@@ -36,7 +36,7 @@ def load(yaml_path):
         w, h = map(int, line.split()); f.readline()
         im = np.frombuffer(f.read(), dtype=np.uint8).reshape(h, w)[::-1]   # row 0 = bottom (y min)
     res, (ox, oy, _) = meta['resolution'], meta['origin']
-    occ_t, free_t = meta.get('occupied_thresh', 0.65), meta.get('free_thresh', 0.25)
+    occ_t, free_t = meta.get('occupied_thresh', 0.65), meta.get('free_thresh', 0.196)
     p = (255 - im) / 255.0 if not meta.get('negate', 0) else im / 255.0
     occ, free = p > occ_t, (p < free_t)
     ys, xs = np.nonzero(occ)

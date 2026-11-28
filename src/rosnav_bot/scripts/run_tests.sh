@@ -44,7 +44,7 @@ if [ "${1:-}" = "--group" ]; then GROUP="${2:?--group needs a name}"; shift 2; f
 EXPLORATION=(test_frontier_explorer.py test_frontier_coordinator_allocation.py test_frontier_coordinator_spurious.py
              test_frontier_detection_accuracy.py test_frontier_env.py test_collab_loop_closure.py test_map_merge_known.py)
 NAVIGATION=(test_mpc_core.py test_nav2_controller_params.py test_multi_robot_profile.py test_fleet_health_progress.py
-            test_leader_follower_trail.py test_supervisor_core.py test_launch_undefined_names.py test_coverage_order.py)
+            test_leader_follower_trail.py test_supervisor_core.py test_launch_undefined_names.py test_coverage_order.py test_map_thresholds.py)
 TOOLS=(test_nav2_doctor.py test_rosnav_doctor.py test_rosnav_top.py test_pulse_rates.py test_resource_bench.py
        test_nav2_watchdog_pids.py test_scan_to_odom_cloud.py test_map_timelapse.py test_static_checks.py)
 VENDORED=(--ignore="$T/nav2_fault_inject" --ignore="$T/slam_doctor" --ignore="$T/nav_explore_eval")

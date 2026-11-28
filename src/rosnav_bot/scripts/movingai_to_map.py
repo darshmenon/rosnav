@@ -56,7 +56,7 @@ def write(grid, name, out, cell, world):
     Image.fromarray(np.where(grid, 0, 254).astype(np.uint8)).save(f'{out}/{name}.pgm')
     open(f'{out}/{name}.yaml', 'w').write(
         f'image: {name}.pgm\nmode: trinary\nresolution: {cell}\norigin: [0.0, 0.0, 0]\nnegate: 0\n'
-        'occupied_thresh: 0.65\nfree_thresh: 0.25\n')
+        'occupied_thresh: 0.65\nfree_thresh: 0.196\n')
     if world:
         base = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'worlds', 'empty_room.world')).read()
         head = base[:base.index('<!-- ===== SINGLE')].replace("world name='empty_room'", f"world name='{name}'")

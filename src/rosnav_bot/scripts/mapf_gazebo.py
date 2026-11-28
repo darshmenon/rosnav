@@ -169,7 +169,7 @@ def write_map(free, cell, stem, res):
     with open(stem + '.yaml', 'w') as f:
         f.write(f"image: {os.path.basename(stem)}.pgm\nmode: trinary\nresolution: {res}\n"
                 f"origin: [{-(cols / 2 + 1) * cell}, {-(rows / 2 + 1) * cell}, 0.0]\n"
-                "negate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.25\n")
+                "negate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.196\n")
     log(f'wrote Nav2 map {stem}.yaml ({img.shape[1]}x{img.shape[0]} px @ {res} m)')
 
 

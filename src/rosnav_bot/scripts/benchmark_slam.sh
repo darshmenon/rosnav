@@ -175,7 +175,7 @@ PY
   fi
 
   if ros2 pkg prefix nav2_map_server >/dev/null 2>&1; then
-    timeout 30 ros2 run nav2_map_server map_saver_cli -f "$run_dir/map" -t /map \
+    timeout 30 ros2 run nav2_map_server map_saver_cli --free 0.196 -f "$run_dir/map" -t /map \
       >>"$log" 2>&1 || true
   fi
 

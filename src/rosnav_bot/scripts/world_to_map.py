@@ -184,7 +184,7 @@ def write_map(prefix, img, w, h, ox, oy, res):
         f.write(img)
     with open(prefix + '.yaml', 'w') as f:
         f.write(f'image: {os.path.basename(prefix)}.pgm\nmode: trinary\nresolution: {res}\n'
-                f'origin: [{ox:.3f}, {oy:.3f}, 0]\nnegate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.25\n')
+                f'origin: [{ox:.3f}, {oy:.3f}, 0]\nnegate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.196\n')
     try:
         from PIL import Image
         Image.frombytes('L', (w, h), img).resize((w * 4, h * 4), Image.NEAREST).save(prefix + '.png')

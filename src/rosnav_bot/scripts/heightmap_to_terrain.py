@@ -35,7 +35,7 @@ def bilinear(h, xs, ys):
 def write_mask(path_base, img, res, ox, oy, mode):
     Image.fromarray(img).save(path_base + '.pgm')
     base = path_base.split('/')[-1]
-    thr = ('occupied_thresh: 0.65\nfree_thresh: 0.25\n' if mode == 'trinary'
+    thr = ('occupied_thresh: 0.65\nfree_thresh: 0.196\n' if mode == 'trinary'
            else 'occupied_thresh: 1.0\nfree_thresh: 0.0\n')
     with open(path_base + '.yaml', 'w') as f:
         f.write(f'image: {base}.pgm\nmode: {mode}\nresolution: {res}\n'

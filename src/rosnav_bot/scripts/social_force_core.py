@@ -34,7 +34,7 @@ class MapWorld:
         self.ox, self.oy = float(meta['origin'][0]), float(meta['origin'][1])
         occ_p = (255 - img) / 255.0 if not meta.get('negate', 0) else img / 255.0
         occ = occ_p > float(meta.get('occupied_thresh', 0.65))
-        unknown = (occ_p >= float(meta.get('free_thresh', 0.25))) & ~occ
+        unknown = (occ_p >= float(meta.get('free_thresh', 0.196))) & ~occ
         self.blocked = np.flipud(occ | unknown)           # row 0 = y min
         self.h, self.w = self.blocked.shape
         self.edt = ndimage.distance_transform_edt(~self.blocked) * self.res
