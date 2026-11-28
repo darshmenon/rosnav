@@ -15,6 +15,7 @@ NAV2_NODES = ['controller_server', 'planner_server', 'bt_navigator',
 STALE_S = 2.0          # a stream is "stale" if silent this long
 FLAP_WINDOW_S = 30.0   # goal-flapping look-back
 STARTUP_S = 60.0       # grace period before inactive nodes count as errors
+LIFECYCLE_TIMEOUT_S = 6.0  # get_state unanswered this long (two polls) => NODE_UNRESPONSIVE
 FLAP_COUNT = 4         # goals cancelled/aborted inside the window => flapping
 PROGRESS_S = 15.0      # goal active this long with no movement => NO_PROGRESS
 AMCL_COV_MAX = 0.5     # AMCL x/y covariance (m^2) above which localisation is uncertain
@@ -40,6 +41,7 @@ HINTS = {
     'NODE_MISSING': 'launch the node or check lifecycle_manager node_names; `ros2 node list`',
     'NODE_STARTING': 'wait for startup to finish; if it persists the lifecycle_manager is stuck',
     'NODE_INACTIVE': 'see the lifecycle_manager log; usually a YAML param error. `ros2 lifecycle get /<node>`',
+    'NODE_UNRESPONSIVE': 'the process is hung, paused or overloaded; check its CPU use and log, then restart it',
     'GOAL_FLAPPING': 'add hysteresis/min goal distance to the exploration or goal source',
     'NO_CMD_VEL': 'controller_server isn\'t producing output; check its log and that the goal checker/plugins loaded',
     'CMD_ZERO': 'planner or controller failed; check bt_navigator and controller_server logs, clear costmaps',
@@ -107,6 +109,7 @@ class Doctor:
         self.tf_edges = {}       # (parent, child) -> last receipt time
         self.static_edges = set()   # (parent, child) from /tf_static: published once, never stale
         self.lifecycle = {}      # node -> state label or None (unreachable)
+        self.lifecycle_waiting = {}   # node -> when the oldest unanswered get_state was sent
         self.goal_times = []     # times a goal id first appeared
         self.goal_active = False
         self.last_cmd_nonzero = None
@@ -199,6 +202,17 @@ class Doctor:
                 if e[1].endswith(suffixes[0]) or e[0].endswith(suffixes[1])}
 
     # ---- diagnosis ----------------------------------------------------
+    def lifecycle_asked(self, node, now):
+        self.lifecycle_waiting.setdefault(node, now)
+
+    def lifecycle_reply(self, node, label):
+        self.lifecycle_waiting.pop(node, None)
+        self.lifecycle[node] = label
+
+    def lifecycle_gone(self, node):
+        self.lifecycle_waiting.pop(node, None)
+        self.lifecycle[node] = None
+
     def diagnose(self, now):
         f = []
         age_tf = self._age('tf', now)
@@ -234,7 +248,17 @@ class Doctor:
             f.append(Finding('WARN', 'AMCL_UNCERTAIN',
                              f'AMCL pose covariance {self.amcl_cov:.2f} m^2 (> {AMCL_COV_MAX}) - robot is poorly localized, set /initialpose or check the map/scan'))
 
-        for n, st in self.lifecycle.items():
+        for n in {**self.lifecycle, **self.lifecycle_waiting}:     # in order, including never-answered nodes
+            since = self.lifecycle_waiting.get(n)
+            if since is not None and now - since >= LIFECYCLE_TIMEOUT_S:
+                # the last state it reported says nothing about it now
+                starting = self.started is not None and now - self.started < self.startup_s
+                f.append(Finding('WARN' if starting else 'ERROR', 'NODE_UNRESPONSIVE',
+                                 f'{n}: get_state unanswered for {now - since:.0f}s - node hung, paused or overloaded'))
+                continue
+            if n not in self.lifecycle:
+                continue
+            st = self.lifecycle[n]
             if st is None:
                 f.append(Finding('WARN', 'NODE_MISSING', f'{n}: lifecycle service unreachable (not launched?)'))
             elif st != 'active':
@@ -476,10 +500,11 @@ def main(argv=None):
     def poll_lifecycle():
         for n, c in clients.items():
             if not c.service_is_ready():
-                d.lifecycle[n] = None
+                d.lifecycle_gone(n)
                 continue
+            d.lifecycle_asked(n, clock())
             fut = c.call_async(GetState.Request())
-            fut.add_done_callback(lambda f, n=n: d.lifecycle.__setitem__(n, f.result().current_state.label))
+            fut.add_done_callback(lambda f, n=n: d.lifecycle_reply(n, f.result().current_state.label))
     node.create_timer(3.0, poll_lifecycle)
 
     def poll_cmd_subscribers():

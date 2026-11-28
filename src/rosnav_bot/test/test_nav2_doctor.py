@@ -137,6 +137,51 @@ def test_active_nodes_are_fine():
     assert codes(d, 1.0) == {'HEALTHY'}
 
 
+def test_hung_lifecycle_server_is_not_healthy():
+    d = healthy(100.0)
+    d.lifecycle_reply('planner_server', 'active')
+    d.lifecycle_asked('planner_server', 94.0)
+    d.lifecycle_asked('planner_server', 97.0)          # a later poll must not restart the clock
+    d.started = 0.0
+    c = {f.code: f.level for f in d.diagnose(100.5)}
+    assert c['NODE_UNRESPONSIVE'] == 'ERROR' and 'HEALTHY' not in c
+
+
+def test_unresponsive_during_startup_is_warn():
+    d = healthy(100.0)
+    d.started = 90.0
+    d.lifecycle_asked('planner_server', 90.0)
+    c = {f.code: f.level for f in d.diagnose(100.5)}
+    assert c['NODE_UNRESPONSIVE'] == 'WARN' and 'HEALTHY' in c
+
+
+def test_slow_lifecycle_reply_is_fine():
+    d = healthy(100.0)
+    d.lifecycle_asked('planner_server', 98.0)
+    assert 'NODE_UNRESPONSIVE' not in codes(d, 100.5)
+
+
+def test_lifecycle_reply_clears_unresponsive():
+    d = healthy(100.0)
+    d.lifecycle_asked('planner_server', 90.0)
+    d.lifecycle_reply('planner_server', 'active')
+    assert 'NODE_UNRESPONSIVE' not in codes(d, 100.5)
+
+
+def test_never_answered_node_is_unresponsive():
+    d = healthy(100.0)
+    d.lifecycle_asked('bt_navigator', 90.0)
+    assert 'NODE_UNRESPONSIVE' in codes(d, 100.5)
+
+
+def test_unresponsive_node_that_disappears_is_missing():
+    d = healthy(100.0)
+    d.lifecycle_asked('bt_navigator', 90.0)
+    d.lifecycle_gone('bt_navigator')
+    c = codes(d, 100.5)
+    assert 'NODE_MISSING' in c and 'NODE_UNRESPONSIVE' not in c
+
+
 def test_costmap_stale_only_when_previously_seen():
     d = healthy()
     assert 'COSTMAP_STALE' not in codes(d, 1.0)
