@@ -5,6 +5,7 @@ Pure-logic `Doctor` (no ROS imports, unit-testable) + a thin rclpy `main()`.
 """
 import argparse
 import json
+import math
 import time
 from dataclasses import dataclass
 
@@ -25,6 +26,7 @@ MAP_ACTIVE_S = 10.0    # seconds of non-zero cmd_vel in the window before an unc
 SCAN_LEAD_S = 0.5      # scan stamps this far ahead of the newest odom TF => SCAN_TF_AHEAD
 IDLE_S = 45.0          # stack up this long, no goal ever seen and robot never commanded => IDLE_NO_GOALS
 DRIVE_S = 5.0         # cmd_vel non-zero this long with no odom movement => CMD_NO_MOTION
+PROGRESS_YAW = 0.2     # heading change (rad) that shows the base obeys cmd_vel (turning in place)
 SKEW_S = 1.0           # TF stamp vs wall clock difference that counts as clock skew
 
 
@@ -103,7 +105,7 @@ class Doctor:
         self.flap_count = flap_count
         self.progress_s = progress_s
         self.progress_m = progress_m
-        self.poses = []          # (time, x, y) odometry samples
+        self.poses = []          # (time, x, y, yaw) odometry samples; yaw is None when unknown
         self.goal_since = None   # when the current goal became active
         self.last = {}           # stream name -> last receipt time
         self.tf_edges = {}       # (parent, child) -> last receipt time
@@ -177,9 +179,9 @@ class Doctor:
         self.goal_times.append(now)
         self.goal_times = [t for t in self.goal_times if now - t <= self.flap_window_s]
 
-    def pose(self, x, y, now):
+    def pose(self, x, y, now, yaw=None):
         self.seen('odom', now)
-        self.poses.append((now, x, y))
+        self.poses.append((now, x, y, yaw))
         keep = max(self.progress_s, self.stale_s) * 2
         self.poses = [p for p in self.poses if now - p[0] <= keep]
 
@@ -282,8 +284,8 @@ class Doctor:
         if self.goal_active and self.goal_since is not None and now - self.goal_since >= self.progress_s:
             win = [p for p in self.poses if now - p[0] <= self.progress_s]
             if len(win) >= 2 and win[0][0] - (now - self.progress_s) < self.stale_s:
-                x0, y0 = win[0][1:]
-                moved = max(((x - x0) ** 2 + (y - y0) ** 2) ** 0.5 for _, x, y in win)
+                x0, y0 = win[0][1:3]
+                moved = max(((p[1] - x0) ** 2 + (p[2] - y0) ** 2) ** 0.5 for p in win)
                 if moved < self.progress_m:
                     f.append(Finding('WARN', 'NO_PROGRESS',
                                      f'goal active for {now - self.goal_since:.0f}s but robot moved only {moved:.2f}m in {self.progress_s:.0f}s - stuck, recovering, or blocked'))
@@ -298,9 +300,11 @@ class Doctor:
                 and self.last_cmd_nonzero is not None and now - self.last_cmd_nonzero < self.stale_s:
             win = [p for p in self.poses if now - p[0] <= DRIVE_S]
             if len(win) >= 2 and win[0][0] - (now - DRIVE_S) < self.stale_s:
-                x0, y0 = win[0][1:]
-                moved = max(((x - x0) ** 2 + (y - y0) ** 2) ** 0.5 for _, x, y in win)
-                if moved < self.progress_m:
+                x0, y0, yaw0 = win[0][1:]
+                moved = max(((p[1] - x0) ** 2 + (p[2] - y0) ** 2) ** 0.5 for p in win)
+                turned = max((abs(math.atan2(math.sin(p[3] - yaw0), math.cos(p[3] - yaw0))) for p in win
+                              if yaw0 is not None and p[3] is not None), default=0.0)
+                if moved < self.progress_m and turned < PROGRESS_YAW:
                     f.append(Finding('ERROR', 'CMD_NO_MOTION',
                                      f'cmd_vel non-zero for {now - self.cmd_since:.0f}s but odom moved {moved:.2f}m - '
                                      'chassis/driver not obeying, e-stop, or odom frozen'))
@@ -350,6 +354,11 @@ class Doctor:
         if not any(x.level == 'ERROR' for x in f):
             f.append(Finding('OK', 'HEALTHY', 'no stall causes detected'))
         return f
+
+
+def yaw_of(q):
+    """Heading (rad) from a geometry_msgs quaternion."""
+    return math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
 
 
 def tf_belongs_to(ns, parent, child):
@@ -455,7 +464,7 @@ def main(argv=None):
     node.create_subscription(TFMessage, f'{ns}/tf_static', on_tf_static, latched)
     if ns:
         node.create_subscription(TFMessage, '/tf_static', lambda m: on_tf_static(m, True), latched)
-    node.create_subscription(Odometry, f'{ns}/odom', lambda m: d.pose(m.pose.pose.position.x, m.pose.pose.position.y, clock()), sd)
+    node.create_subscription(Odometry, f'{ns}/odom', lambda m: d.pose(m.pose.pose.position.x, m.pose.pose.position.y, clock(), yaw_of(m.pose.pose.orientation)), sd)
     node.create_subscription(PoseWithCovarianceStamped, f'{ns}/amcl_pose',
                              lambda m: d.amcl(m.pose.covariance[0], m.pose.covariance[7], clock()), rel)
     node.create_subscription(LaserScan, f'{ns}/scan', lambda m: (d.seen('scan', clock()), d.stamps(scan=m.header.stamp.sec + m.header.stamp.nanosec / 1e9)), sd)

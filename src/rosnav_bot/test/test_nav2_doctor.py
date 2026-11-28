@@ -1,6 +1,6 @@
-import os, sys
+import math, os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from scripts.nav2_doctor import Doctor
+from scripts.nav2_doctor import Doctor, yaw_of
 
 
 def codes(d, now):
@@ -217,3 +217,38 @@ def test_custom_startup_grace():
     d = healthy(); d.startup_s = 0.0; d.started = 0.0
     d.lifecycle['controller_server'] = 'inactive'
     assert 'NODE_INACTIVE' in codes(d, 1.0)
+
+
+def _driving(yaws, linear=0.0):
+    """10 s of non-zero cmd_vel with the robot staying on one spot at the given headings."""
+    d = Doctor(startup_s=0.0)
+    for i, yaw in enumerate(yaws):
+        t = i * 0.5
+        d.cmd(linear, 0.4, t)
+        d.pose(0.0, 0.0, t, yaw)
+    return codes(d, (len(yaws) - 1) * 0.5)
+
+
+def test_turning_in_place_is_not_cmd_no_motion():
+    assert 'CMD_NO_MOTION' not in _driving([0.1 * i for i in range(21)])
+
+
+def test_flipping_left_and_right_is_not_cmd_no_motion():
+    assert 'CMD_NO_MOTION' not in _driving([0.25 * (-1) ** (i // 3) for i in range(21)])
+
+
+def test_heading_jitter_is_still_cmd_no_motion():
+    assert 'CMD_NO_MOTION' in _driving([0.01 * (i % 2) for i in range(21)])
+
+
+def test_heading_wrap_at_pi_is_not_a_turn():
+    assert 'CMD_NO_MOTION' in _driving([3.14 if i % 2 else -3.14 for i in range(21)])
+
+
+def test_unknown_heading_still_reports_cmd_no_motion():
+    assert 'CMD_NO_MOTION' in _driving([None] * 21)
+
+
+def test_yaw_of_quaternion():
+    q = type('Q', (), {'x': 0.0, 'y': 0.0, 'z': math.sin(0.4), 'w': math.cos(0.4)})
+    assert abs(yaw_of(q) - 0.8) < 1e-9
