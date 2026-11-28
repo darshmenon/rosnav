@@ -21,7 +21,7 @@ Parameters
   sweep_spacing     metres between scan lines  (default: 0.5)
   robot_radius      cell-clearance radius in m (default: 0.25)
   map_topic         (default: /map)
-  start_from_robot  if true, start sweep from robot's current position (default: true)
+  start_from_robot  if true, start at the sweep corner nearest the robot (default: true)
   action_name       (default: follow_waypoints)
 
 Usage
@@ -31,6 +31,7 @@ Usage
       -p sweep_spacing:=0.4 -p robot_ns:=robot1
 """
 
+import itertools
 import math
 
 import numpy as np
@@ -72,6 +73,20 @@ def _make_pose(x: float, y: float, yaw: float, stamp, frame: str) -> PoseStamped
     p.pose.orientation.z = math.sin(yaw / 2.0)
     p.pose.orientation.w = math.cos(yaw / 2.0)
     return p
+
+
+def start_nearest(waypoints, x: float, y: float):
+    """Start the sweep at whichever of its four corners is nearest (x, y), keeping it a sweep.
+
+    Scan lines may be visited in reverse order and/or each driven the other way (yaw turned
+    to match). Ties keep the original order.
+    """
+    lines = [list(g) for _, g in itertools.groupby(waypoints, key=lambda p: p[1])]
+    options = []
+    for rows in (lines, lines[::-1]):
+        options.append([p for line in rows for p in line])
+        options.append([(px, py, math.pi - yaw) for line in rows for px, py, yaw in line[::-1]])
+    return min(options, key=lambda o: (o[0][0] - x) ** 2 + (o[0][1] - y) ** 2)
 
 
 class CoveragePlanner(Node):
@@ -230,11 +245,11 @@ class CoveragePlanner(Node):
         if not waypoints:
             return []
 
-        # Optionally reorder so first waypoint is nearest robot's current pose
+        # Optionally start at the sweep corner nearest the robot's current pose
         if self._from_bot and HAS_TF:
             robot_x, robot_y = self._get_robot_pose()
             if robot_x is not None:
-                waypoints.sort(key=lambda p: (p[0] - robot_x) ** 2 + (p[1] - robot_y) ** 2)
+                waypoints = start_nearest(waypoints, robot_x, robot_y)
 
         return waypoints
 
