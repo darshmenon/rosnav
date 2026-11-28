@@ -256,7 +256,7 @@ Route Server lanes (cafe): `route_graph:=auto`; make a graph for any map with `s
 
 ![social navigation demo](assets/social_nav/nav_showcase.gif)
 
-Own `RiskPlanner` (not Nav2's controller) with learned, conformal-uncertain pedestrian prediction. Offline, 10 seeds, 16 pedestrians (measured before the `sigma_scale` fix, not rerun): 10% collisions vs 100% for a reactive planner, both 70% success. In Nav2 the same predictions only shape the costmap (`dynobs_pipeline:=external`); `controller:=` still drives. Details: `concepts.md` §47.
+Own `RiskPlanner` (not Nav2's controller) with learned, conformal-uncertain pedestrian prediction. Offline, 10 seeds, 16 pedestrians (rerun after the `sigma_scale` fix): 10% collisions vs 100% for a reactive planner, both 70% success. In Nav2 the same predictions only shape the costmap (`dynobs_pipeline:=external`); `controller:=` still drives. Details: `concepts.md` §47.
 
 #### Benchmark and adversarial crowds
 
